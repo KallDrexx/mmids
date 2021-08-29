@@ -2,4 +2,5 @@
 members = [
     "mmids-core",
     "validators/echo-server",
+    "validators/rtmp-server",
 ]

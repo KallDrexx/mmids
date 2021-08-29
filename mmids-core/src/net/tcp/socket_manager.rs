@@ -79,6 +79,8 @@ impl<'a> SocketManager<'a> {
                 }
             }
         }
+
+        debug!("Socket manager closing");
     }
 
     fn handle_request(&mut self, request: TcpSocketRequest) {

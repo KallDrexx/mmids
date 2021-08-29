@@ -43,6 +43,8 @@ async fn listen(
     params: ListenerParams,
     _self_disconnection_signal: UnboundedReceiver<()>,
 ) -> Result<(), std::io::Error> {
+    debug!("Socket listener for port {} started", params.port);
+
     let ListenerParams {
         port,
         response_channel,
@@ -66,6 +68,7 @@ async fn listen(
     }
     debug!("Listener for port {} stopped", port);
 
+    debug!("Socket listener for port {} closing", port);
     Ok(())
 }
 
@@ -105,6 +108,7 @@ fn handle_new_connection(
         connection_id.clone(),
         reader,
         incoming_sender,
+        response_channel,
     ));
 
     spawn_and_log(socket_writer(connection_id, writer, outgoing_receiver));
@@ -114,6 +118,7 @@ async fn socket_reader(
     connection_id: ConnectionId,
     mut reader: ReadHalf<TcpStream>,
     mut incoming_sender: UnboundedSender<Bytes>,
+    tcp_response_sender: UnboundedSender<TcpSocketResponse>,
 ) -> Result<(), std::io::Error> {
     let mut buffer = BytesMut::with_capacity(4096);
     loop {
@@ -140,6 +145,9 @@ async fn socket_reader(
     }
 
     info!("Connection {}: reader task closed", connection_id);
+    let _ = tcp_response_sender.send(TcpSocketResponse::Disconnection {
+        connection_id,
+    });
 
     Ok(())
 }

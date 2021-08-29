@@ -1,8 +1,21 @@
+pub mod endpoints;
 pub mod net;
 
 use log::error;
 use std::future::Future;
 use tokio::sync::mpsc;
+
+/// Unique identifier that identifies the flow of video end-to-end.  Normally when media data enters
+/// the beginning of a workflow it will be given a unique stream identifier, and it will keep that
+/// identifier until it leaves the last stage of the workflow.  This allows for logging to give
+/// visibility of how media is processed throughout it's all lifetime.
+///
+/// If a workflow has a step that requires media to leave the system and then come back in for
+/// further steps in the workflow than it should keep the same stream identifier.  For example, if
+/// a workflow has an ffmpeg transcoding step in the workflow (e.g. to add a watermark), when
+/// ffmpeg pushes the video in it will keep the same identifier.
+#[derive(Clone, Debug)]
+pub struct StreamId(String);
 
 /// Sends a message over an `mpsc::UnboundedSender` and returns a boolean if it was successful.
 /// Sending is not successful if the channel is closed.  Makes it easier to not `match` every
