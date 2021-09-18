@@ -117,18 +117,26 @@ async fn socket_reader(
 ) -> Result<(), std::io::Error> {
     let mut buffer = BytesMut::with_capacity(4096);
     loop {
-        let bytes_read = reader.read_buf(&mut buffer).await?;
-        if bytes_read == 0 {
-            break;
-        }
+        tokio::select! {
+            bytes_read = reader.read_buf(&mut buffer) => {
+                let bytes_read = bytes_read?;
+                if bytes_read == 0 {
+                    break;
+                }
 
-        let bytes = buffer.split_off(bytes_read);
-        let received_bytes = buffer.freeze();
-        if !send(&mut incoming_sender, received_bytes) {
-            break;
-        }
+                let bytes = buffer.split_off(bytes_read);
+                let received_bytes = buffer.freeze();
+                if !send(&mut incoming_sender, received_bytes) {
+                    break;
+                }
 
-        buffer = bytes;
+                buffer = bytes;
+            },
+
+            () = incoming_sender.closed() => {
+                break;
+            },
+        }
     }
 
     info!("Connection {}: reader task closed", connection_id);
