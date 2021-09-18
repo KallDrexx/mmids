@@ -3,7 +3,7 @@ use crate::net::ConnectionId;
 use crate::{send, spawn_and_log};
 use bytes::{Bytes, BytesMut};
 use futures::future::FutureExt;
-use log::{info, warn};
+use log::{info, warn, debug};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -28,9 +28,6 @@ pub struct ListenerParams {
 
     /// The channel in which to send notifications of port activity to
     pub response_channel: UnboundedSender<TcpSocketResponse>,
-
-    /// Channel which is used to determine when the owner task has completed
-    pub owner_disconnection_signal: UnboundedSender<()>,
 }
 
 /// Starts listening for TCP connections on the specified port.  It returns a channel which
@@ -48,15 +45,14 @@ async fn listen(
 ) -> Result<(), std::io::Error> {
     let ListenerParams {
         port,
-        owner_disconnection_signal,
         response_channel,
     } = params;
     let bind_address = "0.0.0.0:".to_string() + &port.to_string();
     let listener = TcpListener::bind(bind_address).await?;
 
+    debug!("Listener for port {} started", port);
     loop {
-        let disconnect = owner_disconnection_signal.clone();
-
+        let disconnect = response_channel.clone();
         tokio::select! {
             result = listener.accept() => {
                 let (socket, client_info) = result?;
@@ -68,6 +64,7 @@ async fn listen(
             }
         }
     }
+    debug!("Listener for port {} stopped", port);
 
     Ok(())
 }

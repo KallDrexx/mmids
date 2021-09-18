@@ -30,9 +30,6 @@ enum SocketManagerFutureResult {
     ListenerShutdown {
         port: u16,
     },
-    OwnerShutdown {
-        port: u16,
-    },
 }
 
 struct OpenPort {
@@ -69,10 +66,6 @@ impl<'a> SocketManager<'a> {
                     }
                 }
 
-                SocketManagerFutureResult::OwnerShutdown { port } => {
-                    self.open_ports.remove(&port);
-                }
-
                 SocketManagerFutureResult::ListenerShutdown { port } => {
                     match self.open_ports.remove(&port) {
                         None => (),
@@ -92,14 +85,11 @@ impl<'a> SocketManager<'a> {
         match request {
             TcpSocketRequest::OpenPort {
                 port,
-                request_id,
                 mut response_channel,
-                disconnection_signal,
             } => {
                 if self.open_ports.contains_key(&port) {
                     debug!("Port {} is already in use!", port);
                     let message = TcpSocketResponse::RequestDenied {
-                        request_id,
                         reason: RequestFailureReason::PortInUse,
                     };
 
@@ -115,17 +105,14 @@ impl<'a> SocketManager<'a> {
                     let listener_shutdown = start_listener(ListenerParams {
                         port,
                         response_channel: response_channel.clone(),
-                        owner_disconnection_signal: disconnection_signal.clone(),
                     });
 
                     self.futures
                         .push(listener_shutdown_future(port, listener_shutdown).boxed());
-                    self.futures
-                        .push(owner_shutdown_future(port, disconnection_signal).boxed());
 
                     send(
                         &mut response_channel,
-                        TcpSocketResponse::RequestAccepted { request_id },
+                        TcpSocketResponse::RequestAccepted { },
                     );
                 }
             }
@@ -142,15 +129,6 @@ async fn request_receiver_future(
         request: result,
         receiver,
     }
-}
-
-async fn owner_shutdown_future(
-    port: u16,
-    signal: UnboundedSender<()>,
-) -> SocketManagerFutureResult {
-    signal.closed().await;
-
-    SocketManagerFutureResult::OwnerShutdown { port }
 }
 
 async fn listener_shutdown_future(

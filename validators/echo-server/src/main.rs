@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use log::{debug, error, info, warn};
@@ -28,12 +28,9 @@ pub async fn main() {
 
     let socket_manager_sender = start_socket_manager();
     let (response_sender, mut response_receiver) = unbounded_channel();
-    let (shutdown_sender, _shutdown_receiver) = unbounded_channel();
     let message = TcpSocketRequest::OpenPort {
         port: 8888,
         response_channel: response_sender,
-        request_id: 1,
-        disconnection_signal: shutdown_sender,
     };
 
     debug!("Opening port 8888");
@@ -51,13 +48,15 @@ pub async fn main() {
     };
 
     match response {
-        TcpSocketResponse::RequestAccepted { request_id: 1 } => (),
+        TcpSocketResponse::RequestAccepted {} => (),
         x => panic!("Unexpected response: {:?}", x),
     };
 
     let mut connections = HashMap::new();
     let mut futures = FuturesUnordered::new();
     futures.push(wait_for_responses(response_receiver).boxed());
+
+    let mut pending_received = BytesMut::new();
 
     while let Some(result) = futures.next().await {
         match result {
@@ -113,30 +112,42 @@ pub async fn main() {
             FutureResult::BytesReceived(connection_id, bytes, receiver) => {
                 futures.push(wait_for_bytes(connection_id.clone(), receiver).boxed());
 
-                if let Ok(string) = std::str::from_utf8(&bytes) {
-                    info!(
-                        "Received data from connection {:?}: {}",
-                        connection_id,
-                        string.trim()
-                    );
+                pending_received.extend(bytes);
+                let mut index = None;
+                for x in 0..pending_received.len() {
+                    if pending_received[x] == 10 {
+                        index = Some(x);
+                        break;
+                    }
+                }
 
-                    let sender = match connections.get(&connection_id) {
-                        Some(connection) => &connection.sender,
-                        None => {
-                            error!(
+                if let Some(index) = index {
+                    let received = pending_received.split_to(index + 1);
+                    if let Ok(string) = std::str::from_utf8(&received) {
+                        info!(
+                            "Received data from connection {:?}: {}",
+                            connection_id,
+                            string.trim()
+                        );
+
+                        let sender = match connections.get(&connection_id) {
+                            Some(connection) => &connection.sender,
+                            None => {
+                                error!(
                                 "Received packet for non-cataloged connection {:?}",
                                 connection_id
                             );
-                            break;
-                        }
-                    };
+                                break;
+                            }
+                        };
 
-                    let response = format!("You said: {}", string);
-                    let packet = OutboundPacket {
-                        bytes: Bytes::from(response),
-                        can_be_dropped: false,
-                    };
-                    let _ = sender.send(packet);
+                        let response = format!("You said: {}", string);
+                        let packet = OutboundPacket {
+                            bytes: Bytes::from(response),
+                            can_be_dropped: false,
+                        };
+                        let _ = sender.send(packet);
+                    }
                 }
             }
         }
