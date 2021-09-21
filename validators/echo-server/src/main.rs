@@ -134,9 +134,9 @@ pub async fn main() {
                             Some(connection) => &connection.sender,
                             None => {
                                 error!(
-                                "Received packet for non-cataloged connection {:?}",
-                                connection_id
-                            );
+                                    "Received packet for non-cataloged connection {:?}",
+                                    connection_id
+                                );
                                 break;
                             }
                         };

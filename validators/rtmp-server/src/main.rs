@@ -1,21 +1,14 @@
-use log::{info, error, warn};
-use mmids_core::net::ConnectionId;
-use mmids_core::net::tcp::{
-    start_socket_manager,
-    OutboundPacket,
-    TcpSocketRequest,
-    TcpSocketResponse,
-};
+use log::{error, info, warn};
+use mmids_core::net::tcp::start_socket_manager;
 
 use mmids_core::endpoints::rtmp_server::{
-    start_rtmp_server_endpoint,
-    RtmpEndpointRequest,
+    start_rtmp_server_endpoint, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
+    RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,
-    RtmpEndpointPublisherMessage,
 };
 
 use std::collections::HashMap;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::unbounded_channel;
 
 #[tokio::main()]
 pub async fn main() {
@@ -25,7 +18,7 @@ pub async fn main() {
 
     let socket_manager_sender = start_socket_manager();
     let rtmp_server_sender = start_rtmp_server_endpoint(socket_manager_sender);
-    let (rtmp_response_sender, mut rtmp_response_receiver) = unbounded_channel();
+    let (rtmp_response_sender, mut publish_notification_receiver) = unbounded_channel();
     let _ = rtmp_server_sender.send(RtmpEndpointRequest::ListenForPublishers {
         port: 1935,
         rtmp_app: "live".to_string(),
@@ -34,9 +27,9 @@ pub async fn main() {
         stream_id: None,
     });
 
-    info!("Listening for publish requests on port 1935 and app 'live'");
+    info!("Requesting to listen for publish requests on port 1935 and app 'live'");
 
-    match rtmp_response_receiver.recv().await {
+    match publish_notification_receiver.recv().await {
         Some(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful) => (),
         Some(x) => {
             error!("Unexpected initial message: {:?}", x);
@@ -49,38 +42,125 @@ pub async fn main() {
         }
     }
 
+    info!("Publish listen request successful");
+
+    let (notification_sender, mut watch_notification_receiver) = unbounded_channel();
+    let (media_sender, media_receiver) = unbounded_channel();
+
+    let _ = rtmp_server_sender.send(RtmpEndpointRequest::ListenForWatchers {
+        port: 1935,
+        rtmp_app: "live".to_string(),
+        rtmp_stream_key: StreamKeyRegistration::Any,
+        media_channel: media_receiver,
+        notification_channel: notification_sender,
+    });
+
+    info!("Requesting to listening for play requests on port 1935 and app 'live'");
+    match watch_notification_receiver.recv().await {
+        Some(RtmpEndpointWatcherNotification::ReceiverRegistrationSuccessful) => (),
+        Some(x) => {
+            error!("Unexpected initial watch message: {:?}", x);
+            return;
+        }
+
+        None => {
+            error!("Watch response receiver closed before any responses came");
+            return;
+        }
+    }
+
+    info!("Playback listen request successful");
+
+    let mut publisher_stream_key_map = HashMap::new();
     let mut announce_video_data = true;
     let mut announce_audio_data = true;
-    while let Some(message) = rtmp_response_receiver.recv().await {
-        match message {
-            RtmpEndpointPublisherMessage::NewPublisherConnected {connection_id, stream_key, stream_id} => {
-                info!("Connection {} connected as publisher for stream_key {} and stream id {:?}", connection_id, stream_key, stream_id);
-            }
-
-            RtmpEndpointPublisherMessage::PublishingStopped {connection_id} => {
-                info!("Connection {} stopped publishing", connection_id);
-            }
-
-            RtmpEndpointPublisherMessage::StreamMetadataChanged {publisher, metadata} => {
-                info!("Connection {} sent new stream metadata: {:?}", publisher, metadata);
-            }
-
-            RtmpEndpointPublisherMessage::NewVideoData {publisher, data: _, timestamp: _} => {
-                if announce_video_data {
-                    info!("Connection {} sent video data", publisher);
-                    announce_video_data = false;
+    loop {
+        tokio::select! {
+            message = publish_notification_receiver.recv() => {
+                if message.is_none() {
+                    break;
                 }
-            }
 
-            RtmpEndpointPublisherMessage::NewAudioData {publisher, data: _, timestamp: _} => {
-                if announce_audio_data {
-                    info!("Connection {} sent audio data", publisher);
-                    announce_audio_data = false;
+                match message.unwrap() {
+                    RtmpEndpointPublisherMessage::NewPublisherConnected {connection_id, stream_key, stream_id} => {
+                        info!("Connection {} connected as publisher for stream_key {} and stream id {:?}", connection_id, stream_key, stream_id);
+                        publisher_stream_key_map.insert(connection_id, stream_key);
+                    }
+
+                    RtmpEndpointPublisherMessage::PublishingStopped {connection_id} => {
+                        info!("Connection {} stopped publishing", connection_id);
+                    }
+
+                    RtmpEndpointPublisherMessage::StreamMetadataChanged {publisher, metadata} => {
+                        info!("Connection {} sent new stream metadata: {:?}", publisher, metadata);
+
+                        let stream_key = match publisher_stream_key_map.get(&publisher) {
+                            Some(x) => x,
+                            None => {
+                                error!("Received stream metadata from unknown publisher with connection id {}", publisher);
+                                continue;
+                            }
+                        };
+
+                        let _ = media_sender.send(RtmpEndpointMediaMessage {
+                            stream_key: (*stream_key).clone(),
+                            data: RtmpEndpointMediaData::NewStreamMetaData {
+                                metadata,
+                            },
+                        });
+                    }
+
+                    RtmpEndpointPublisherMessage::NewVideoData {publisher, data , timestamp} => {
+                        if announce_video_data {
+                            info!("Connection {} sent video data", publisher);
+                            announce_video_data = false;
+                        }
+
+                        let stream_key = match publisher_stream_key_map.get(&publisher) {
+                            Some(x) => x,
+                            None => {
+                                error!("Received video from unknown publisher with connection id {}", publisher);
+                                continue;
+                            }
+                        };
+
+                        let _ = media_sender.send(RtmpEndpointMediaMessage {
+                            stream_key: (*stream_key).clone(),
+                            data: RtmpEndpointMediaData::NewVideoData {
+                                data,
+                                timestamp,
+                            },
+                        });
+                    }
+
+                    RtmpEndpointPublisherMessage::NewAudioData {publisher, data, timestamp} => {
+                        if announce_audio_data {
+                            info!("Connection {} sent audio data", publisher);
+                            announce_audio_data = false;
+                        }
+
+                        let stream_key = match publisher_stream_key_map.get(&publisher) {
+                            Some(x) => x,
+                            None => {
+                                error!("Received audio from unknown publisher with connection id {}", publisher);
+                                continue;
+                            }
+                        };
+
+                        let _ = media_sender.send(RtmpEndpointMediaMessage {
+                            stream_key: (*stream_key).clone(),
+                            data: RtmpEndpointMediaData::NewAudioData {
+                                data,
+                                timestamp,
+                            },
+                        });
+                    }
+
+                    message => {
+                        warn!("Unknown message received from publisher: {:?}", message);
+                    }
                 }
-            }
 
-            message => {
-                warn!("Unknown message received from publisher: {:?}", message);
             }
         }
     }

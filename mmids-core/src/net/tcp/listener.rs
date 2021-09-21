@@ -3,7 +3,7 @@ use crate::net::ConnectionId;
 use crate::{send, spawn_and_log};
 use bytes::{Bytes, BytesMut};
 use futures::future::FutureExt;
-use log::{info, warn, debug};
+use log::{debug, info, warn};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -145,9 +145,7 @@ async fn socket_reader(
     }
 
     info!("Connection {}: reader task closed", connection_id);
-    let _ = tcp_response_sender.send(TcpSocketResponse::Disconnection {
-        connection_id,
-    });
+    let _ = tcp_response_sender.send(TcpSocketResponse::Disconnection { connection_id });
 
     Ok(())
 }

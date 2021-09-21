@@ -112,10 +112,7 @@ impl<'a> SocketManager<'a> {
                     self.futures
                         .push(listener_shutdown_future(port, listener_shutdown).boxed());
 
-                    send(
-                        &mut response_channel,
-                        TcpSocketResponse::RequestAccepted { },
-                    );
+                    send(&mut response_channel, TcpSocketResponse::RequestAccepted {});
                 }
             }
         }

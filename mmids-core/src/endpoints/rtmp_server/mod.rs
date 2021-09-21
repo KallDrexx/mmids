@@ -4,12 +4,12 @@ use crate::net::tcp::TcpSocketRequest;
 use crate::net::ConnectionId;
 use crate::StreamId;
 use actor::actor_types::RtmpServerEndpointActor;
-use futures::stream::FuturesUnordered;
-use std::collections::HashMap;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use rml_rtmp::sessions::StreamMetadata;
 use bytes::Bytes;
+use futures::stream::FuturesUnordered;
+use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
+use std::collections::HashMap;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub fn start_rtmp_server_endpoint(
     socket_request_sender: UnboundedSender<TcpSocketRequest>,
@@ -59,9 +59,28 @@ pub enum RtmpEndpointRequest {
         /// back in for later workflow steps (e.g. an external transcoding workflow).
         stream_id: Option<StreamId>,
     },
+
+    /// Requests the RTMP server to allow clients to receive video on the given port, app,
+    /// and stream key combinations
+    ListenForWatchers {
+        /// Port to listen on
+        port: u16,
+
+        /// Name of the RTMP application playback clients will connect to
+        rtmp_app: String,
+
+        /// Stream keys clients can receive video on
+        rtmp_stream_key: StreamKeyRegistration,
+
+        /// The channel that the rtmp server endpoint will send notifications to
+        notification_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
+
+        /// The channel that the registrant will send updated media data to the rtmp endpoint on
+        media_channel: UnboundedReceiver<RtmpEndpointMediaMessage>,
+    },
 }
 
-/// Messages the rtmp server endpoint will send to registrants.
+/// Messages the rtmp server endpoint will send to publisher registrants.
 #[derive(Debug)]
 pub enum RtmpEndpointPublisherMessage {
     /// Notification that the publisher registration failed.  No further messages will be sent
@@ -109,5 +128,48 @@ pub enum RtmpEndpointPublisherMessage {
         publisher: ConnectionId,
         data: Bytes,
         timestamp: RtmpTimestamp,
-    }
+    },
+}
+
+/// Messages the rtmp server endpoint will send to watcher registrants
+#[derive(Debug)]
+pub enum RtmpEndpointWatcherNotification {
+    /// The request to register for watchers has failed.  No further messages will be sent
+    /// afterwards.
+    ReceiverRegistrationFailed,
+
+    /// The request to register for watchers was successful
+    ReceiverRegistrationSuccessful,
+
+    /// Notifies the registrant that at least one watcher is now watching on a particular
+    /// stream key,
+    StreamKeyBecameActive { stream_key: String },
+
+    /// Notifies the registrant that the last watcher has disconnected on the stream key, and
+    /// there are no longer anyone watching
+    StreamKeyBecameInactive { stream_key: String },
+}
+
+/// Message watcher registrants send to announce new media data that should be sent to watchers
+pub struct RtmpEndpointMediaMessage {
+    pub stream_key: String,
+    pub data: RtmpEndpointMediaData,
+}
+
+/// New media data that should be sent to watchers
+#[derive(Debug, Clone)]
+pub enum RtmpEndpointMediaData {
+    NewStreamMetaData {
+        metadata: StreamMetadata,
+    },
+
+    NewVideoData {
+        data: Bytes,
+        timestamp: RtmpTimestamp,
+    },
+
+    NewAudioData {
+        data: Bytes,
+        timestamp: RtmpTimestamp,
+    },
 }

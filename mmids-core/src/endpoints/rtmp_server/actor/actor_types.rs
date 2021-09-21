@@ -1,17 +1,18 @@
-use super::{
-    RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
-};
+use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
 
 use super::connection_handler::{ConnectionRequest, ConnectionResponse};
 
 use crate::net::tcp::TcpSocketResponse;
 use crate::net::ConnectionId;
 
+use crate::endpoints::rtmp_server::{
+    RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
+};
+use crate::StreamId;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use crate::StreamId;
 
 pub enum FutureResult {
     EndpointRequestReceived {
@@ -44,6 +45,21 @@ pub enum FutureResult {
         connection_id: ConnectionId,
     },
 
+    WatcherRegistrantGone {
+        port: u16,
+        app: String,
+        stream_key: StreamKeyRegistration,
+    },
+
+    WatcherMediaDataReceived {
+        data: RtmpEndpointMediaData,
+        port: u16,
+        app: String,
+        stream_key: String,
+        stream_key_registration: StreamKeyRegistration,
+        receiver: UnboundedReceiver<RtmpEndpointMediaMessage>,
+    },
+
     NoMoreEndpointRequesters,
     SocketManagerClosed,
 }
@@ -61,12 +77,18 @@ pub struct PublishingRegistrant {
     pub stream_id: Option<StreamId>,
 }
 
+pub struct WatcherRegistrant {
+    pub response_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
+}
+
 pub struct StreamKeyConnections {
     pub publisher: Option<ConnectionId>,
+    pub watchers: HashMap<ConnectionId, WatcherDetails>,
 }
 
 pub struct RtmpAppMapping {
     pub publisher_registrants: HashMap<StreamKeyRegistration, PublishingRegistrant>,
+    pub watcher_registrants: HashMap<StreamKeyRegistration, WatcherRegistrant>,
     pub active_stream_keys: HashMap<String, StreamKeyConnections>,
 }
 
@@ -92,6 +114,11 @@ pub enum ListenerRequest {
         channel: UnboundedSender<RtmpEndpointPublisherMessage>,
         stream_id: Option<StreamId>,
     },
+
+    Watcher {
+        notification_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
+        media_channel: UnboundedReceiver<RtmpEndpointMediaMessage>,
+    },
 }
 
 pub struct Connection {
@@ -105,4 +132,8 @@ pub enum ConnectionState {
         rtmp_app: String,
         stream_key: String,
     },
+}
+
+pub struct WatcherDetails {
+    pub media_sender: UnboundedSender<RtmpEndpointMediaData>,
 }

@@ -31,8 +31,7 @@ pub enum TcpSocketRequest {
 /// Response messages that the TCP socket manager may send back
 pub enum TcpSocketResponse {
     /// Notification that the specified request that was previously made was accepted
-    RequestAccepted {
-    },
+    RequestAccepted {},
 
     /// Notification that the specified request that was previously made was denied
     RequestDenied {
