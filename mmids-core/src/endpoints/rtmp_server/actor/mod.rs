@@ -130,7 +130,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         None => continue,
                     };
 
-                    port_map.connections.remove(&connection_id);
+                    clean_disconnected_connection(connection_id, port_map);
                 }
 
                 FutureResult::WatcherMediaDataReceived {
@@ -515,34 +515,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
 
                 TcpSocketResponse::Disconnection { connection_id } => {
                     // Clean this connection up
-                    if let Some(connection) = port_map.connections.remove(&connection_id) {
-                        info!("Connection {} disconnected.  Cleaning it up", connection_id);
-
-                        match connection.state {
-                            ConnectionState::None => (),
-                            ConnectionState::Publishing {
-                                rtmp_app,
-                                stream_key,
-                            } => {
-                                if let Some(application) =
-                                    port_map.rtmp_applications.get_mut(rtmp_app.as_str())
-                                {
-                                    if let Some(active_key) =
-                                        application.active_stream_keys.get_mut(&stream_key)
-                                    {
-                                        let remove = match &active_key.publisher {
-                                            Some(x) => *x == connection_id,
-                                            None => false,
-                                        };
-
-                                        if remove {
-                                            active_key.publisher = None;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    clean_disconnected_connection(connection_id, port_map);
                 }
             }
         }
@@ -720,7 +693,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 };
 
                 // Is this stream key registered for watching
-                let _ = match application
+                let registrant = match application
                     .watcher_registrants
                     .get(&StreamKeyRegistration::Any)
                 {
@@ -744,12 +717,26 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     }
                 };
 
-                let active_stream_key = application.active_stream_keys.entry(stream_key).or_insert(
-                    StreamKeyConnections {
+                let active_stream_key = application
+                    .active_stream_keys
+                    .entry(stream_key.clone())
+                    .or_insert(StreamKeyConnections {
                         watchers: HashMap::new(),
                         publisher: None,
-                    },
-                );
+                    });
+
+                connection.state = ConnectionState::Watching {
+                    rtmp_app,
+                    stream_key: stream_key.clone(),
+                };
+
+                if active_stream_key.watchers.is_empty() {
+                    let _ = registrant.response_channel.send(
+                        RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+                            stream_key: stream_key.clone(),
+                        },
+                    );
+                }
 
                 let (media_sender, media_receiver) = unbounded_channel();
                 active_stream_key
@@ -765,6 +752,86 @@ impl<'a> RtmpServerEndpointActor<'a> {
             }
         }
     }
+}
+
+fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut PortMapping) {
+    let connection = match port_map.connections.remove(&connection_id) {
+        Some(x) => x,
+        None => return,
+    };
+
+    info!("Connection {} disconnected.  Cleaning it up", connection_id);
+    match connection.state {
+        ConnectionState::None => (),
+        ConnectionState::Publishing {
+            rtmp_app,
+            stream_key,
+        } => match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+            None => (),
+            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
+                None => (),
+                Some(active_key) => {
+                    match &active_key.publisher {
+                        None => (),
+                        Some(publisher_id) => {
+                            if *publisher_id == connection_id {
+                                active_key.publisher = None;
+
+                                let registrant = match app_map
+                                    .publisher_registrants
+                                    .get(&StreamKeyRegistration::Any)
+                                {
+                                    Some(x) => Some(x),
+                                    None => app_map
+                                        .publisher_registrants
+                                        .get(&StreamKeyRegistration::Exact(stream_key.clone())),
+                                };
+
+                                if let Some(registrant) = registrant {
+                                    let _ = registrant.response_channel.send(
+                                        RtmpEndpointPublisherMessage::PublishingStopped {
+                                            connection_id,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    };
+                }
+            },
+        },
+
+        ConnectionState::Watching {
+            rtmp_app,
+            stream_key,
+        } => match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+            None => (),
+            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
+                None => (),
+                Some(active_key) => {
+                    active_key.watchers.remove(&connection_id);
+
+                    if active_key.watchers.is_empty() {
+                        let registrant =
+                            match app_map.watcher_registrants.get(&StreamKeyRegistration::Any) {
+                                Some(x) => Some(x),
+                                None => app_map
+                                    .watcher_registrants
+                                    .get(&StreamKeyRegistration::Exact(stream_key.clone())),
+                            };
+
+                        if let Some(registrant) = registrant {
+                            let _ = registrant.response_channel.send(
+                                RtmpEndpointWatcherNotification::StreamKeyBecameInactive {
+                                    stream_key,
+                                },
+                            );
+                        }
+                    }
+                }
+            },
+        },
+    };
 }
 
 mod internal_futures {

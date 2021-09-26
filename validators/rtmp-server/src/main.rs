@@ -76,6 +76,26 @@ pub async fn main() {
     let mut announce_audio_data = true;
     loop {
         tokio::select! {
+            message = watch_notification_receiver.recv() => {
+                if message.is_none() {
+                    break;
+                }
+
+                match message.unwrap() {
+                    RtmpEndpointWatcherNotification::StreamKeyBecameActive {stream_key} => {
+                        info!("Stream key '{}' now has at least one watcher", stream_key);
+                    }
+
+                    RtmpEndpointWatcherNotification::StreamKeyBecameInactive {stream_key} => {
+                        info!("Stream key '{}' no longer has any watchers", stream_key);
+                    }
+
+                    event => {
+                        info!("Unexpected watcher notification: {:?}", event);
+                    }
+                }
+            }
+
             message = publish_notification_receiver.recv() => {
                 if message.is_none() {
                     break;

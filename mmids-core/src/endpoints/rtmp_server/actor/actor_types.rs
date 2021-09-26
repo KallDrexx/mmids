@@ -128,7 +128,13 @@ pub struct Connection {
 
 pub enum ConnectionState {
     None,
+
     Publishing {
+        rtmp_app: String,
+        stream_key: String,
+    },
+
+    Watching {
         rtmp_app: String,
         stream_key: String,
     },
