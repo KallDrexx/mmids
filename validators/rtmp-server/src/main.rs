@@ -135,7 +135,7 @@ pub async fn main() {
                         data,
                         timestamp,
                         is_keyframe,
-                        is_parameter_set,
+                        is_sequence_header,
                         codec,
                     } => {
                         if announce_video_data {
@@ -157,7 +157,7 @@ pub async fn main() {
                                 data,
                                 timestamp,
                                 codec,
-                                is_parameter_set,
+                                is_sequence_header,
                                 is_keyframe,
                             },
                         });
@@ -166,6 +166,7 @@ pub async fn main() {
                     RtmpEndpointPublisherMessage::NewAudioData {
                         publisher,
                         data,
+                        is_sequence_header,
                         timestamp,
                         codec,
                     } => {
@@ -186,6 +187,7 @@ pub async fn main() {
                             stream_key: (*stream_key).clone(),
                             data: RtmpEndpointMediaData::NewAudioData {
                                 data,
+                                is_sequence_header,
                                 timestamp,
                                 codec,
                             },

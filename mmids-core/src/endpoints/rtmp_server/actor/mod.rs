@@ -1,7 +1,7 @@
 pub mod actor_types;
 mod connection_handler;
 
-use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
+use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration, RtmpEndpointMediaData};
 use crate::endpoints::rtmp_server::actor::connection_handler::ConnectionResponse;
 use crate::endpoints::rtmp_server::RtmpEndpointWatcherNotification;
 use crate::net::tcp::{TcpSocketRequest, TcpSocketResponse};
@@ -15,6 +15,7 @@ use log::{error, info, warn};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
+use rml_rtmp::time::RtmpTimestamp;
 
 impl<'a> RtmpServerEndpointActor<'a> {
     pub async fn run(
@@ -115,7 +116,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                             connection_id.clone(),
                             receiver,
                         )
-                        .boxed(),
+                            .boxed(),
                     );
 
                     self.handle_connection_handler_request(port, connection_id, request);
@@ -148,23 +149,45 @@ impl<'a> RtmpServerEndpointActor<'a> {
                             app.clone(),
                             stream_key_registration,
                         )
-                        .boxed(),
+                            .boxed(),
                     );
 
-                    let port_map = match self.ports.get(&port) {
+                    let port_map = match self.ports.get_mut(&port) {
                         Some(x) => x,
                         None => continue,
                     };
 
-                    let app_map = match port_map.rtmp_applications.get(app.as_str()) {
+                    let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
                         Some(x) => x,
                         None => continue,
                     };
 
-                    let key_details = match app_map.active_stream_keys.get(stream_key.as_str()) {
+                    let key_details = match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
                         Some(x) => x,
                         None => continue,
                     };
+
+                    match &data {
+                        RtmpEndpointMediaData::NewVideoData { data, codec, is_sequence_header, .. } => {
+                            if *is_sequence_header {
+                                key_details.latest_video_sequence_header = Some(VideoSequenceHeader {
+                                    codec: codec.clone(),
+                                    data: data.clone(),
+                                });
+                            }
+                        }
+
+                        RtmpEndpointMediaData::NewAudioData { data, codec, is_sequence_header, .. } => {
+                            if *is_sequence_header {
+                                key_details.latest_audio_sequence_header = Some(AudioSequenceHeader {
+                                    codec: codec.clone(),
+                                    data: data.clone(),
+                                });
+                            }
+                        }
+
+                        _ => (),
+                    }
 
                     for (_, watcher_details) in &key_details.watchers {
                         let _ = watcher_details.media_sender.send(data.clone());
@@ -326,7 +349,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         stream_key,
                         id,
                     )
-                    .boxed(),
+                        .boxed(),
                 );
 
                 // If the port isn't in a listening mode, we don't want to claim that
@@ -397,7 +420,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         rtmp_app.clone(),
                         stream_key.clone(),
                     )
-                    .boxed(),
+                        .boxed(),
                 );
 
                 self.futures.push(
@@ -407,7 +430,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         rtmp_app,
                         stream_key,
                     )
-                    .boxed(),
+                        .boxed(),
                 );
 
                 // If the port isn't open yet, we don't want to claim registration was successful yet
@@ -509,7 +532,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                             connection_id,
                             request_receiver,
                         )
-                        .boxed(),
+                            .boxed(),
                     );
                 }
 
@@ -534,24 +557,8 @@ impl<'a> RtmpServerEndpointActor<'a> {
         let port_map = match self.ports.get_mut(&port) {
             Some(x) => x,
             None => {
-                error!(
-                    "Connection handler for connection {:?} sent {:?} on port {}, but that \
-                port isn't managed yet!",
-                    connection_id, request, port
-                );
-
-                return;
-            }
-        };
-
-        let connection = match port_map.connections.get_mut(&connection_id) {
-            Some(x) => x,
-            None => {
-                warn!(
-                    "Connection handler for connection {:?} sent {:?} on port {}, but that \
-                connection isn't being tracked.",
-                    connection_id, request, port
-                );
+                error!("Connection handler for connection {:?} sent {:?} on port {}, but that \
+                port isn't managed yet!", connection_id, request, port);
 
                 return;
             }
@@ -559,199 +566,274 @@ impl<'a> RtmpServerEndpointActor<'a> {
 
         match request {
             ConnectionRequest::RequestConnectToApp { rtmp_app } => {
-                let response = if !port_map.rtmp_applications.contains_key(rtmp_app.as_str()) {
-                    info!("Connection {} requested connection to RTMP app '{}' which isn't registered yet", connection_id, rtmp_app);
-
-                    ConnectionResponse::RequestRejected
-                } else {
-                    info!(
-                        "Connection {} accepted connection for RTMP app '{}'",
-                        connection_id, rtmp_app
-                    );
-
-                    ConnectionResponse::AppConnectRequestAccepted
-                };
-
-                let _ = connection.response_channel.send(response);
+                handle_connection_request_connect_to_app(&connection_id, port_map, port, rtmp_app);
             }
 
             ConnectionRequest::RequestPublish {
                 rtmp_app,
                 stream_key,
             } => {
-                // Has this RTMP application been registered yet?
-                let application = match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
-                    Some(x) => x,
-                    None => {
-                        info!(
-                            "Connection {} requested publishing to '{}/{}', but the RTMP app '{}' \
-                        isn't registered yet",
-                            connection_id, rtmp_app, stream_key, rtmp_app
-                        );
-
-                        let _ = connection
-                            .response_channel
-                            .send(ConnectionResponse::RequestRejected);
-
-                        return;
-                    }
-                };
-
-                // Has this stream key been registered yet?
-                let registrant = match application
-                    .publisher_registrants
-                    .get(&StreamKeyRegistration::Any)
-                {
-                    Some(x) => x,
-                    None => {
-                        match application
-                            .publisher_registrants
-                            .get(&StreamKeyRegistration::Exact(stream_key.clone()))
-                        {
-                            Some(x) => x,
-                            None => {
-                                error!("Connection {} requested publishing to '{}/{}', but no one has registered \
-                                to support publishers on that stream key", connection_id, rtmp_app, stream_key);
-
-                                let _ = connection
-                                    .response_channel
-                                    .send(ConnectionResponse::RequestRejected);
-                                return;
-                            }
-                        }
-                    }
-                };
-
-                // app/stream key combination is valid and we have a registrant for itk
-                let stream_key_connections = application
-                    .active_stream_keys
-                    .entry(stream_key.clone())
-                    .or_insert(StreamKeyConnections {
-                        publisher: None,
-                        watchers: HashMap::new(),
-                    });
-
-                // Is someone already publishing on this stream key?
-                if let Some(id) = &stream_key_connections.publisher {
-                    error!(
-                        "Connection {} requested publishing to '{}/{}', but connection {} is \
-                    already publishing to this stream key",
-                        connection_id, rtmp_app, stream_key, id
-                    );
-
-                    let _ = connection
-                        .response_channel
-                        .send(ConnectionResponse::RequestRejected);
-                    return;
-                }
-
-                // All good to publish
-                stream_key_connections.publisher = Some(connection_id.clone());
-                connection.state = ConnectionState::Publishing {
-                    rtmp_app: rtmp_app.clone(),
-                    stream_key: stream_key.clone(),
-                };
-
-                let stream_id = if let Some(id) = &registrant.stream_id {
-                    (*id).clone()
-                } else {
-                    StreamId(Uuid::new_v4().to_string())
-                };
-
-                let _ =
-                    connection
-                        .response_channel
-                        .send(ConnectionResponse::PublishRequestAccepted {
-                            channel: registrant.response_channel.clone(),
-                        });
-
-                let _ = registrant.response_channel.send(
-                    RtmpEndpointPublisherMessage::NewPublisherConnected {
-                        connection_id,
-                        stream_key,
-                        stream_id,
-                    },
-                );
+                handle_connection_request_publish(&connection_id, port_map, port, rtmp_app, &stream_key);
             }
 
             ConnectionRequest::RequestWatch {
                 rtmp_app,
                 stream_key,
             } => {
-                // Has this app been registered yet?
-                let application = match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
-                    Some(x) => x,
-                    None => {
-                        info!("Connection {} requested watching '{}/{}' but that app is not registered \
-                        to accept watchers", connection_id, rtmp_app, stream_key);
-
-                        let _ = connection
-                            .response_channel
-                            .send(ConnectionResponse::RequestRejected);
-                        return;
-                    }
-                };
-
-                // Is this stream key registered for watching
-                let registrant = match application
-                    .watcher_registrants
-                    .get(&StreamKeyRegistration::Any)
-                {
-                    Some(x) => x,
-                    None => {
-                        match application
-                            .watcher_registrants
-                            .get(&StreamKeyRegistration::Exact(stream_key.clone()))
-                        {
-                            Some(x) => x,
-                            None => {
-                                info!("Connection {} requested watching '{}/{}' but that stream key is \
-                                not registered to accept watchers", connection_id, rtmp_app, stream_key);
-
-                                let _ = connection
-                                    .response_channel
-                                    .send(ConnectionResponse::RequestRejected);
-                                return;
-                            }
-                        }
-                    }
-                };
-
-                let active_stream_key = application
-                    .active_stream_keys
-                    .entry(stream_key.clone())
-                    .or_insert(StreamKeyConnections {
-                        watchers: HashMap::new(),
-                        publisher: None,
-                    });
-
-                connection.state = ConnectionState::Watching {
-                    rtmp_app,
-                    stream_key: stream_key.clone(),
-                };
-
-                if active_stream_key.watchers.is_empty() {
-                    let _ = registrant.response_channel.send(
-                        RtmpEndpointWatcherNotification::StreamKeyBecameActive {
-                            stream_key: stream_key.clone(),
-                        },
-                    );
-                }
-
-                let (media_sender, media_receiver) = unbounded_channel();
-                active_stream_key
-                    .watchers
-                    .insert(connection_id, WatcherDetails { media_sender });
-
-                let _ =
-                    connection
-                        .response_channel
-                        .send(ConnectionResponse::WatchRequestAccepted {
-                            channel: media_receiver,
-                        });
+                handle_connection_request_watch(connection_id, port_map, port, rtmp_app, &stream_key);
             }
         }
     }
+}
+
+fn handle_connection_request_watch(
+    connection_id: ConnectionId,
+    port_map: &mut PortMapping,
+    port: u16,
+    rtmp_app: String,
+    stream_key: &String,
+) {
+    let connection = match port_map.connections.get_mut(&connection_id) {
+        Some(x) => x,
+        None => {
+            warn!("Connection handler for connection {:?} sent request to watch on port {}, but that \
+                connection isn't being tracked.", connection_id, port);
+
+            return;
+        }
+    };
+
+    // Has this app been registered yet?
+    let application = match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        Some(x) => x,
+        None => {
+            info!("Connection {} requested watching '{}/{}' but that app is not registered \
+                        to accept watchers", connection_id, rtmp_app, stream_key);
+
+            let _ = connection
+                .response_channel
+                .send(ConnectionResponse::RequestRejected);
+            return;
+        }
+    };
+
+    // Is this stream key registered for watching
+    let registrant = match application
+        .watcher_registrants
+        .get(&StreamKeyRegistration::Any)
+    {
+        Some(x) => x,
+        None => {
+            match application
+                .watcher_registrants
+                .get(&StreamKeyRegistration::Exact(stream_key.clone()))
+            {
+                Some(x) => x,
+                None => {
+                    info!("Connection {} requested watching '{}/{}' but that stream key is \
+                                not registered to accept watchers", connection_id, rtmp_app, stream_key);
+
+                    let _ = connection
+                        .response_channel
+                        .send(ConnectionResponse::RequestRejected);
+                    return;
+                }
+            }
+        }
+    };
+
+    let active_stream_key = application
+        .active_stream_keys
+        .entry(stream_key.clone())
+        .or_insert(StreamKeyConnections {
+            watchers: HashMap::new(),
+            publisher: None,
+            latest_video_sequence_header: None,
+            latest_audio_sequence_header: None,
+        });
+
+    connection.state = ConnectionState::Watching {
+        rtmp_app,
+        stream_key: stream_key.clone(),
+    };
+
+    if active_stream_key.watchers.is_empty() {
+        let _ = registrant.response_channel.send(
+            RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+                stream_key: stream_key.clone(),
+            },
+        );
+    }
+
+    let (media_sender, media_receiver) = unbounded_channel();
+
+    // If we have a sequence headers available, send it to the client so they can immediately
+    // start decoding video
+    if let Some(sequence_header) = &active_stream_key.latest_video_sequence_header {
+        let _ = media_sender.send(RtmpEndpointMediaData::NewVideoData {
+            codec: sequence_header.codec.clone(),
+            is_sequence_header: true,
+            is_keyframe: true,
+            data: sequence_header.data.clone(),
+            timestamp: RtmpTimestamp::new(0),
+        });
+    }
+
+    if let Some(sequence_header) = &active_stream_key.latest_audio_sequence_header {
+        let _ = media_sender.send(RtmpEndpointMediaData::NewAudioData {
+            codec: sequence_header.codec.clone(),
+            data: sequence_header.data.clone(),
+            is_sequence_header: true,
+            timestamp: RtmpTimestamp::new(0),
+        });
+    }
+
+    active_stream_key
+        .watchers
+        .insert(connection_id, WatcherDetails { media_sender });
+
+    let _ =
+        connection
+            .response_channel
+            .send(ConnectionResponse::WatchRequestAccepted {
+                channel: media_receiver,
+            });
+}
+
+fn handle_connection_request_publish(
+    connection_id: &ConnectionId,
+    port_map: &mut PortMapping,
+    port: u16,
+    rtmp_app: String,
+    stream_key: &String,
+) {
+    let connection = match port_map.connections.get_mut(&connection_id) {
+        Some(x) => x,
+        None => {
+            warn!("Connection handler for connection {:?} sent a request to publish on port {}, but that \
+                connection isn't being tracked.", connection_id, port);
+
+            return;
+        }
+    };
+
+    // Has this RTMP application been registered yet?
+    let application = match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        Some(x) => x,
+        None => {
+            info!("Connection {} requested publishing to '{}/{}', but the RTMP app '{}' isn't registered yet",
+                    connection_id, rtmp_app, stream_key, rtmp_app);
+
+            let _ = connection
+                .response_channel
+                .send(ConnectionResponse::RequestRejected);
+
+            return;
+        }
+    };
+
+    // Has this stream key been registered yet?
+    let registrant = match application
+        .publisher_registrants
+        .get(&StreamKeyRegistration::Any)
+    {
+        Some(x) => x,
+        None => {
+            match application
+                .publisher_registrants
+                .get(&StreamKeyRegistration::Exact(stream_key.clone()))
+            {
+                Some(x) => x,
+                None => {
+                    error!("Connection {} requested publishing to '{}/{}', but no one has registered \
+                            to support publishers on that stream key", connection_id, rtmp_app, stream_key);
+
+                    let _ = connection
+                        .response_channel
+                        .send(ConnectionResponse::RequestRejected);
+                    return;
+                }
+            }
+        }
+    };
+
+    // app/stream key combination is valid and we have a registrant for itk
+    let stream_key_connections = application
+        .active_stream_keys
+        .entry(stream_key.clone())
+        .or_insert(StreamKeyConnections {
+            publisher: None,
+            watchers: HashMap::new(),
+            latest_video_sequence_header: None,
+            latest_audio_sequence_header: None,
+        });
+
+    // Is someone already publishing on this stream key?
+    if let Some(id) = &stream_key_connections.publisher {
+        error!("Connection {} requested publishing to '{}/{}', but connection {} is already \
+        publishing to this stream key", connection_id, rtmp_app, stream_key, id);
+
+        let _ = connection
+            .response_channel
+            .send(ConnectionResponse::RequestRejected);
+        return;
+    }
+
+    // All good to publish
+    stream_key_connections.publisher = Some(connection_id.clone());
+    connection.state = ConnectionState::Publishing {
+        rtmp_app: rtmp_app.clone(),
+        stream_key: stream_key.clone(),
+    };
+
+    let stream_id = if let Some(id) = &registrant.stream_id {
+        (*id).clone()
+    } else {
+        StreamId(Uuid::new_v4().to_string())
+    };
+
+    let _ =
+        connection
+            .response_channel
+            .send(ConnectionResponse::PublishRequestAccepted {
+                channel: registrant.response_channel.clone(),
+            });
+
+    let _ = registrant.response_channel.send(
+        RtmpEndpointPublisherMessage::NewPublisherConnected {
+            connection_id: connection_id.clone(),
+            stream_key: stream_key.clone(),
+            stream_id,
+        },
+    );
+}
+
+fn handle_connection_request_connect_to_app(
+    connection_id: &ConnectionId,
+    port_map: &mut PortMapping,
+    port: u16,
+    rtmp_app: String,
+) {
+    let connection = match port_map.connections.get_mut(&connection_id) {
+        Some(x) => x,
+        None => {
+            warn!("Connection handler for connection {} sent a request to connect to an rtmp app on port {}, \
+            but that connection isn't being tracked.", connection_id, port);
+
+            return;
+        }
+    };
+    let response = if !port_map.rtmp_applications.contains_key(rtmp_app.as_str()) {
+        info!("Connection {} requested connection to RTMP app '{}' which isn't registered yet", connection_id, rtmp_app);
+
+        ConnectionResponse::RequestRejected
+    } else {
+        info!("Connection {} accepted connection for RTMP app '{}'", connection_id, rtmp_app);
+
+        ConnectionResponse::AppConnectRequestAccepted
+    };
+
+    let _ = connection.response_channel.send(response);
 }
 
 fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut PortMapping) {
@@ -776,6 +858,8 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
                         Some(publisher_id) => {
                             if *publisher_id == connection_id {
                                 active_key.publisher = None;
+                                active_key.latest_video_sequence_header = None;
+                                active_key.latest_audio_sequence_header = None;
 
                                 let registrant = match app_map
                                     .publisher_registrants

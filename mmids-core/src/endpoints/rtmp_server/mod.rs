@@ -122,7 +122,7 @@ pub enum RtmpEndpointPublisherMessage {
         publisher: ConnectionId,
         codec: VideoCodec,
         is_keyframe: bool,
-        is_parameter_set: bool,
+        is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
@@ -131,6 +131,7 @@ pub enum RtmpEndpointPublisherMessage {
     NewAudioData {
         publisher: ConnectionId,
         codec: AudioCodec,
+        is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
@@ -171,13 +172,14 @@ pub enum RtmpEndpointMediaData {
     NewVideoData {
         codec: VideoCodec,
         is_keyframe: bool,
-        is_parameter_set: bool,
+        is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
 
     NewAudioData {
         codec: AudioCodec,
+        is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },

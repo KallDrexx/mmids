@@ -109,12 +109,13 @@ enum FutureResult {
 struct UnwrappedVideo {
     codec: VideoCodec,
     is_keyframe: bool,
-    is_parameter_set: bool,
+    is_sequence_header: bool,
     data: Bytes,
 }
 
 struct UnwrappedAudio {
     codec: AudioCodec,
+    is_sequence_header: bool,
     data: Bytes,
 }
 
@@ -438,17 +439,14 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 rtmp_app: current_rtmp_app,
             } => {
                 if *current_rtmp_app != app_name || *current_stream_key != stream_key {
-                    error!(
-                        "Connection {} sent audio data for '{}/{}', but \
-                                        this connection is currently publishing on '{}/{}'",
-                        self.id, app_name, stream_key, current_rtmp_app, current_stream_key
-                    );
+                    error!("Connection {} sent audio data for '{}/{}', but this connection is \
+                    currently publishing on '{}/{}'", self.id, app_name, stream_key, current_rtmp_app, current_stream_key);
 
                     self.force_disconnect = true;
                     return;
                 }
 
-                let UnwrappedAudio { data, codec } = unwrap_audio_from_flv(data);
+                let UnwrappedAudio { data, is_sequence_header, codec } = unwrap_audio_from_flv(data);
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::NewAudioData {
@@ -456,6 +454,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                         codec,
                         data,
                         timestamp,
+                        is_sequence_header,
                     },
                 );
             }
@@ -499,7 +498,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                     data,
                     codec,
                     is_keyframe,
-                    is_parameter_set,
+                    is_sequence_header: is_parameter_set,
                 } = unwrap_video_from_flv(data);
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
@@ -507,7 +506,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                         publisher: self.id.clone(),
                         codec,
                         is_keyframe,
-                        is_parameter_set,
+                        is_sequence_header: is_parameter_set,
                         data,
                         timestamp,
                     },
@@ -840,7 +839,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 data,
                 timestamp,
                 is_keyframe,
-                is_parameter_set: _,
+                is_sequence_header: _,
                 codec,
             } => {
                 let flv_video = match wrap_video_into_flv(data, codec, is_keyframe) {
@@ -862,6 +861,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 data,
                 timestamp,
                 codec,
+                is_sequence_header,
             } => {
                 let flv_audio = match wrap_audio_into_flv(data, codec) {
                     Ok(x) => x,
@@ -875,7 +875,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                     }
                 };
 
-                session.send_audio_data(stream_id, flv_audio, timestamp, false)
+                session.send_audio_data(stream_id, flv_audio, timestamp, is_sequence_header)
             }
         };
 
@@ -903,25 +903,30 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
         return UnwrappedVideo {
             codec: VideoCodec::Unknown,
             is_keyframe: false,
-            is_parameter_set: false,
+            is_sequence_header: false,
             data,
         };
     }
 
+    // TODO: The FLV spec has the AVCPacketType and composition time as the first parts of the
+    // AVCPACKETTYPE.  It's unclear if these two fields are part of h264 or FLV specific.  For
+    // now assuming they are FLV specific
     let flv_tag = data.split_to(1);
+    let is_sequence_header;
     let codec = if flv_tag[0] & 0x07 == 0x07 {
+        is_sequence_header = data[0] == 0x00;
         VideoCodec::H264
     } else {
+        is_sequence_header = false;
         VideoCodec::Unknown
     };
 
     let is_keyframe = flv_tag[0] & 0x10 == 0x10;
-    let is_parameter_set = is_keyframe && data[0] == 0x00;
 
     UnwrappedVideo {
         codec,
         is_keyframe,
-        is_parameter_set,
+        is_sequence_header,
         data,
     }
 }
@@ -949,18 +954,23 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> UnwrappedAudio {
     if data.len() < 2 {
         return UnwrappedAudio {
             codec: AudioCodec::Unknown,
+            is_sequence_header: false,
             data,
         };
     }
 
+    // TODO: After the tag is the AVC packet type, composition time, and data.  It's unclear
+    // from the FLV spec if the packet type and composition time data is part of the AAC data
+    // or if that's an FLV specific thing
     let flv_tag = data.split_to(1);
+    let is_sequence_header = data[0] == 0;
     let codec = if flv_tag[0] & 0xa0 == 0xa0 {
         AudioCodec::Aac
     } else {
         AudioCodec::Unknown
     };
 
-    UnwrappedAudio { codec, data }
+    UnwrappedAudio { codec, is_sequence_header, data }
 }
 
 fn wrap_audio_into_flv(data: Bytes, codec: AudioCodec) -> Result<Bytes, ()> {

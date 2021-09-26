@@ -1,14 +1,14 @@
 use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
-
 use super::connection_handler::{ConnectionRequest, ConnectionResponse};
-
-use crate::net::tcp::TcpSocketResponse;
-use crate::net::ConnectionId;
-
+use crate::codecs::{VideoCodec, AudioCodec};
 use crate::endpoints::rtmp_server::{
     RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
 };
+
+use crate::net::tcp::TcpSocketResponse;
+use crate::net::ConnectionId;
 use crate::StreamId;
+use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
@@ -81,9 +81,25 @@ pub struct WatcherRegistrant {
     pub response_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
 }
 
+pub struct VideoSequenceHeader {
+    pub codec: VideoCodec,
+    pub data: Bytes,
+}
+
+pub struct AudioSequenceHeader {
+    pub codec: AudioCodec,
+    pub data: Bytes,
+}
+
+pub struct WatcherDetails {
+    pub media_sender: UnboundedSender<RtmpEndpointMediaData>,
+}
+
 pub struct StreamKeyConnections {
     pub publisher: Option<ConnectionId>,
     pub watchers: HashMap<ConnectionId, WatcherDetails>,
+    pub latest_video_sequence_header: Option<VideoSequenceHeader>,
+    pub latest_audio_sequence_header: Option<AudioSequenceHeader>,
 }
 
 pub struct RtmpAppMapping {
@@ -96,12 +112,6 @@ pub struct RtmpAppMapping {
 pub enum PortStatus {
     Requested,
     Open,
-}
-
-pub struct PortMapping {
-    pub rtmp_applications: HashMap<String, RtmpAppMapping>,
-    pub status: PortStatus,
-    pub connections: HashMap<ConnectionId, Connection>,
 }
 
 pub struct RtmpServerEndpointActor<'a> {
@@ -121,11 +131,6 @@ pub enum ListenerRequest {
     },
 }
 
-pub struct Connection {
-    pub response_channel: UnboundedSender<ConnectionResponse>,
-    pub state: ConnectionState,
-}
-
 pub enum ConnectionState {
     None,
 
@@ -140,6 +145,13 @@ pub enum ConnectionState {
     },
 }
 
-pub struct WatcherDetails {
-    pub media_sender: UnboundedSender<RtmpEndpointMediaData>,
+pub struct Connection {
+    pub response_channel: UnboundedSender<ConnectionResponse>,
+    pub state: ConnectionState,
+}
+
+pub struct PortMapping {
+    pub rtmp_applications: HashMap<String, RtmpAppMapping>,
+    pub status: PortStatus,
+    pub connections: HashMap<ConnectionId, Connection>,
 }
