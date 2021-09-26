@@ -1,3 +1,4 @@
+mod codecs;
 pub mod endpoints;
 pub mod net;
 

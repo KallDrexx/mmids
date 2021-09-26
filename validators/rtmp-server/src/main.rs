@@ -110,7 +110,14 @@ pub async fn main() {
                         });
                     }
 
-                    RtmpEndpointPublisherMessage::NewVideoData {publisher, data , timestamp} => {
+                    RtmpEndpointPublisherMessage::NewVideoData {
+                        publisher,
+                        data,
+                        timestamp,
+                        is_keyframe,
+                        is_parameter_set,
+                        codec,
+                    } => {
                         if announce_video_data {
                             info!("Connection {} sent video data", publisher);
                             announce_video_data = false;
@@ -129,11 +136,19 @@ pub async fn main() {
                             data: RtmpEndpointMediaData::NewVideoData {
                                 data,
                                 timestamp,
+                                codec,
+                                is_parameter_set,
+                                is_keyframe,
                             },
                         });
                     }
 
-                    RtmpEndpointPublisherMessage::NewAudioData {publisher, data, timestamp} => {
+                    RtmpEndpointPublisherMessage::NewAudioData {
+                        publisher,
+                        data,
+                        timestamp,
+                        codec,
+                    } => {
                         if announce_audio_data {
                             info!("Connection {} sent audio data", publisher);
                             announce_audio_data = false;
@@ -152,6 +167,7 @@ pub async fn main() {
                             data: RtmpEndpointMediaData::NewAudioData {
                                 data,
                                 timestamp,
+                                codec,
                             },
                         });
                     }

@@ -1,5 +1,6 @@
 mod actor;
 
+use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::tcp::TcpSocketRequest;
 use crate::net::ConnectionId;
 use crate::StreamId;
@@ -119,6 +120,9 @@ pub enum RtmpEndpointPublisherMessage {
     /// An RTMP publisher has sent in new video data
     NewVideoData {
         publisher: ConnectionId,
+        codec: VideoCodec,
+        is_keyframe: bool,
+        is_parameter_set: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
@@ -126,6 +130,7 @@ pub enum RtmpEndpointPublisherMessage {
     /// An RTMP publisher has sent in new audio data
     NewAudioData {
         publisher: ConnectionId,
+        codec: AudioCodec,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
@@ -164,11 +169,15 @@ pub enum RtmpEndpointMediaData {
     },
 
     NewVideoData {
+        codec: VideoCodec,
+        is_keyframe: bool,
+        is_parameter_set: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
 
     NewAudioData {
+        codec: AudioCodec,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
