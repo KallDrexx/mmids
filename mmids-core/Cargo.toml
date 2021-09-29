@@ -6,9 +6,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.9", features = ["full"] }
+tokio = { version = "1.12", features = ["full"] }
 futures = "0.3"
 bytes = "1"
 uuid = { version = "0.8", features = ["v4"] }
 log = "0.4"
-rml_rtmp = "0.4.2"
+rml_rtmp = "0.4.3"
+downcast-rs = "1.2.0"
+thiserror = "1.0"

@@ -3,7 +3,7 @@ use std::fmt::Formatter;
 pub mod tcp;
 
 #[derive(Clone, Debug, Eq, Hash)]
-pub struct ConnectionId(String);
+pub struct ConnectionId(pub String);
 
 impl std::fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

@@ -126,6 +126,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "downcast-rs"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
+
+[[package]]
 name = "echo-server"
 version = "0.1.0"
 dependencies = [
@@ -394,9 +400,11 @@ name = "mmids-core"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "downcast-rs",
  "futures",
  "log",
  "rml_rtmp",
+ "thiserror",
  "tokio",
  "uuid",
 ]
@@ -592,9 +600,9 @@ dependencies = [
 
 [[package]]
 name = "rml_rtmp"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a38b4da0e0046935183b0dee79e555b5d2b36bd2be282ddaeed1742c4b48d054"
+checksum = "8d1b2b98021ec862a9304de249729c62398716dd81ccb44ee766e6012edf601c"
 dependencies = [
  "byteorder",
  "bytes",
@@ -702,10 +710,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio"
-version = "1.10.0"
+name = "thiserror"
+version = "1.0.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01cf844b23c6131f624accf65ce0e4e9956a8bb329400ea5bcc26ae3a5c20b0b"
+checksum = "602eca064b2d83369e2b2f34b09c70b605402801927c65c11071ac911d299b88"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bad553cc2c78e8de258400763a647e80e6d1b31ee237275d756f6836d204494c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "tokio"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2c2416fdedca8443ae44b4527de1ea633af61d8f7169ffa6e72c5b53d24efcc"
 dependencies = [
  "autocfg",
  "bytes",

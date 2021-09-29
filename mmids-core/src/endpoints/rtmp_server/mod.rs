@@ -28,7 +28,7 @@ pub fn start_rtmp_server_endpoint(
 }
 
 /// Specifies how a stream key should be registered for playback or publishing
-#[derive(Clone, Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum StreamKeyRegistration {
     /// All stream keys for the the rtmp application should be registered
     Any,
@@ -38,6 +38,7 @@ pub enum StreamKeyRegistration {
 }
 
 /// Operations the rtmp server endpoint is being requested to make
+#[derive(Debug)]
 pub enum RtmpEndpointRequest {
     /// Requests the RTMP server to allow publishers on the given port, app, and stream key
     /// combinations.
