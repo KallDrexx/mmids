@@ -170,10 +170,10 @@ async fn publish_failure_sets_step_to_error_mode() {
     let (mut step, futures, message_channel) = create_initialized_step();
     let _ = message_channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationFailed);
     let notification = get_pending_future_result(futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     let status = step.get_status();
     assert_eq!(status, StepStatus::Error, "Unexpected step status");
@@ -184,10 +184,10 @@ async fn publish_success_sets_step_to_ready_status() {
     let (mut step, futures, message_channel) = create_initialized_step();
     let _ = message_channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful);
     let notification = get_pending_future_result(futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     let status = step.get_status();
     assert_eq!(status, StepStatus::Active, "Unexpected step status");
@@ -202,15 +202,15 @@ async fn stream_started_notification_raised_when_publisher_connects() {
         stream_key: "stream_key".to_string(),
     });
 
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(get_pending_future_result(futures).await);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(get_pending_future_result(futures).await);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     assert_eq!(step.get_status(), StepStatus::Active, "Unexpected step status");
-    assert_eq!(parameters.outputs.media.len(), 1, "Unexpected number of output media");
+    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = parameters.outputs.media.remove(0);
+    let media = outputs.media.remove(0);
     assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
 
     match media.content {
@@ -218,7 +218,7 @@ async fn stream_started_notification_raised_when_publisher_connects() {
         content => panic!("Unexpected media notification: {:?}", content),
     }
 
-    assert!(parameters.outputs.futures.len() > 0,
+    assert!(outputs.futures.len() > 0,
             "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
@@ -234,25 +234,25 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
         stream_key: "stream_key".to_string(),
     });
 
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(get_pending_future_result(futures).await);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(get_pending_future_result(futures).await);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     let _ = message_channel.send(RtmpEndpointPublisherMessage::PublishingStopped {
         connection_id,
     });
 
-    let notification = get_pending_future_result(parameters.outputs.futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let notification = get_pending_future_result(outputs.futures).await;
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     assert_eq!(step.get_status(), StepStatus::Active, "Unexpected step status");
-    assert_eq!(parameters.outputs.media.len(), 1, "Unexpected number of output media");
+    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = parameters.outputs.media.remove(0);
+    let media = outputs.media.remove(0);
     assert_eq!(media.stream_id, stream_id);
 
     match media.content {
@@ -260,7 +260,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
         content => panic!("Unexpected media notification: {:?}", content),
     }
 
-    assert!(parameters.outputs.futures.len() > 0,
+    assert!(outputs.futures.len() > 0,
             "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
@@ -276,26 +276,26 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
         stream_key: "stream_key".to_string(),
     });
 
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(get_pending_future_result(futures).await);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(get_pending_future_result(futures).await);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     let _ = message_channel.send(RtmpEndpointPublisherMessage::StreamMetadataChanged {
         publisher: connection_id,
         metadata: StreamMetadata::new(),
     });
 
-    let notification = get_pending_future_result(parameters.outputs.futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let notification = get_pending_future_result(outputs.futures).await;
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     assert_eq!(step.get_status(), StepStatus::Active, "Unexpected step status");
-    assert_eq!(parameters.outputs.media.len(), 1, "Unexpected number of output media");
+    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = parameters.outputs.media.remove(0);
+    let media = outputs.media.remove(0);
     assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
 
     match media.content {
@@ -303,7 +303,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
         content => panic!("Unexpected media notification: {:?}", content),
     }
 
-    assert!(parameters.outputs.futures.len() > 0,
+    assert!(outputs.futures.len() > 0,
             "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
@@ -319,10 +319,10 @@ async fn video_notification_received_when_publisher_sends_video() {
         stream_key: "stream_key".to_string(),
     });
 
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(get_pending_future_result(futures).await);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(get_pending_future_result(futures).await);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     let _ = message_channel.send(RtmpEndpointPublisherMessage::NewVideoData {
         publisher: connection_id,
@@ -333,16 +333,16 @@ async fn video_notification_received_when_publisher_sends_video() {
         timestamp: RtmpTimestamp::new(53),
     });
 
-    let notification = get_pending_future_result(parameters.outputs.futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let notification = get_pending_future_result(outputs.futures).await;
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     assert_eq!(step.get_status(), StepStatus::Active, "Unexpected step status");
-    assert_eq!(parameters.outputs.media.len(), 1, "Unexpected number of output media");
+    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = parameters.outputs.media.remove(0);
+    let media = outputs.media.remove(0);
     assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
 
     match media.content {
@@ -359,7 +359,7 @@ async fn video_notification_received_when_publisher_sends_video() {
         content => panic!("Unexpected media notification: {:?}", content),
     }
 
-    assert!(parameters.outputs.futures.len() > 0,
+    assert!(outputs.futures.len() > 0,
             "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
@@ -375,10 +375,10 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         stream_key: "stream_key".to_string(),
     });
 
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(get_pending_future_result(futures).await);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(get_pending_future_result(futures).await);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     let _ = message_channel.send(RtmpEndpointPublisherMessage::NewAudioData {
         publisher: connection_id,
@@ -388,16 +388,16 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         timestamp: RtmpTimestamp::new(53),
     });
 
-    let notification = get_pending_future_result(parameters.outputs.futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let notification = get_pending_future_result(outputs.futures).await;
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
     assert_eq!(step.get_status(), StepStatus::Active, "Unexpected step status");
-    assert_eq!(parameters.outputs.media.len(), 1, "Unexpected number of output media");
+    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = parameters.outputs.media.remove(0);
+    let media = outputs.media.remove(0);
     assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
 
     match media.content {
@@ -413,15 +413,15 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         content => panic!("Unexpected media notification: {:?}", content),
     }
 
-    assert!(parameters.outputs.futures.len() > 0,
+    assert!(outputs.futures.len() > 0,
             "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
 #[tokio::test]
 async fn media_input_does_not_get_passed_through() {
     let (mut step, _futures, _message_channel) = create_ready_step().await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.media.push(MediaNotification {
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.media.push(MediaNotification {
         stream_id: StreamId("a".to_string()),
         content: MediaNotificationContent::Video {
             codec: VideoCodec::H264,
@@ -432,7 +432,7 @@ async fn media_input_does_not_get_passed_through() {
         },
     });
 
-    parameters.inputs.media.push(MediaNotification {
+    inputs.media.push(MediaNotification {
         stream_id: StreamId("b".to_string()),
         content: MediaNotificationContent::Audio {
             is_sequence_header: true,
@@ -442,27 +442,27 @@ async fn media_input_does_not_get_passed_through() {
         },
     });
 
-    parameters.inputs.media.push(MediaNotification {
+    inputs.media.push(MediaNotification {
         stream_id: StreamId("c".to_string()),
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
         },
     });
 
-    parameters.inputs.media.push(MediaNotification {
+    inputs.media.push(MediaNotification {
         stream_id: StreamId("d".to_string()),
         content: MediaNotificationContent::NewIncomingStream ,
     });
 
-    parameters.inputs.media.push(MediaNotification {
+    inputs.media.push(MediaNotification {
         stream_id: StreamId("e".to_string()),
         content: MediaNotificationContent::StreamDisconnected,
     });
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
-    assert_eq!(parameters.outputs.media.len(), 0, "Expected media outputs to be empty");
-    assert_eq!(parameters.outputs.futures.len(), 0, "Expected futures output to be empty")
+    assert_eq!(outputs.media.len(), 0, "Expected media outputs to be empty");
+    assert_eq!(outputs.futures.len(), 0, "Expected futures output to be empty")
 }
 
 fn create_initialized_step<'a>() -> (RtmpReceiverStep, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>, UnboundedSender<RtmpEndpointPublisherMessage>) {
@@ -493,12 +493,12 @@ async fn create_ready_step<'a>() -> (RtmpReceiverStep, Vec<BoxFuture<'a, Box<dyn
     let _ = message_channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful);
 
     let notification = get_pending_future_result(futures).await;
-    let mut parameters = create_step_parameters();
-    parameters.inputs.notifications.push(notification);
+    let (mut inputs, mut outputs) = create_step_parameters();
+    inputs.notifications.push(notification);
 
-    step.execute(&mut parameters);
+    step.execute(&mut inputs, &mut outputs);
 
-    (step, parameters.outputs.futures, message_channel)
+    (step, outputs.futures, message_channel)
 }
 
 fn create_definition(port: u16, app: &str, key: &str) -> WorkflowStepDefinition {
@@ -526,16 +526,16 @@ async fn get_pending_future_result<'a>(futures: Vec<BoxFuture<'a, Box<dyn StepFu
     }
 }
 
-fn create_step_parameters<'a>() -> StepExecutionIO<'a> {
-    StepExecutionIO {
-        inputs: StepInputs {
+fn create_step_parameters<'a>() -> (StepInputs, StepOutputs<'a>) {
+    (
+        StepInputs {
             media: Vec::new(),
             notifications: Vec::new(),
         },
 
-        outputs: StepOutputs {
+        StepOutputs {
             media: Vec::new(),
             futures: Vec::new(),
-        },
-    }
+        }
+    )
 }

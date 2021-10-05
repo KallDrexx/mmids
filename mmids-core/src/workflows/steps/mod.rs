@@ -24,13 +24,8 @@ pub struct StepOutputs<'a> {
     pub futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
 }
 
-pub struct StepExecutionIO<'a> {
-    pub inputs: StepInputs,
-    pub outputs: StepOutputs<'a>,
-}
-
 pub trait WorkflowStep {
     fn init<'a>(&mut self) -> Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>;
     fn get_status(&self) -> StepStatus;
-    fn execute(&mut self, data: &mut StepExecutionIO);
+    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs);
 }

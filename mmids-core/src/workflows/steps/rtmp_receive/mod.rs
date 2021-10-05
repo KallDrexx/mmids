@@ -6,7 +6,7 @@ use crate::endpoints::rtmp_server::{RtmpEndpointRequest, StreamKeyRegistration, 
 use crate::net::ConnectionId;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::{StepExecutionIO, StepFutureResult, WorkflowStep, StepStatus};
+use crate::workflows::steps::{StepInputs, StepOutputs, StepFutureResult, WorkflowStep, StepStatus};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use log::{error, info};
@@ -84,6 +84,111 @@ impl RtmpReceiverStep {
             },
         })
     }
+
+    fn handle_rtmp_publisher_message(&mut self, outputs: &mut StepOutputs, message: RtmpEndpointPublisherMessage) {
+        match message {
+            RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
+                error!("Rtmp receive step failed to register for publish registration");
+                self.status = StepStatus::Error;
+
+                return;
+            }
+
+            RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
+                info!("Rtmp receive step successfully registered for publishing");
+                self.status = StepStatus::Active;
+
+                return;
+            }
+
+            RtmpEndpointPublisherMessage::NewPublisherConnected {stream_id, connection_id, stream_key} => {
+                info!("Rtmp receive step seen new publisher: {:?}, {:?}, {:?}", stream_id, connection_id, stream_key);
+
+                self.connection_stream_id_map.insert(connection_id, stream_id.clone());
+
+                outputs.media.push(MediaNotification {
+                    stream_id,
+                    content: MediaNotificationContent::NewIncomingStream,
+                });
+            }
+
+            RtmpEndpointPublisherMessage::PublishingStopped {connection_id} => {
+                match self.connection_stream_id_map.remove(&connection_id) {
+                    None => (),
+                    Some(stream_id) => {
+                        info!("Rtmp receive step notified that connection {:?} is no longer publishing stream {:?}", connection_id, stream_id);
+
+                        outputs.media.push(MediaNotification {
+                            stream_id,
+                            content: MediaNotificationContent::StreamDisconnected,
+                        });
+                    }
+                }
+            }
+
+            RtmpEndpointPublisherMessage::StreamMetadataChanged {publisher, metadata} => {
+                match self.connection_stream_id_map.get(&publisher) {
+                    None => (),
+                    Some(stream_id) => {
+                        outputs.media.push(MediaNotification {
+                            stream_id: stream_id.clone(),
+                            content: MediaNotificationContent::Metadata {
+                                data: crate::utils::stream_metadata_to_hash_map(metadata),
+                            }
+                        })
+                    }
+                }
+            }
+
+            RtmpEndpointPublisherMessage::NewVideoData {
+                publisher,
+                data,
+                timestamp,
+                codec,
+                is_sequence_header,
+                is_keyframe,
+            } => {
+                match self.connection_stream_id_map.get(&publisher) {
+                    None => (),
+                    Some(stream_id) => {
+                        outputs.media.push(MediaNotification {
+                            stream_id: stream_id.clone(),
+                            content: MediaNotificationContent::Video {
+                                is_keyframe,
+                                is_sequence_header,
+                                data,
+                                codec,
+                                timestamp: Duration::from_millis(timestamp.value as u64),
+                            }
+                        });
+                    }
+                }
+            }
+
+            RtmpEndpointPublisherMessage::NewAudioData {
+                publisher,
+                is_sequence_header,
+                data,
+                codec,
+                timestamp,
+            } => {
+                match self.connection_stream_id_map.get(&publisher) {
+                    None => (),
+                    Some(stream_id) => {
+                        outputs.media.push(MediaNotification {
+                            stream_id: stream_id.clone(),
+                            content: MediaNotificationContent::Audio {
+                                is_sequence_header,
+                                data,
+                                codec,
+                                timestamp: Duration::from_millis(timestamp.value as u64),
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl WorkflowStep for RtmpReceiverStep {
@@ -104,12 +209,12 @@ impl WorkflowStep for RtmpReceiverStep {
         self.status.clone()
     }
 
-    fn execute(&mut self, io: &mut StepExecutionIO) {
+    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
         if self.status == StepStatus::Error {
             return;
         }
 
-        for future_result in io.inputs.notifications.drain(..) {
+        for future_result in inputs.notifications.drain(..) {
             let future_result = match future_result.downcast::<RtmpReceiveFutureResult>() {
                 Ok(result) => *result,
                 Err(_) => {
@@ -129,110 +234,8 @@ impl WorkflowStep for RtmpReceiverStep {
                 }
 
                 RtmpReceiveFutureResult::RtmpEndpointResponseReceived(message, receiver) => {
-                    io.outputs.futures.push(wait_for_rtmp_endpoint_response(receiver).boxed());
-
-                    match message {
-                        RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
-                            error!("Rtmp receive step failed to register for publish registration");
-                            self.status = StepStatus::Error;
-
-                            return;
-                        }
-
-                        RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
-                            info!("Rtmp receive step successfully registered for publishing");
-                            self.status = StepStatus::Active;
-
-                            return;
-                        }
-
-                        RtmpEndpointPublisherMessage::NewPublisherConnected {stream_id, connection_id, stream_key} => {
-                            info!("Rtmp receive step seen new publisher: {:?}, {:?}, {:?}", stream_id, connection_id, stream_key);
-
-                            self.connection_stream_id_map.insert(connection_id, stream_id.clone());
-
-                            io.outputs.media.push(MediaNotification {
-                                stream_id,
-                                content: MediaNotificationContent::NewIncomingStream,
-                            });
-                        }
-
-                        RtmpEndpointPublisherMessage::PublishingStopped {connection_id} => {
-                            match self.connection_stream_id_map.remove(&connection_id) {
-                                None => (),
-                                Some(stream_id) => {
-                                    info!("Rtmp receive step notified that connection {:?} is no longer publishing stream {:?}", connection_id, stream_id);
-
-                                    io.outputs.media.push(MediaNotification {
-                                        stream_id,
-                                        content: MediaNotificationContent::StreamDisconnected,
-                                    });
-                                }
-                            }
-                        }
-
-                        RtmpEndpointPublisherMessage::StreamMetadataChanged {publisher, metadata} => {
-                            match self.connection_stream_id_map.get(&publisher) {
-                                None => (),
-                                Some(stream_id) => {
-                                    io.outputs.media.push(MediaNotification {
-                                        stream_id: stream_id.clone(),
-                                        content: MediaNotificationContent::Metadata {
-                                            data: crate::utils::stream_metadata_to_hash_map(metadata),
-                                        }
-                                    })
-                                }
-                            }
-                        }
-
-                        RtmpEndpointPublisherMessage::NewVideoData {
-                            publisher,
-                            data,
-                            timestamp,
-                            codec,
-                            is_sequence_header,
-                            is_keyframe,
-                        } => {
-                            match self.connection_stream_id_map.get(&publisher) {
-                                None => (),
-                                Some(stream_id) => {
-                                    io.outputs.media.push(MediaNotification {
-                                        stream_id: stream_id.clone(),
-                                        content: MediaNotificationContent::Video {
-                                            is_keyframe,
-                                            is_sequence_header,
-                                            data,
-                                            codec,
-                                            timestamp: Duration::from_millis(timestamp.value as u64),
-                                        }
-                                    });
-                                }
-                            }
-                        }
-
-                        RtmpEndpointPublisherMessage::NewAudioData {
-                            publisher,
-                            is_sequence_header,
-                            data,
-                            codec,
-                            timestamp,
-                        } => {
-                            match self.connection_stream_id_map.get(&publisher) {
-                                None => (),
-                                Some(stream_id) => {
-                                    io.outputs.media.push(MediaNotification {
-                                        stream_id: stream_id.clone(),
-                                        content: MediaNotificationContent::Audio {
-                                            is_sequence_header,
-                                            data,
-                                            codec,
-                                            timestamp: Duration::from_millis(timestamp.value as u64),
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                    }
+                    outputs.futures.push(wait_for_rtmp_endpoint_response(receiver).boxed());
+                    self.handle_rtmp_publisher_message(outputs, message);
                 }
             }
         }
