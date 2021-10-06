@@ -213,10 +213,12 @@ async fn stream_started_notification_raised_when_publisher_connects() {
     let media = outputs.media.remove(0);
     assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
 
-    match media.content {
-        MediaNotificationContent::NewIncomingStream => (),
+    let stream_name = match media.content {
+        MediaNotificationContent::NewIncomingStream {stream_name} => stream_name,
         content => panic!("Unexpected media notification: {:?}", content),
-    }
+    };
+
+    assert_eq!(stream_name, "stream_key".to_string(), "Unexpected stream name");
 
     assert!(outputs.futures.len() > 0,
             "Expected at least one future to be returned for more endpoint notifications, but none were seen")
@@ -451,7 +453,7 @@ async fn media_input_does_not_get_passed_through() {
 
     inputs.media.push(MediaNotification {
         stream_id: StreamId("d".to_string()),
-        content: MediaNotificationContent::NewIncomingStream ,
+        content: MediaNotificationContent::NewIncomingStream {stream_name: "something".to_string()} ,
     });
 
     inputs.media.push(MediaNotification {

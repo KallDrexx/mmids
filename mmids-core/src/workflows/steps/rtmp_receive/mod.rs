@@ -108,7 +108,9 @@ impl RtmpReceiverStep {
 
                 outputs.media.push(MediaNotification {
                     stream_id,
-                    content: MediaNotificationContent::NewIncomingStream,
+                    content: MediaNotificationContent::NewIncomingStream {
+                        stream_name: stream_key,
+                    },
                 });
             }
 

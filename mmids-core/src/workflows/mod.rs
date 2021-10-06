@@ -21,7 +21,10 @@ pub struct MediaNotification {
 pub enum MediaNotificationContent {
     /// Announces that this stream has now connected, and steps that receive this notification
     /// should prepare for media data to start coming through
-    NewIncomingStream,
+    NewIncomingStream {
+        /// The name for the stream that's being published
+        stream_name: String,
+    },
 
     /// Announces that this stream's source has disconnected and will no longer be sending any
     /// new notifications down.  Steps that receive this message can use this to clean up any
