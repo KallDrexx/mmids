@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 /// further steps, than it should keep the same stream identifier.  For example, if
 /// a workflow has an ffmpeg transcoding step in the workflow (e.g. to add a watermark), when
 /// ffmpeg pushes the video back in it will keep the same identifier.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StreamId(pub String);
 
 /// Sends a message over an `mpsc::UnboundedSender` and returns a boolean if it was successful.

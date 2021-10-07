@@ -57,7 +57,7 @@ pub async fn main() {
 
     info!("Requesting to listening for play requests on port 1935 and app 'live'");
     match watch_notification_receiver.recv().await {
-        Some(RtmpEndpointWatcherNotification::ReceiverRegistrationSuccessful) => (),
+        Some(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful) => (),
         Some(x) => {
             error!("Unexpected initial watch message: {:?}", x);
             return;

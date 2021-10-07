@@ -401,7 +401,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
 
                 if !can_be_added {
                     let _ = notification_channel
-                        .send(RtmpEndpointWatcherNotification::ReceiverRegistrationFailed);
+                        .send(RtmpEndpointWatcherNotification::WatcherRegistrationFailed);
 
                     return;
                 }
@@ -436,7 +436,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 // If the port isn't open yet, we don't want to claim registration was successful yet
                 if port_map.status == PortStatus::Open {
                     let _ = notification_channel
-                        .send(RtmpEndpointWatcherNotification::ReceiverRegistrationSuccessful);
+                        .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful);
                 }
             }
         }
@@ -468,7 +468,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         for (_, watcher) in &app_map.watcher_registrants {
                             let _ = watcher
                                 .response_channel
-                                .send(RtmpEndpointWatcherNotification::ReceiverRegistrationFailed);
+                                .send(RtmpEndpointWatcherNotification::WatcherRegistrationFailed);
                         }
                     }
 
@@ -495,7 +495,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
 
                         for (_, watcher) in &app_map.watcher_registrants {
                             let _ = watcher.response_channel.send(
-                                RtmpEndpointWatcherNotification::ReceiverRegistrationSuccessful,
+                                RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful,
                             );
                         }
                     }

@@ -1,18 +1,16 @@
 use super::*;
+use super::super::test_utils::{get_pending_future_result, create_step_parameters};
 use crate::StreamId;
 use crate::codecs::{VideoCodec, AudioCodec};
 use crate::net::ConnectionId;
 use crate::workflows::{MediaNotificationContent, MediaNotification};
 use crate::workflows::definitions::WorkflowStepType;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
 use bytes::Bytes;
-use crate::workflows::steps::{StepInputs, StepOutputs};
 
 const TEST_PORT: u16 = 9999;
 const TEST_APP: &'static str = "some_app";
@@ -514,30 +512,4 @@ fn create_definition(port: u16, app: &str, key: &str) -> WorkflowStepDefinition 
     definition.parameters.insert(STREAM_KEY_PROPERTY_NAME.to_string(), key.to_string());
 
     definition
-}
-
-async fn get_pending_future_result<'a>(futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>) -> Box<dyn StepFutureResult>{
-    let mut awaitable_futures = FuturesUnordered::new();
-    for future in futures {
-        awaitable_futures.push(future);
-    }
-
-    match timeout(Duration::from_millis(10), awaitable_futures.next()).await {
-        Ok(Some(result)) => result,
-        _ => panic!("Message channel future didn't resolve as expected"),
-    }
-}
-
-fn create_step_parameters<'a>() -> (StepInputs, StepOutputs<'a>) {
-    (
-        StepInputs {
-            media: Vec::new(),
-            notifications: Vec::new(),
-        },
-
-        StepOutputs {
-            media: Vec::new(),
-            futures: Vec::new(),
-        }
-    )
 }

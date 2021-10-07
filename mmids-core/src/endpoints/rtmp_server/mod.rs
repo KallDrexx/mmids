@@ -143,10 +143,10 @@ pub enum RtmpEndpointPublisherMessage {
 pub enum RtmpEndpointWatcherNotification {
     /// The request to register for watchers has failed.  No further messages will be sent
     /// afterwards.
-    ReceiverRegistrationFailed,
+    WatcherRegistrationFailed,
 
     /// The request to register for watchers was successful
-    ReceiverRegistrationSuccessful,
+    WatcherRegistrationSuccessful,
 
     /// Notifies the registrant that at least one watcher is now watching on a particular
     /// stream key,
