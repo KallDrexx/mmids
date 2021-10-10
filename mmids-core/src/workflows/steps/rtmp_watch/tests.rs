@@ -1,16 +1,18 @@
 use super::*;
-use crate::StreamId;
-use crate::codecs::{VideoCodec, AudioCodec};
-use crate::endpoints::rtmp_server::{RtmpEndpointWatcherNotification, RtmpEndpointMediaMessage, RtmpEndpointMediaData};
-use crate::workflows::{MediaNotificationContent, MediaNotification};
+use crate::codecs::{AudioCodec, VideoCodec};
+use crate::endpoints::rtmp_server::{
+    RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
+};
 use crate::workflows::definitions::WorkflowStepType;
-use crate::workflows::steps::test_utils::{get_pending_future_result, create_step_parameters};
+use crate::workflows::steps::test_utils::{create_step_parameters, get_pending_future_result};
+use crate::workflows::{MediaNotification, MediaNotificationContent};
+use crate::StreamId;
 use bytes::Bytes;
+use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::timeout;
-use rml_rtmp::time::RtmpTimestamp;
 
 const TEST_PORT: u16 = 9999;
 const TEST_APP: &'static str = "some_app";
@@ -21,12 +23,15 @@ fn can_create_from_filled_out_workflow_definition() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender)
-        .expect("Error returned creating step");
+    let step = RtmpWatchStep::new(&definition, mock_sender).expect("Error returned creating step");
 
     assert_eq!(step.port, TEST_PORT, "Unexpected port");
     assert_eq!(step.rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
-    assert_eq!(step.stream_key, StreamKeyRegistration::Exact(TEST_KEY.to_string()), "Unexpected stream key registration");
+    assert_eq!(
+        step.stream_key,
+        StreamKeyRegistration::Exact(TEST_KEY.to_string()),
+        "Unexpected stream key registration"
+    );
 }
 
 #[test]
@@ -34,12 +39,15 @@ fn asterisk_for_key_sets_key_to_any() {
     let definition = create_definition(TEST_PORT, TEST_APP, "*");
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender)
-        .expect("Error returned creating step}");
+    let step = RtmpWatchStep::new(&definition, mock_sender).expect("Error returned creating step}");
 
     assert_eq!(step.port, TEST_PORT, "Unexpected port");
     assert_eq!(step.rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
-    assert_eq!(step.stream_key, StreamKeyRegistration::Any, "Unexpected stream key registration");
+    assert_eq!(
+        step.stream_key,
+        StreamKeyRegistration::Any,
+        "Unexpected stream key registration"
+    );
 }
 
 #[test]
@@ -62,9 +70,7 @@ fn error_if_no_app_provided() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    RtmpWatchStep::new(&definition, mock_sender)
-        .err()
-        .unwrap();
+    RtmpWatchStep::new(&definition, mock_sender).err().unwrap();
 }
 
 #[test]
@@ -74,15 +80,16 @@ fn error_if_no_stream_key_provided() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    RtmpWatchStep::new(&definition, mock_sender)
-        .err()
-        .unwrap();
+    RtmpWatchStep::new(&definition, mock_sender).err().unwrap();
 }
 
 #[test]
 fn rtmp_app_is_trimmed() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.insert(APP_PROPERTY_NAME.to_string(), " ".to_string() + TEST_APP + " ");
+    definition.parameters.insert(
+        APP_PROPERTY_NAME.to_string(),
+        " ".to_string() + TEST_APP + " ",
+    );
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
@@ -95,20 +102,30 @@ fn rtmp_app_is_trimmed() {
 #[test]
 fn stream_key_is_trimmed() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.insert(STREAM_KEY_PROPERTY_NAME.to_string(), " ".to_string() + TEST_KEY + " ");
+    definition.parameters.insert(
+        STREAM_KEY_PROPERTY_NAME.to_string(),
+        " ".to_string() + TEST_KEY + " ",
+    );
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
     let step = RtmpWatchStep::new(&definition, mock_sender)
         .expect("Error returned when creating rtmp receive step");
 
-    assert_eq!(step.stream_key, StreamKeyRegistration::Exact(TEST_KEY.to_string()), "Unexpected stream key registration");
+    assert_eq!(
+        step.stream_key,
+        StreamKeyRegistration::Exact(TEST_KEY.to_string()),
+        "Unexpected stream key registration"
+    );
 }
 
 #[test]
 fn new_step_is_in_created_status() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.insert(STREAM_KEY_PROPERTY_NAME.to_string(), " ".to_string() + TEST_KEY + " ");
+    definition.parameters.insert(
+        STREAM_KEY_PROPERTY_NAME.to_string(),
+        " ".to_string() + TEST_KEY + " ",
+    );
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
@@ -129,7 +146,8 @@ fn init_requests_registration_for_watchers() {
 
     let _ = step.init();
 
-    let message = receiver.try_recv()
+    let message = receiver
+        .try_recv()
         .expect("Unexpected error reading from the receiver");
 
     match message {
@@ -140,8 +158,14 @@ fn init_requests_registration_for_watchers() {
             ..
         } => {
             assert_eq!(port, step.port, "Unexpected port in registration request");
-            assert_eq!(rtmp_app, step.rtmp_app, "Unexpected app in registration request");
-            assert_eq!(rtmp_stream_key, step.stream_key, "Unexpected stream key in registration request");
+            assert_eq!(
+                rtmp_app, step.rtmp_app,
+                "Unexpected app in registration request"
+            );
+            assert_eq!(
+                rtmp_stream_key, step.stream_key,
+                "Unexpected stream key in registration request"
+            );
         }
 
         message => panic!("Unexpected endpoint request received: {:?}", message),
@@ -171,20 +195,29 @@ async fn registration_failure_changes_status_to_error() {
 
     step.execute(&mut inputs, &mut outputs);
 
-    assert_eq!(step.get_status(), StepStatus::Error, "Unexpected status for step");
+    assert_eq!(
+        step.get_status(),
+        StepStatus::Error,
+        "Unexpected status for step"
+    );
 }
 
 #[tokio::test]
 async fn registration_success_changes_status_to_active() {
     let (mut step, futures, _media, notification_channel) = create_initialized_step();
-    let _ = notification_channel.send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful);
+    let _ =
+        notification_channel.send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful);
     let result = get_pending_future_result(futures).await;
     let (mut inputs, mut outputs) = create_step_parameters();
     inputs.notifications.push(result);
 
     step.execute(&mut inputs, &mut outputs);
 
-    assert_eq!(step.get_status(), StepStatus::Active, "Unexpected status for step");
+    assert_eq!(
+        step.get_status(),
+        StepStatus::Active,
+        "Unexpected status for step"
+    );
 }
 
 #[tokio::test]
@@ -201,7 +234,7 @@ async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
             is_keyframe: true,
             is_sequence_header: true,
             timestamp: Duration::from_millis(1),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -221,8 +254,8 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
     inputs.media.push(MediaNotification {
         stream_id: stream_id.clone(),
         content: MediaNotificationContent::NewIncomingStream {
-           stream_name: TEST_KEY.to_string(),
-        }
+            stream_name: TEST_KEY.to_string(),
+        },
     });
 
     inputs.media.push(MediaNotification {
@@ -233,7 +266,7 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
             is_keyframe: true,
             is_sequence_header: true,
             timestamp: Duration::from_millis(1),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -243,7 +276,11 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
         _ => panic!("Expected items in the media channel, but none was received"),
     };
 
-    assert_eq!(media.stream_key, TEST_KEY.to_string(), "Unexpected stream key in response");
+    assert_eq!(
+        media.stream_key,
+        TEST_KEY.to_string(),
+        "Unexpected stream key in response"
+    );
 
     match media.data {
         RtmpEndpointMediaData::NewVideoData {
@@ -274,7 +311,7 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
         stream_id: stream_id.clone(),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: TEST_KEY.to_string(),
-        }
+        },
     });
 
     inputs.media.push(MediaNotification {
@@ -290,7 +327,7 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
             is_keyframe: true,
             is_sequence_header: true,
             timestamp: Duration::from_millis(1),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -314,7 +351,7 @@ async fn audio_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
             data: Bytes::from(vec![3, 4]),
             is_sequence_header: true,
             timestamp: Duration::from_millis(1),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -335,7 +372,7 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
         stream_id: stream_id.clone(),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: TEST_KEY.to_string(),
-        }
+        },
     });
 
     inputs.media.push(MediaNotification {
@@ -345,7 +382,7 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
             data: Bytes::from(vec![3, 4]),
             is_sequence_header: true,
             timestamp: Duration::from_millis(1),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -355,7 +392,11 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
         _ => panic!("Expected items in the media channel, but none was received"),
     };
 
-    assert_eq!(media.stream_key, TEST_KEY.to_string(), "Unexpected stream key in response");
+    assert_eq!(
+        media.stream_key,
+        TEST_KEY.to_string(),
+        "Unexpected stream key in response"
+    );
 
     match media.data {
         RtmpEndpointMediaData::NewAudioData {
@@ -384,7 +425,7 @@ async fn audio_packet_not_sent_to_media_channel_after_stream_disconnection_messa
         stream_id: stream_id.clone(),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: TEST_KEY.to_string(),
-        }
+        },
     });
 
     inputs.media.push(MediaNotification {
@@ -399,7 +440,7 @@ async fn audio_packet_not_sent_to_media_channel_after_stream_disconnection_messa
             data: Bytes::from(vec![3, 4]),
             is_sequence_header: true,
             timestamp: Duration::from_millis(1),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -420,7 +461,7 @@ async fn metadata_packet_not_sent_to_media_channel_if_new_stream_message_not_rec
         stream_id,
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -441,7 +482,7 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
         stream_id: stream_id.clone(),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: TEST_KEY.to_string(),
-        }
+        },
     });
 
     let mut metadata = HashMap::new();
@@ -449,9 +490,7 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
 
     inputs.media.push(MediaNotification {
         stream_id,
-        content: MediaNotificationContent::Metadata {
-            data: metadata,
-        }
+        content: MediaNotificationContent::Metadata { data: metadata },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -461,11 +500,19 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
         _ => panic!("Expected items in the media channel, but none was received"),
     };
 
-    assert_eq!(media.stream_key, TEST_KEY.to_string(), "Unexpected stream key in response");
+    assert_eq!(
+        media.stream_key,
+        TEST_KEY.to_string(),
+        "Unexpected stream key in response"
+    );
 
     match media.data {
         RtmpEndpointMediaData::NewStreamMetaData { metadata } => {
-            assert_eq!(metadata.video_width, Some(123), "Unexpected video width metadata")
+            assert_eq!(
+                metadata.video_width,
+                Some(123),
+                "Unexpected video width metadata"
+            )
         }
 
         x => panic!("Unexpected media result: {:?}", x),
@@ -482,7 +529,7 @@ async fn metadata_packet_not_sent_to_media_channel_after_stream_disconnection_me
         stream_id: stream_id.clone(),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: TEST_KEY.to_string(),
-        }
+        },
     });
 
     inputs.media.push(MediaNotification {
@@ -494,7 +541,7 @@ async fn metadata_packet_not_sent_to_media_channel_after_stream_disconnection_me
         stream_id,
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
@@ -517,16 +564,19 @@ async fn media_message_passed_in_are_also_passed_on() {
         stream_id: stream1.clone(),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: stream_key.clone(),
-        }
+        },
     });
 
     step.execute(&mut inputs, &mut outputs);
 
     assert_eq!(outputs.media.len(), 1, "Unexpected number of media outputs");
-    assert_eq!(outputs.media[0].stream_id, stream1, "Unexpected stream id of first media output");
+    assert_eq!(
+        outputs.media[0].stream_id, stream1,
+        "Unexpected stream id of first media output"
+    );
 
     match &outputs.media[0].content {
-        MediaNotificationContent::NewIncomingStream {stream_name} => {
+        MediaNotificationContent::NewIncomingStream { stream_name } => {
             assert_eq!(stream_name, &stream_key, "Unexpected stream name");
         }
 
@@ -540,20 +590,25 @@ fn create_definition(port: u16, app: &str, key: &str) -> WorkflowStepDefinition 
         parameters: HashMap::new(),
     };
 
-    definition.parameters.insert(PORT_PROPERTY_NAME.to_string(), port.to_string());
-    definition.parameters.insert(APP_PROPERTY_NAME.to_string(), app.to_string());
-    definition.parameters.insert(STREAM_KEY_PROPERTY_NAME.to_string(), key.to_string());
+    definition
+        .parameters
+        .insert(PORT_PROPERTY_NAME.to_string(), port.to_string());
+    definition
+        .parameters
+        .insert(APP_PROPERTY_NAME.to_string(), app.to_string());
+    definition
+        .parameters
+        .insert(STREAM_KEY_PROPERTY_NAME.to_string(), key.to_string());
 
     definition
 }
 
-fn create_initialized_step<'a>()
-    -> (
-        RtmpWatchStep,
-        Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
-        UnboundedReceiver<RtmpEndpointMediaMessage>,
-        UnboundedSender<RtmpEndpointWatcherNotification>
-    ) {
+fn create_initialized_step<'a>() -> (
+    RtmpWatchStep,
+    Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    UnboundedReceiver<RtmpEndpointMediaMessage>,
+    UnboundedSender<RtmpEndpointWatcherNotification>,
+) {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
 
@@ -562,13 +617,16 @@ fn create_initialized_step<'a>()
 
     let init_results = step.init();
 
-    let message = receiver.try_recv()
+    let message = receiver
+        .try_recv()
         .expect("Unexpected error reading from the receiver");
 
     let (media_channel, notification_channel) = match message {
-        RtmpEndpointRequest::ListenForWatchers { media_channel, notification_channel, .. } => {
-            (media_channel, notification_channel)
-        }
+        RtmpEndpointRequest::ListenForWatchers {
+            media_channel,
+            notification_channel,
+            ..
+        } => (media_channel, notification_channel),
 
         message => panic!("Unexpected endpoint request received: {:?}", message),
     };
@@ -576,22 +634,26 @@ fn create_initialized_step<'a>()
     (step, init_results, media_channel, notification_channel)
 }
 
-async fn create_active_step<'a>()
-    -> (
-        RtmpWatchStep,
-        Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
-        UnboundedReceiver<RtmpEndpointMediaMessage>,
-        UnboundedSender<RtmpEndpointWatcherNotification>
-    ) {
+async fn create_active_step<'a>() -> (
+    RtmpWatchStep,
+    Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    UnboundedReceiver<RtmpEndpointMediaMessage>,
+    UnboundedSender<RtmpEndpointWatcherNotification>,
+) {
     let (mut step, futures, media_channel, notification_channel) = create_initialized_step();
-    let _ = notification_channel.send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful);
+    let _ =
+        notification_channel.send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful);
     let result = get_pending_future_result(futures).await;
     let (mut inputs, mut outputs) = create_step_parameters();
     inputs.notifications.push(result);
 
     step.execute(&mut inputs, &mut outputs);
 
-    assert_eq!(step.get_status(), StepStatus::Active, "Unexpected step result");
+    assert_eq!(
+        step.get_status(),
+        StepStatus::Active,
+        "Unexpected step result"
+    );
 
     (step, outputs.futures, media_channel, notification_channel)
 }

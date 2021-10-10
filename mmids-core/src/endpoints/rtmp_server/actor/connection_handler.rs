@@ -439,14 +439,21 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 rtmp_app: current_rtmp_app,
             } => {
                 if *current_rtmp_app != app_name || *current_stream_key != stream_key {
-                    error!("Connection {} sent audio data for '{}/{}', but this connection is \
-                    currently publishing on '{}/{}'", self.id, app_name, stream_key, current_rtmp_app, current_stream_key);
+                    error!(
+                        "Connection {} sent audio data for '{}/{}', but this connection is \
+                    currently publishing on '{}/{}'",
+                        self.id, app_name, stream_key, current_rtmp_app, current_stream_key
+                    );
 
                     self.force_disconnect = true;
                     return;
                 }
 
-                let UnwrappedAudio { data, is_sequence_header, codec } = unwrap_audio_from_flv(data);
+                let UnwrappedAudio {
+                    data,
+                    is_sequence_header,
+                    codec,
+                } = unwrap_audio_from_flv(data);
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::NewAudioData {
@@ -970,7 +977,11 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> UnwrappedAudio {
         AudioCodec::Unknown
     };
 
-    UnwrappedAudio { codec, is_sequence_header, data }
+    UnwrappedAudio {
+        codec,
+        is_sequence_header,
+        data,
+    }
 }
 
 fn wrap_audio_into_flv(data: Bytes, codec: AudioCodec) -> Result<Bytes, ()> {

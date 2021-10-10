@@ -1,8 +1,8 @@
 pub mod rtmp_receive;
 pub mod rtmp_watch;
 
-use super::{MediaNotification};
-use downcast_rs::{Downcast, impl_downcast};
+use super::MediaNotification;
+use downcast_rs::{impl_downcast, Downcast};
 use futures::future::BoxFuture;
 
 pub trait StepFutureResult: Downcast {}
@@ -12,7 +12,7 @@ impl_downcast!(StepFutureResult);
 pub enum StepStatus {
     Created,
     Active,
-    Error
+    Error,
 }
 
 pub struct StepInputs {
@@ -39,7 +39,9 @@ mod test_utils {
     use std::time::Duration;
     use tokio::time::timeout;
 
-    pub async fn get_pending_future_result<'a>(futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>) -> Box<dyn StepFutureResult>{
+    pub async fn get_pending_future_result<'a>(
+        futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    ) -> Box<dyn StepFutureResult> {
         let mut awaitable_futures = FuturesUnordered::new();
         for future in futures {
             awaitable_futures.push(future);
@@ -57,11 +59,10 @@ mod test_utils {
                 media: Vec::new(),
                 notifications: Vec::new(),
             },
-
             StepOutputs {
                 media: Vec::new(),
                 futures: Vec::new(),
-            }
+            },
         )
     }
 }

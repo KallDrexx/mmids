@@ -1,19 +1,24 @@
 #[cfg(test)]
 mod tests;
 
-use crate::StreamId;
-use crate::endpoints::rtmp_server::{StreamKeyRegistration, RtmpEndpointRequest, RtmpEndpointWatcherNotification, RtmpEndpointMediaMessage, RtmpEndpointMediaData};
+use crate::endpoints::rtmp_server::{
+    RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointRequest,
+    RtmpEndpointWatcherNotification, StreamKeyRegistration,
+};
 use crate::utils::hash_map_to_stream_metadata;
-use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::workflows::steps::{StepStatus, WorkflowStep, StepFutureResult, StepInputs, StepOutputs};
 use crate::workflows::definitions::WorkflowStepDefinition;
-use futures::FutureExt;
+use crate::workflows::steps::{
+    StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
+};
+use crate::workflows::{MediaNotification, MediaNotificationContent};
+use crate::StreamId;
 use futures::future::BoxFuture;
-use log::{info, warn, error};
+use futures::FutureExt;
+use log::{error, info, warn};
+use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use thiserror::Error as ThisError;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel, UnboundedReceiver};
-use rml_rtmp::time::RtmpTimestamp;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub const PORT_PROPERTY_NAME: &'static str = "port";
 pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
@@ -32,19 +37,30 @@ pub struct RtmpWatchStep {
 impl StepFutureResult for RtmpWatchStepFutureResult {}
 
 enum RtmpWatchStepFutureResult {
-    RtmpWatchNotificationReceived(RtmpEndpointWatcherNotification, UnboundedReceiver<RtmpEndpointWatcherNotification>),
+    RtmpWatchNotificationReceived(
+        RtmpEndpointWatcherNotification,
+        UnboundedReceiver<RtmpEndpointWatcherNotification>,
+    ),
     RtmpEndpointGone,
 }
 
 #[derive(ThisError, Debug)]
 enum StepStartupError {
-    #[error("No RTMP app specified.  A non-empty parameter of '{}' is required", PORT_PROPERTY_NAME)]
+    #[error(
+        "No RTMP app specified.  A non-empty parameter of '{}' is required",
+        PORT_PROPERTY_NAME
+    )]
     NoRtmpAppSpecified,
 
-    #[error("No stream key specified.  A non-empty parameter of '{}' is required", APP_PROPERTY_NAME)]
+    #[error(
+        "No stream key specified.  A non-empty parameter of '{}' is required",
+        APP_PROPERTY_NAME
+    )]
     NoStreamKeySpecified,
 
-    #[error("Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified")]
+    #[error(
+        "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
+    )]
     InvalidPortSpecified(String),
 }
 
@@ -56,7 +72,11 @@ impl RtmpWatchStep {
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
                 Ok(num) => num,
-                Err(_) => return Err(Box::new(StepStartupError::InvalidPortSpecified(value.clone())))
+                Err(_) => {
+                    return Err(Box::new(StepStartupError::InvalidPortSpecified(
+                        value.clone(),
+                    )))
+                }
             },
 
             None => 1935,
@@ -106,7 +126,10 @@ impl RtmpWatchStep {
             }
 
             RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key } => {
-                info!("At least one watcher became active for stream key '{}'", stream_key);
+                info!(
+                    "At least one watcher became active for stream key '{}'",
+                    stream_key
+                );
             }
 
             RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key } => {
@@ -135,15 +158,22 @@ impl RtmpWatchStep {
                         }
                     }
 
-                    self.stream_id_to_name_map.insert(media.stream_id.clone(), stream_name.clone());
+                    self.stream_id_to_name_map
+                        .insert(media.stream_id.clone(), stream_name.clone());
                 }
 
                 MediaNotificationContent::StreamDisconnected => {
-                    info!("Stream disconnected notification received for stream id {:?}", media.stream_id);
+                    info!(
+                        "Stream disconnected notification received for stream id {:?}",
+                        media.stream_id
+                    );
                     match self.stream_id_to_name_map.remove(&media.stream_id) {
                         Some(_) => (),
                         None => {
-                            warn!("Disconnected stream {:?} was not mapped to a stream name", media.stream_id);
+                            warn!(
+                                "Disconnected stream {:?} was not mapped to a stream name",
+                                media.stream_id
+                            );
                         }
                     }
                 }
@@ -157,15 +187,19 @@ impl RtmpWatchStep {
                     let metadata = hash_map_to_stream_metadata(data);
                     let rtmp_media = RtmpEndpointMediaMessage {
                         stream_key: stream_key.clone(),
-                        data: RtmpEndpointMediaData::NewStreamMetaData {
-                            metadata,
-                        }
+                        data: RtmpEndpointMediaData::NewStreamMetaData { metadata },
                     };
 
                     let _ = self.media_channel.send(rtmp_media);
                 }
 
-                MediaNotificationContent::Video { is_keyframe, is_sequence_header, codec, timestamp, data } => {
+                MediaNotificationContent::Video {
+                    is_keyframe,
+                    is_sequence_header,
+                    codec,
+                    timestamp,
+                    data,
+                } => {
                     let stream_key = match self.stream_id_to_name_map.get(&media.stream_id) {
                         Some(key) => key,
                         None => return,
@@ -185,7 +219,12 @@ impl RtmpWatchStep {
                     let _ = self.media_channel.send(rtmp_media);
                 }
 
-                MediaNotificationContent::Audio { is_sequence_header, codec, timestamp, data } => {
+                MediaNotificationContent::Audio {
+                    is_sequence_header,
+                    codec,
+                    timestamp,
+                    data,
+                } => {
                     let stream_key = match self.stream_id_to_name_map.get(&media.stream_id) {
                         Some(key) => key,
                         None => return,
@@ -216,13 +255,15 @@ impl WorkflowStep for RtmpWatchStep {
 
         let (media_sender, media_receiver) = unbounded_channel();
         let (notification_sender, notification_receiver) = unbounded_channel();
-        let _ = self.rtmp_endpoint_sender.send(RtmpEndpointRequest::ListenForWatchers {
-            port: self.port,
-            rtmp_app: self.rtmp_app.clone(),
-            rtmp_stream_key: self.stream_key.clone(),
-            media_channel: media_receiver,
-            notification_channel: notification_sender,
-        });
+        let _ = self
+            .rtmp_endpoint_sender
+            .send(RtmpEndpointRequest::ListenForWatchers {
+                port: self.port,
+                rtmp_app: self.rtmp_app.clone(),
+                rtmp_stream_key: self.stream_key.clone(),
+                media_channel: media_receiver,
+                notification_channel: notification_sender,
+            });
 
         self.media_channel = media_sender;
         futures.push(wait_for_endpoint_notification(notification_receiver).boxed());
@@ -258,8 +299,13 @@ impl WorkflowStep for RtmpWatchStep {
                     return;
                 }
 
-                RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(notification, receiver) => {
-                    outputs.futures.push(wait_for_endpoint_notification(receiver).boxed());
+                RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(
+                    notification,
+                    receiver,
+                ) => {
+                    outputs
+                        .futures
+                        .push(wait_for_endpoint_notification(receiver).boxed());
                     self.handle_endpoint_notification(notification);
                 }
             }
@@ -275,7 +321,9 @@ async fn wait_for_endpoint_notification(
     mut receiver: UnboundedReceiver<RtmpEndpointWatcherNotification>,
 ) -> Box<dyn StepFutureResult> {
     let future_result = match receiver.recv().await {
-        Some(message) => RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(message, receiver),
+        Some(message) => {
+            RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(message, receiver)
+        }
         None => RtmpWatchStepFutureResult::RtmpEndpointGone,
     };
 

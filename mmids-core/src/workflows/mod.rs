@@ -1,8 +1,8 @@
 pub mod definitions;
 pub mod steps;
 
-use crate::StreamId;
 use crate::codecs::{AudioCodec, VideoCodec};
+use crate::StreamId;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -50,8 +50,5 @@ pub enum MediaNotificationContent {
     },
 
     /// New stream metadata
-    Metadata {
-        data: HashMap<String, String>,
-    }
+    Metadata { data: HashMap<String, String> },
 }
-

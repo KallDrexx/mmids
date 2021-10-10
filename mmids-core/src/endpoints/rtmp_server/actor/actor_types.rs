@@ -1,6 +1,6 @@
-use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
 use super::connection_handler::{ConnectionRequest, ConnectionResponse};
-use crate::codecs::{VideoCodec, AudioCodec};
+use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
+use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::rtmp_server::{
     RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
 };
