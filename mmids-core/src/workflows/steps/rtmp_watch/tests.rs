@@ -23,7 +23,8 @@ fn can_create_from_filled_out_workflow_definition() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender).expect("Error returned creating step");
+    let (step, _futures) =
+        RtmpWatchStep::new(&definition, mock_sender).expect("Error returned creating step");
 
     assert_eq!(step.port, TEST_PORT, "Unexpected port");
     assert_eq!(step.rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
@@ -39,7 +40,8 @@ fn asterisk_for_key_sets_key_to_any() {
     let definition = create_definition(TEST_PORT, TEST_APP, "*");
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender).expect("Error returned creating step}");
+    let (step, _futures) =
+        RtmpWatchStep::new(&definition, mock_sender).expect("Error returned creating step}");
 
     assert_eq!(step.port, TEST_PORT, "Unexpected port");
     assert_eq!(step.rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
@@ -57,7 +59,7 @@ fn port_is_1935_if_none_provided() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender)
+    let (step, _futures) = RtmpWatchStep::new(&definition, mock_sender)
         .expect("Error returned when creating rtmp receive step");
 
     assert_eq!(step.port, 1935, "Unexpected port");
@@ -93,7 +95,7 @@ fn rtmp_app_is_trimmed() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender)
+    let (step, _futures) = RtmpWatchStep::new(&definition, mock_sender)
         .expect("Error returned when creating rtmp receive step");
 
     assert_eq!(step.rtmp_app, TEST_APP, "Unexpected rtmp app");
@@ -109,7 +111,7 @@ fn stream_key_is_trimmed() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender)
+    let (step, _futures) = RtmpWatchStep::new(&definition, mock_sender)
         .expect("Error returned when creating rtmp receive step");
 
     assert_eq!(
@@ -129,7 +131,7 @@ fn new_step_is_in_created_status() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let step = RtmpWatchStep::new(&definition, mock_sender)
+    let (step, _futures) = RtmpWatchStep::new(&definition, mock_sender)
         .expect("Error returned when creating rtmp receive step");
 
     let status = step.get_status();
@@ -137,14 +139,12 @@ fn new_step_is_in_created_status() {
 }
 
 #[test]
-fn init_requests_registration_for_watchers() {
+fn new_requests_registration_for_watchers() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
 
-    let mut step = RtmpWatchStep::new(&definition, sender)
+    let (step, _futures) = RtmpWatchStep::new(&definition, sender)
         .expect("Error returned when creating rtmp receive step");
-
-    let _ = step.init();
 
     let message = receiver
         .try_recv()
@@ -612,10 +612,8 @@ fn create_initialized_step<'a>() -> (
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
 
-    let mut step = RtmpWatchStep::new(&definition, sender)
+    let (step, init_results) = RtmpWatchStep::new(&definition, sender)
         .expect("Error returned when creating rtmp receive step");
-
-    let init_results = step.init();
 
     let message = receiver
         .try_recv()

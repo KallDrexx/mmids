@@ -65,17 +65,18 @@ enum StepStartupError {
 }
 
 impl RtmpWatchStep {
-    pub fn new(
+    pub fn new<'a>(
         definition: &WorkflowStepDefinition,
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<(Self, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>), Box<dyn std::error::Error>>
+    {
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
                 Ok(num) => num,
                 Err(_) => {
                     return Err(Box::new(StepStartupError::InvalidPortSpecified(
                         value.clone(),
-                    )))
+                    )));
                 }
             },
 
@@ -98,19 +99,33 @@ impl RtmpWatchStep {
             StreamKeyRegistration::Exact(stream_key.to_string())
         };
 
-        // create a dummy media channel that will get overwritten, so we don't have to deal
-        // with excessive unwrap calls later
-        let (fake_sender, _) = unbounded_channel();
+        let (media_sender, media_receiver) = unbounded_channel();
 
-        Ok(RtmpWatchStep {
+        let step = RtmpWatchStep {
             status: StepStatus::Created,
             port,
             rtmp_app: app.to_string(),
             rtmp_endpoint_sender,
-            media_channel: fake_sender,
+            media_channel: media_sender,
             stream_key,
             stream_id_to_name_map: HashMap::new(),
-        })
+        };
+
+        let (notification_sender, notification_receiver) = unbounded_channel();
+        let _ = step
+            .rtmp_endpoint_sender
+            .send(RtmpEndpointRequest::ListenForWatchers {
+                port: step.port,
+                rtmp_app: step.rtmp_app.clone(),
+                rtmp_stream_key: step.stream_key.clone(),
+                media_channel: media_receiver,
+                notification_channel: notification_sender,
+            });
+
+        Ok((
+            step,
+            vec![wait_for_endpoint_notification(notification_receiver).boxed()],
+        ))
     }
 
     fn handle_endpoint_notification(&mut self, notification: RtmpEndpointWatcherNotification) {
@@ -250,27 +265,6 @@ impl RtmpWatchStep {
 }
 
 impl WorkflowStep for RtmpWatchStep {
-    fn init<'a>(&mut self) -> Vec<BoxFuture<'a, Box<dyn StepFutureResult>>> {
-        let mut futures = Vec::new();
-
-        let (media_sender, media_receiver) = unbounded_channel();
-        let (notification_sender, notification_receiver) = unbounded_channel();
-        let _ = self
-            .rtmp_endpoint_sender
-            .send(RtmpEndpointRequest::ListenForWatchers {
-                port: self.port,
-                rtmp_app: self.rtmp_app.clone(),
-                rtmp_stream_key: self.stream_key.clone(),
-                media_channel: media_receiver,
-                notification_channel: notification_sender,
-            });
-
-        self.media_channel = media_sender;
-        futures.push(wait_for_endpoint_notification(notification_receiver).boxed());
-
-        futures
-    }
-
     fn get_status(&self) -> StepStatus {
         self.status.clone()
     }

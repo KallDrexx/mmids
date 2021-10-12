@@ -63,10 +63,11 @@ enum StepStartupError {
 }
 
 impl RtmpReceiverStep {
-    pub fn new(
+    pub fn new<'a>(
         definition: &WorkflowStepDefinition,
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<(Self, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>), Box<dyn std::error::Error>>
+    {
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
                 Ok(num) => num,
@@ -90,7 +91,7 @@ impl RtmpReceiverStep {
             None => return Err(Box::new(StepStartupError::NoStreamKeySpecified)),
         };
 
-        Ok(RtmpReceiverStep {
+        let step = RtmpReceiverStep {
             status: StepStatus::Created,
             rtmp_endpoint_sender: rtmp_endpoint_sender.clone(),
             port,
@@ -101,7 +102,23 @@ impl RtmpReceiverStep {
             } else {
                 StreamKeyRegistration::Exact(stream_key.to_string())
             },
-        })
+        };
+
+        let (sender, receiver) = unbounded_channel();
+        let _ = step
+            .rtmp_endpoint_sender
+            .send(RtmpEndpointRequest::ListenForPublishers {
+                message_channel: sender,
+                port: step.port,
+                rtmp_app: step.rtmp_app.clone(),
+                rtmp_stream_key: step.stream_key.clone(),
+                stream_id: None,
+            });
+
+        Ok((
+            step,
+            vec![wait_for_rtmp_endpoint_response(receiver).boxed()],
+        ))
     }
 
     fn handle_rtmp_publisher_message(
@@ -220,21 +237,6 @@ impl RtmpReceiverStep {
 }
 
 impl WorkflowStep for RtmpReceiverStep {
-    fn init<'a>(&mut self) -> Vec<BoxFuture<'a, Box<dyn StepFutureResult>>> {
-        let (sender, receiver) = unbounded_channel();
-        let _ = self
-            .rtmp_endpoint_sender
-            .send(RtmpEndpointRequest::ListenForPublishers {
-                message_channel: sender,
-                port: self.port,
-                rtmp_app: self.rtmp_app.clone(),
-                rtmp_stream_key: self.stream_key.clone(),
-                stream_id: None,
-            });
-
-        vec![wait_for_rtmp_endpoint_response(receiver).boxed()]
-    }
-
     fn get_status(&self) -> StepStatus {
         self.status.clone()
     }
