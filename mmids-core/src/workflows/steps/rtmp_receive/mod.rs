@@ -24,6 +24,7 @@ pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
 pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
 
 pub struct RtmpReceiverStep {
+    definition: WorkflowStepDefinition,
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     port: u16,
     rtmp_app: String,
@@ -92,6 +93,7 @@ impl RtmpReceiverStep {
         };
 
         let step = RtmpReceiverStep {
+            definition: definition.clone(),
             status: StepStatus::Created,
             rtmp_endpoint_sender: rtmp_endpoint_sender.clone(),
             port,
@@ -239,6 +241,10 @@ impl RtmpReceiverStep {
 impl WorkflowStep for RtmpReceiverStep {
     fn get_status(&self) -> &StepStatus {
         &self.status
+    }
+
+    fn get_definition(&self) -> &WorkflowStepDefinition {
+        &self.definition
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {

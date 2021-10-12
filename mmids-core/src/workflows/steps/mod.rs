@@ -2,6 +2,7 @@ pub mod rtmp_receive;
 pub mod rtmp_watch;
 
 use super::MediaNotification;
+use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
 use futures::future::BoxFuture;
 
@@ -27,6 +28,7 @@ pub struct StepOutputs<'a> {
 
 pub trait WorkflowStep {
     fn get_status(&self) -> &StepStatus;
+    fn get_definition(&self) -> &WorkflowStepDefinition;
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs);
 }
 
