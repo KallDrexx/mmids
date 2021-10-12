@@ -26,7 +26,7 @@ pub struct StepOutputs<'a> {
 }
 
 pub trait WorkflowStep {
-    fn get_status(&self) -> StepStatus;
+    fn get_status(&self) -> &StepStatus;
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs);
 }
 

@@ -265,8 +265,8 @@ impl RtmpWatchStep {
 }
 
 impl WorkflowStep for RtmpWatchStep {
-    fn get_status(&self) -> StepStatus {
-        self.status.clone()
+    fn get_status(&self) -> &StepStatus {
+        &self.status
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {

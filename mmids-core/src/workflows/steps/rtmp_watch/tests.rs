@@ -135,7 +135,7 @@ fn new_step_is_in_created_status() {
         .expect("Error returned when creating rtmp receive step");
 
     let status = step.get_status();
-    assert_eq!(status, StepStatus::Created, "Unexpected status");
+    assert_eq!(status, &StepStatus::Created, "Unexpected status");
 }
 
 #[test]
@@ -197,7 +197,7 @@ async fn registration_failure_changes_status_to_error() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Error,
+        &StepStatus::Error,
         "Unexpected status for step"
     );
 }
@@ -215,7 +215,7 @@ async fn registration_success_changes_status_to_active() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected status for step"
     );
 }
@@ -649,7 +649,7 @@ async fn create_active_step<'a>() -> (
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected step result"
     );
 

@@ -137,7 +137,7 @@ fn new_step_is_in_created_status() {
         .expect("Error returned when creating rtmp receive step");
 
     let status = step.get_status();
-    assert_eq!(status, StepStatus::Created, "Unexpected status");
+    assert_eq!(status, &StepStatus::Created, "Unexpected status");
 }
 
 #[test]
@@ -198,7 +198,7 @@ async fn publish_failure_sets_step_to_error_mode() {
     step.execute(&mut inputs, &mut outputs);
 
     let status = step.get_status();
-    assert_eq!(status, StepStatus::Error, "Unexpected step status");
+    assert_eq!(status, &StepStatus::Error, "Unexpected step status");
 }
 
 #[tokio::test]
@@ -212,7 +212,7 @@ async fn publish_success_sets_step_to_ready_status() {
     step.execute(&mut inputs, &mut outputs);
 
     let status = step.get_status();
-    assert_eq!(status, StepStatus::Active, "Unexpected step status");
+    assert_eq!(status, &StepStatus::Active, "Unexpected step status");
 }
 
 #[tokio::test]
@@ -233,7 +233,7 @@ async fn stream_started_notification_raised_when_publisher_connects() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected step status"
     );
     assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
@@ -285,7 +285,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected step status"
     );
     assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
@@ -334,7 +334,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected step status"
     );
     assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
@@ -387,7 +387,7 @@ async fn video_notification_received_when_publisher_sends_video() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected step status"
     );
     assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
@@ -454,7 +454,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
 
     assert_eq!(
         step.get_status(),
-        StepStatus::Active,
+        &StepStatus::Active,
         "Unexpected step status"
     );
     assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
