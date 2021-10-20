@@ -1,3 +1,4 @@
+pub mod factory;
 pub mod rtmp_receive;
 pub mod rtmp_watch;
 
