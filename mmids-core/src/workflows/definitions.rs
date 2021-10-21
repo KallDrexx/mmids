@@ -1,6 +1,8 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct WorkflowStepType(pub String);
 
 #[derive(Clone)]
@@ -12,4 +14,97 @@ pub struct WorkflowStepDefinition {
 pub struct Workflow {
     pub name: String,
     pub steps: Vec<String>,
+}
+
+impl WorkflowStepDefinition {
+    /// Gets an identifier for the workflow step that's based on the step's parameters.  Two
+    /// steps with the same set of parameters and values will always produce the same id within
+    /// a single run of the the application, but the identifiers are not guaranteed to be consistent
+    /// across application runs.
+    pub fn get_id(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl Hash for WorkflowStepDefinition {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut sorted_keys: Vec<&String> = self.parameters.keys().collect();
+        sorted_keys.sort();
+
+        self.step_type.hash(state);
+        for key in sorted_keys {
+            key.hash(state);
+            self.parameters.get(key).hash(state);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_steps_with_identical_setups_have_same_id() {
+        let mut step1 = WorkflowStepDefinition {
+            step_type: WorkflowStepType("test".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        step1.parameters.insert("a".to_string(), "b".to_string());
+        step1.parameters.insert("c".to_string(), "d".to_string());
+
+        let mut step2 = WorkflowStepDefinition {
+            step_type: WorkflowStepType("test".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        step2.parameters.insert("c".to_string(), "d".to_string());
+        step2.parameters.insert("a".to_string(), "b".to_string());
+
+        assert_eq!(step1.get_id(), step2.get_id());
+    }
+
+    #[test]
+    fn two_steps_with_different_types_do_not_have_same_id() {
+        let mut step1 = WorkflowStepDefinition {
+            step_type: WorkflowStepType("test".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        step1.parameters.insert("a".to_string(), "b".to_string());
+        step1.parameters.insert("c".to_string(), "d".to_string());
+
+        let mut step2 = WorkflowStepDefinition {
+            step_type: WorkflowStepType("test2".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        step2.parameters.insert("c".to_string(), "d".to_string());
+        step2.parameters.insert("a".to_string(), "b".to_string());
+
+        assert_ne!(step1.get_id(), step2.get_id());
+    }
+
+    #[test]
+    fn two_steps_with_different_parameters_do_not_have_same_id() {
+        let mut step1 = WorkflowStepDefinition {
+            step_type: WorkflowStepType("test".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        step1.parameters.insert("a".to_string(), "b".to_string());
+        step1.parameters.insert("c".to_string(), "d".to_string());
+
+        let mut step2 = WorkflowStepDefinition {
+            step_type: WorkflowStepType("test2".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        step2.parameters.insert("c".to_string(), "d".to_string());
+        step2.parameters.insert("a".to_string(), "f".to_string());
+
+        assert_ne!(step1.get_id(), step2.get_id());
+    }
 }
