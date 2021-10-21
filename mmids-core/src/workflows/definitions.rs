@@ -11,9 +11,10 @@ pub struct WorkflowStepDefinition {
     pub parameters: HashMap<String, String>,
 }
 
-pub struct Workflow {
+#[derive(Clone)]
+pub struct WorkflowDefinition {
     pub name: String,
-    pub steps: Vec<String>,
+    pub steps: Vec<WorkflowStepDefinition>,
 }
 
 impl WorkflowStepDefinition {

@@ -1,5 +1,8 @@
 pub mod definitions;
 pub mod steps;
+mod runner;
+
+pub use runner::{start as start_workflow, WorkflowRequest};
 
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::StreamId;

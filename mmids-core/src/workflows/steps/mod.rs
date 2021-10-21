@@ -22,9 +22,37 @@ pub struct StepInputs {
     pub notifications: Vec<Box<dyn StepFutureResult>>,
 }
 
+impl StepInputs {
+    pub fn new() -> Self {
+        StepInputs {
+            media: Vec::new(),
+            notifications: Vec::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.media.clear();
+        self.notifications.clear();
+    }
+}
+
 pub struct StepOutputs<'a> {
     pub media: Vec<MediaNotification>,
     pub futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+}
+
+impl<'a> StepOutputs<'a> {
+    pub fn new() -> Self {
+        StepOutputs {
+            media: Vec::new(),
+            futures: Vec::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.futures.clear();
+        self.media.clear();
+    }
 }
 
 pub trait WorkflowStep {
