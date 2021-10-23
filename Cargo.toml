@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "mmids-core",
+    "mmids-app",
     "validators/echo-server",
     "validators/rtmp-server",
 ]

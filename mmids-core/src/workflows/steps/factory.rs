@@ -1,19 +1,16 @@
 use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
-use crate::workflows::steps::{StepFutureResult, WorkflowStep};
-use futures::future::BoxFuture;
+use crate::workflows::steps::StepCreationResult;
 use log::info;
 use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-pub type FutureList<'a> = Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>;
-pub type StepCreationResult<'a> = Result<(Box<dyn WorkflowStep + Sync + Send>, FutureList<'a>), Box<dyn std::error::Error + Sync + Send>>;
-pub type FactoryCreateResponse = Result<StepCreationResult<'static>, FactoryCreateError>;
+pub type FactoryCreateResponse = Result<StepCreationResult, FactoryCreateError>;
 
 pub enum FactoryRequest {
     RegisterFunction {
         step_type: WorkflowStepType,
-        creation_fn: Box<dyn Fn(WorkflowStepDefinition) -> StepCreationResult<'static> + Send + Sync>,
+        creation_fn: Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>,
         response_channel: UnboundedSender<Result<(), FactoryRegistrationError>>,
     },
 
@@ -35,7 +32,7 @@ pub enum FactoryCreateError {
     NoRegisteredStep(String),
 }
 
-pub fn start() -> UnboundedSender<FactoryRequest> {
+pub fn start_step_factory() -> UnboundedSender<FactoryRequest> {
     let (sender, receiver) = unbounded_channel();
     tokio::spawn(run(receiver));
 
@@ -67,7 +64,7 @@ async fn run(mut receiver: UnboundedReceiver<FactoryRequest>) {
                     }
                 };
 
-                let result = creation_fn(definition);
+                let result = creation_fn(&definition);
                 let _ = response_channel.send(Ok(result));
             }
         }

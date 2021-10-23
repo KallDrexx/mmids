@@ -1,0 +1,10 @@
+[package]
+name = "mmids-app"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+mmids-core = {path = "../mmids-core"}
+tokio = { version = "1.12", features = ["full"] }
+env_logger = "0.9.0"
+log = "0.4"

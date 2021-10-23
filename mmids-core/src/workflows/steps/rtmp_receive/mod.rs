@@ -6,12 +6,9 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::net::ConnectionId;
 use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::{
-    StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
-};
+use crate::workflows::steps::{StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep, StepCreationResult, FutureList};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
-use futures::future::BoxFuture;
 use futures::FutureExt;
 use log::{error, info};
 use std::collections::HashMap;
@@ -46,28 +43,39 @@ enum RtmpReceiveFutureResult {
 #[derive(ThisError, Debug)]
 enum StepStartupError {
     #[error(
-        "No RTMP app specified.  A non-empty parameter of '{}' is required",
-        PORT_PROPERTY_NAME
+    "No RTMP app specified.  A non-empty parameter of '{}' is required",
+    PORT_PROPERTY_NAME
     )]
     NoRtmpAppSpecified,
 
     #[error(
-        "No stream key specified.  A non-empty parameter of '{}' is required",
-        APP_PROPERTY_NAME
+    "No stream key specified.  A non-empty parameter of '{}' is required",
+    APP_PROPERTY_NAME
     )]
     NoStreamKeySpecified,
 
     #[error(
-        "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
+    "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
     )]
     InvalidPortSpecified(String),
 }
 
 impl RtmpReceiverStep {
+    pub fn create_factory_fn(
+        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>
+    ) -> Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync> {
+        Box::new(move |definition|
+            match RtmpReceiverStep::new(definition, rtmp_endpoint_sender.clone()) {
+                Ok((step, futures)) => Ok((Box::new(step), futures)),
+                Err(e) => Err(e)
+            }
+        )
+    }
+
     pub fn new<'a>(
         definition: &WorkflowStepDefinition,
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<(Self, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>), Box<dyn std::error::Error>>
+    ) -> Result<(Self, FutureList<'a>), Box<dyn std::error::Error + Sync + Send>>
     {
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
@@ -75,7 +83,7 @@ impl RtmpReceiverStep {
                 Err(_) => {
                     return Err(Box::new(StepStartupError::InvalidPortSpecified(
                         value.clone(),
-                    )))
+                    )));
                 }
             },
 
@@ -237,6 +245,9 @@ impl RtmpReceiverStep {
         }
     }
 }
+
+unsafe impl Send for RtmpReceiverStep {}
+unsafe impl Sync for RtmpReceiverStep {}
 
 impl WorkflowStep for RtmpReceiverStep {
     fn get_status(&self) -> &StepStatus {

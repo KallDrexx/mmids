@@ -10,6 +10,9 @@ use futures::future::BoxFuture;
 pub trait StepFutureResult: Downcast {}
 impl_downcast!(StepFutureResult);
 
+pub type FutureList<'a> = Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>;
+pub type StepCreationResult = Result<(Box<dyn WorkflowStep + Sync + Send>, FutureList<'static>), Box<dyn std::error::Error + Sync + Send>>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum StepStatus {
     Created,

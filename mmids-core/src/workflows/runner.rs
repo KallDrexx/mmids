@@ -55,6 +55,7 @@ impl<'a> Actor<'a> {
         let futures = FuturesUnordered::new();
         let mut pending_steps = Vec::new();
         for step in &definition.steps {
+            info!("Workflow {}: step defined with type {} and id {}", definition.name, step.step_type.0, step.get_id());
             pending_steps.push(step.get_id());
 
             let (factory_sender, factory_receiver) = unbounded_channel();
@@ -73,7 +74,7 @@ impl<'a> Actor<'a> {
             futures,
             steps_by_definition_id: HashMap::new(),
             active_steps: Vec::new(),
-            pending_steps: Vec::new(),
+            pending_steps,
             step_inputs: StepInputs::new(),
             step_outputs: StepOutputs::new(),
         }
@@ -235,6 +236,8 @@ impl<'a> Actor<'a> {
                     info!("Workflow {}: Removing now unused step id {}", self.name, id);
                 }
             }
+
+            info!("Workflow {}: All pending steps moved to active", self.name);
         }
     }
 }

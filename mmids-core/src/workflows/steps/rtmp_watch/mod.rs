@@ -7,9 +7,7 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::utils::hash_map_to_stream_metadata;
 use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::{
-    StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
-};
+use crate::workflows::steps::{StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::future::BoxFuture;
@@ -66,10 +64,21 @@ enum StepStartupError {
 }
 
 impl RtmpWatchStep {
+    pub fn create_factory_fn(
+        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>
+    ) -> Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync> {
+        Box::new(move |definition|
+            match RtmpWatchStep::new(definition, rtmp_endpoint_sender.clone()) {
+                Ok((step, futures)) => Ok((Box::new(step), futures)),
+                Err(e) => Err(e)
+            }
+        )
+    }
+
     pub fn new<'a>(
         definition: &WorkflowStepDefinition,
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<(Self, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>), Box<dyn std::error::Error>>
+    ) -> Result<(Self, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>), Box<dyn std::error::Error + Sync + Send>>
     {
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
