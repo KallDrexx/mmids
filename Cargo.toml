@@ -3,5 +3,6 @@ members = [
     "mmids-core",
     "mmids-app",
     "validators/echo-server",
+    "validators/ffmpeg-runner",
     "validators/rtmp-server",
 ]
