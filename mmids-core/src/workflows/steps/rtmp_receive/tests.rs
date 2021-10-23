@@ -10,6 +10,7 @@ use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
+use futures::future::BoxFuture;
 use tokio::time::timeout;
 
 const TEST_PORT: u16 = 9999;
