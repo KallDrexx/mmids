@@ -6,7 +6,7 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::net::ConnectionId;
 use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::{StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep, StepCreationResult, FutureList};
+use crate::workflows::steps::{StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep, FutureList, CreateFactoryFnResult};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
@@ -27,7 +27,7 @@ pub struct RtmpReceiverStep {
     rtmp_app: String,
     stream_key: StreamKeyRegistration,
     status: StepStatus,
-    connection_stream_id_map: HashMap<ConnectionId, StreamId>,
+connection_stream_id_map: HashMap<ConnectionId, StreamId>,
 }
 
 impl StepFutureResult for RtmpReceiveFutureResult {}
@@ -63,7 +63,7 @@ enum StepStartupError {
 impl RtmpReceiverStep {
     pub fn create_factory_fn(
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>
-    ) -> Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync> {
+    ) -> CreateFactoryFnResult {
         Box::new(move |definition|
             match RtmpReceiverStep::new(definition, rtmp_endpoint_sender.clone()) {
                 Ok((step, futures)) => Ok((Box::new(step), futures)),
@@ -75,8 +75,7 @@ impl RtmpReceiverStep {
     pub fn new<'a>(
         definition: &WorkflowStepDefinition,
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<(Self, FutureList<'a>), Box<dyn std::error::Error + Sync + Send>>
-    {
+    ) -> Result<(Self, FutureList<'a>), Box<dyn std::error::Error + Sync + Send>> {
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
                 Ok(num) => num,

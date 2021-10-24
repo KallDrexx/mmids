@@ -1,0 +1,700 @@
+use crate::StreamId;
+use crate::endpoints::ffmpeg::{FfmpegEndpointRequest, FfmpegParams, VideoTranscodeParams, AudioTranscodeParams, VideoScale, H264Preset, TargetParams, FfmpegEndpointNotification};
+use crate::endpoints::rtmp_server::{RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration};
+use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::{CreateFactoryFnResult, StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep};
+use log::{debug, info, error, warn};
+use std::collections::{HashMap, VecDeque};
+use std::time::Duration;
+use futures::{FutureExt};
+use thiserror::Error;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use uuid::Uuid;
+use crate::utils::{stream_metadata_to_hash_map};
+use crate::workflows::{MediaNotification, MediaNotificationContent};
+
+const VIDEO_CODEC_NAME: &'static str = "vcodec";
+const AUDIO_CODEC_NAME: &'static str = "acodec";
+const H264_PRESET_NAME: &'static str = "h264_preset";
+const SIZE_NAME: &'static str = "size";
+const BITRATE_NAME: &'static str = "kbps";
+
+pub struct FfmpegTranscoder {
+    definition: WorkflowStepDefinition,
+    ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    rtmp_server_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    video_codec_params: VideoTranscodeParams,
+    audio_codec_params: AudioTranscodeParams,
+    video_scale_params: Option<VideoScale>,
+    bitrate: Option<u16>,
+    active_streams: HashMap<StreamId, ActiveStream>,
+    status: StepStatus,
+}
+
+#[derive(Debug)]
+enum WatchRegistrationStatus {
+    Inactive,
+    Pending { media_channel: UnboundedSender<RtmpEndpointMediaMessage> },
+    Active { media_channel: UnboundedSender<RtmpEndpointMediaMessage> },
+}
+
+#[derive(Debug)]
+enum PublishRegistrationStatus {
+    Inactive,
+    Pending,
+    Active,
+}
+
+#[derive(Debug)]
+enum FfmpegStatus {
+    Inactive,
+    Pending { id: Uuid },
+    Active { id: Uuid },
+}
+
+struct ActiveStream {
+    id: StreamId,
+    stream_name: String,
+    pending_media: VecDeque<MediaNotificationContent>,
+    rtmp_output_status: WatchRegistrationStatus,
+    rtmp_input_status: PublishRegistrationStatus,
+    ffmpeg_status: FfmpegStatus,
+}
+
+enum FutureResult {
+    RtmpEndpointGone,
+    FfmpegEndpointGone,
+    RtmpWatchNotificationReceived(StreamId, RtmpEndpointWatcherNotification, UnboundedReceiver<RtmpEndpointWatcherNotification>),
+    RtmpWatchChannelGone(StreamId),
+    RtmpPublishNotificationReceived(StreamId, RtmpEndpointPublisherMessage, UnboundedReceiver<RtmpEndpointPublisherMessage>),
+    RtmpPublishChannelGone(StreamId),
+    FfmpegNotificationReceived(StreamId, FfmpegEndpointNotification, UnboundedReceiver<FfmpegEndpointNotification>),
+    FfmpegChannelGone(StreamId),
+}
+
+impl StepFutureResult for FutureResult {}
+
+#[derive(Error, Debug)]
+enum StepStartupError {
+    #[error("Invalid video codec specified ({0}).  {} is a required field and valid values are: 'copy' and 'h264'", VIDEO_CODEC_NAME)]
+    InvalidVideoCodecSpecified(String),
+
+    #[error("Invalid audio codec specified ({0}).  {} is a required field and valid values are: 'copy' and 'aac'", AUDIO_CODEC_NAME)]
+    InvalidAudioCodecSpecified(String),
+
+    #[error("Invalid h264 preset specified ({0}).  {} is the name of any h264 profile (e.g. veryfast, medium, etc...)", H264_PRESET_NAME)]
+    InvalidH264PresetSpecified(String),
+
+    #[error("Invalid video size specified ({0}).  {} must be in the format of '<width>x<height>'", SIZE_NAME)]
+    InvalidVideoSizeSpecified(String),
+
+    #[error("Invalid bitrate specified ({0}).  {} must be a number", BITRATE_NAME)]
+    InvalidBitrateSpecified(String),
+}
+
+impl FfmpegTranscoder {
+    pub fn create_factory_fn(
+        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    ) -> CreateFactoryFnResult {
+        Box::new(move |definition|
+            FfmpegTranscoder::new(
+                definition,
+                ffmpeg_endpoint.clone(),
+                rtmp_endpoint.clone())
+        )
+    }
+
+    pub fn new(
+        definition: &WorkflowStepDefinition,
+        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    ) -> StepCreationResult {
+        let vcodec = match definition.parameters.get(VIDEO_CODEC_NAME) {
+            Some(value) => match value.to_lowercase().trim() {
+                "copy" => VideoTranscodeParams::Copy,
+                "h264" => match definition.parameters.get(H264_PRESET_NAME) {
+                    Some(value) => match value.to_lowercase().trim() {
+                        "ultrafast" => VideoTranscodeParams::H264 { preset: H264Preset::UltraFast },
+                        "superfast" => VideoTranscodeParams::H264 { preset: H264Preset::SuperFast },
+                        "veryfast" => VideoTranscodeParams::H264 { preset: H264Preset::VeryFast },
+                        "faster" => VideoTranscodeParams::H264 { preset: H264Preset::Faster },
+                        "fast" => VideoTranscodeParams::H264 { preset: H264Preset::Fast },
+                        "medium" => VideoTranscodeParams::H264 { preset: H264Preset::Medium },
+                        "slow" => VideoTranscodeParams::H264 { preset: H264Preset::Slow },
+                        "slower" => VideoTranscodeParams::H264 { preset: H264Preset::Slower },
+                        "veryslow" => VideoTranscodeParams::H264 { preset: H264Preset::VerySlow },
+                        x => return Err(Box::new(StepStartupError::InvalidH264PresetSpecified(x.to_string()))),
+                    }
+                    None => VideoTranscodeParams::H264 { preset: H264Preset::VeryFast },
+                },
+                x => return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified(x.to_string()))),
+            },
+
+            None => return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified("".to_string()))),
+        };
+
+        let acodec = match definition.parameters.get(AUDIO_CODEC_NAME) {
+            Some(value) => match value.to_lowercase().trim() {
+                "copy" => AudioTranscodeParams::Copy,
+                "aac" => AudioTranscodeParams::Aac,
+                x => return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified(x.to_string()))),
+            },
+
+            None => return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified("".to_string()))),
+        };
+
+        let size = match definition.parameters.get(SIZE_NAME) {
+            Some(value) => {
+                let mut dimensions = Vec::new();
+                for part in value.split('x') {
+                    match part.parse::<u16>() {
+                        Ok(num) => dimensions.push(num),
+                        Err(_) => return Err(Box::new(StepStartupError::InvalidVideoSizeSpecified(value.clone()))),
+                    }
+                }
+
+                if dimensions.len() != 2 {
+                    return Err(Box::new(StepStartupError::InvalidVideoSizeSpecified(value.clone())));
+                }
+
+                Some(VideoScale {
+                    width: dimensions[0],
+                    height: dimensions[1],
+                })
+            }
+
+            None => None,
+        };
+
+        let bitrate = match definition.parameters.get(BITRATE_NAME) {
+            Some(value) => if let Ok(num) = value.parse() {
+                Some(num)
+            } else {
+                return Err(Box::new(StepStartupError::InvalidBitrateSpecified(value.clone())));
+            }
+
+            None => None,
+        };
+
+        let step = FfmpegTranscoder {
+            definition: definition.clone(),
+            active_streams: HashMap::new(),
+            audio_codec_params: acodec,
+            rtmp_server_endpoint: rtmp_endpoint.clone(),
+            ffmpeg_endpoint: ffmpeg_endpoint.clone(),
+            video_scale_params: size,
+            video_codec_params: vcodec,
+            bitrate,
+            status: StepStatus::Active,
+        };
+
+        let futures = vec![
+            notify_when_ffmpeg_endpoint_is_gone(ffmpeg_endpoint).boxed(),
+            notify_when_rtmp_endpoint_is_gone(rtmp_endpoint).boxed(),
+        ];
+
+        Ok((Box::new(step), futures))
+    }
+
+    fn get_source_rtmp_app(&self) -> String {
+        format!("ffmpeg-transcoder-original-{}", self.definition.get_id())
+    }
+
+    fn get_result_rtmp_app(&self) -> String {
+        format!("ffmpeg-transcoder-result-{}", self.definition.get_id())
+    }
+
+    fn handle_resolved_future(&mut self, notification: Box<dyn StepFutureResult>, outputs: &mut StepOutputs) {
+        if self.status == StepStatus::Error {
+            return;
+        }
+
+        let notification = match notification.downcast::<FutureResult>() {
+            Ok(x) => *x,
+            Err(_) => return,
+        };
+
+        match notification {
+            FutureResult::FfmpegEndpointGone => {
+                error!("Step {}: Ffmpeg endpoint is gone!", self.definition.get_id());
+                self.status = StepStatus::Error;
+
+                let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
+                for id in ids {
+                    self.stop_stream(&id);
+                }
+            }
+
+            FutureResult::RtmpEndpointGone => {
+                error!("Step {}: RTMP endpoint is gone!", self.definition.get_id());
+                self.status = StepStatus::Error;
+
+                let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
+                for id in ids {
+                    self.stop_stream(&id);
+                }
+            }
+
+            FutureResult::RtmpWatchChannelGone(stream_id) => {
+                if self.stop_stream(&stream_id) {
+                    error!("Step {}: Rtmp watch channel disappeared for stream id {:?}", self.definition.get_id(), stream_id);
+                }
+            }
+
+            FutureResult::RtmpPublishChannelGone(stream_id) => {
+                if self.stop_stream(&stream_id) {
+                    error!("Step {}: Rtmp publish channel dissappeared for stream id {:?}", self.definition.get_id(), stream_id);
+                }
+            }
+
+            FutureResult::FfmpegChannelGone(stream_id) => {
+                if self.stop_stream(&stream_id) {
+                    error!("Step {}: Ffmpeg channel disappeared for stream id {:?}", self.definition.get_id(), stream_id);
+                }
+            }
+
+            FutureResult::RtmpWatchNotificationReceived(stream_id, notification, receiver) => {
+                if !self.active_streams.contains_key(&stream_id) {
+                    // late notification after stopping a stream
+                    return;
+                }
+
+                outputs.futures.push(wait_for_watch_notification(stream_id.clone(), receiver).boxed());
+                self.handle_rtmp_watch_notification(stream_id, notification, outputs);
+            }
+
+            FutureResult::RtmpPublishNotificationReceived(stream_id, notification, receiver) => {
+                if !self.active_streams.contains_key(&stream_id) {
+                    // late notification after stopping a stream
+                    return;
+                }
+
+                outputs.futures.push(wait_for_publish_notification(stream_id.clone(), receiver).boxed());
+                self.handle_rtmp_publish_notification(stream_id, notification, outputs);
+            }
+
+            FutureResult::FfmpegNotificationReceived(stream_id, notification, receiver) => {
+                if !self.active_streams.contains_key(&stream_id) {
+                    // late notification after stopping a stream
+                    return;
+                }
+
+                outputs.futures.push(wait_for_ffmpeg_notification(stream_id.clone(), receiver).boxed());
+                self.handle_ffmpeg_notification(stream_id, notification, outputs);
+            }
+        }
+    }
+
+    fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
+        if self.status == StepStatus::Error {
+            return;
+        }
+
+        match &media.content {
+            MediaNotificationContent::NewIncomingStream { stream_name } => {
+                if let Some(stream) = self.active_streams.get(&media.stream_id) {
+                    if &stream.stream_name != stream_name {
+                        warn!("Step {}: Unexpected new incoming stream notification received on \
+                        stream id {:?} and stream name '{}', but we already have this stream id active \
+                        for stream name '{}'.  Ignoring this notification",
+                            self.definition.get_id(), media.stream_id, stream_name, stream.stream_name);
+                    } else {
+                        // Since the stream id / name combination is already set, this is a duplicate
+                        // notification.  This is probably a bug somewhere but it's not harmful
+                        // to ignore
+                    }
+
+                    return;
+                }
+
+                let stream = ActiveStream {
+                    id: media.stream_id.clone(),
+                    stream_name: stream_name.clone(),
+                    pending_media: VecDeque::new(),
+                    rtmp_output_status: WatchRegistrationStatus::Inactive,
+                    rtmp_input_status: PublishRegistrationStatus::Inactive,
+                    ffmpeg_status: FfmpegStatus::Inactive,
+                };
+
+                self.active_streams.insert(media.stream_id.clone(), stream);
+                self.prepare_stream(media.stream_id.clone(), outputs);
+
+                outputs.media.push(media.clone());
+            }
+
+            MediaNotificationContent::StreamDisconnected => {
+                if self.stop_stream(&media.stream_id) {
+                    info!("Step {}: Stopping stream id {:?} due to stream disconnection notification",
+                        self.definition.get_id(), media.stream_id);
+                }
+
+                outputs.media.push(media.clone());
+            }
+
+            _ => {
+                if let Some(stream) = self.active_streams.get_mut(&media.stream_id) {
+                    if let WatchRegistrationStatus::Active {media_channel} = &stream.rtmp_output_status {
+                        if let Some(media_data) = media.content.to_rtmp_media_data() {
+                            let _ = media_channel.send(RtmpEndpointMediaMessage {
+                                stream_key: stream.id.0.clone(),
+                                data: media_data,
+                            });
+                        }
+                    } else {
+                        stream.pending_media.push_back(media.content.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fn prepare_stream(&mut self, stream_id: StreamId, outputs: &mut StepOutputs) {
+        let source_rtmp_app = self.get_source_rtmp_app();
+        let result_rtmp_app = self.get_result_rtmp_app();
+
+        if let Some(stream) = self.active_streams.get_mut(&stream_id) {
+            let output_is_active = match &stream.rtmp_output_status {
+                WatchRegistrationStatus::Inactive => {
+                    let (media_sender, media_receiver) = unbounded_channel();
+                    let (watch_sender, watch_receiver) = unbounded_channel();
+                    let _ = self.rtmp_server_endpoint.send(RtmpEndpointRequest::ListenForWatchers {
+                        notification_channel: watch_sender,
+                        rtmp_app: source_rtmp_app.clone(),
+                        rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                        port: 1935,
+                        media_channel: media_receiver,
+                    });
+
+                    outputs.futures.push(wait_for_watch_notification(stream.id.clone(), watch_receiver).boxed());
+                    stream.rtmp_output_status = WatchRegistrationStatus::Pending { media_channel: media_sender };
+
+                    false
+                }
+
+                WatchRegistrationStatus::Pending { media_channel: _ } => false,
+                WatchRegistrationStatus::Active { media_channel: _ } => true,
+            };
+
+            let input_is_active = match &stream.rtmp_input_status {
+                PublishRegistrationStatus::Inactive => {
+                    let (sender, receiver) = unbounded_channel();
+                    let _ = self.rtmp_server_endpoint.send(RtmpEndpointRequest::ListenForPublishers {
+                        port: 1935,
+                        rtmp_app: result_rtmp_app.clone(),
+                        rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                        stream_id: Some(stream.id.clone()),
+                        message_channel: sender,
+                    });
+
+                    outputs.futures.push(wait_for_publish_notification(stream.id.clone(), receiver).boxed());
+                    stream.rtmp_input_status = PublishRegistrationStatus::Pending;
+
+                    false
+                }
+
+                PublishRegistrationStatus::Pending => false,
+                PublishRegistrationStatus::Active => true,
+            };
+
+            match &stream.ffmpeg_status {
+                FfmpegStatus::Inactive => {
+                    // Not worth starting ffmpeg until both input and outputs registrations are complete
+                    if input_is_active && output_is_active {
+                        let parameters = FfmpegParams {
+                            read_in_real_time: true,
+                            bitrate_in_kbps: self.bitrate,
+                            input: format!("rtmp://localhost/{}/{}", source_rtmp_app, stream.id.0),
+                            video_transcode: self.video_codec_params.clone(),
+                            audio_transcode: self.audio_codec_params.clone(),
+                            scale: self.video_scale_params.clone(),
+                            target: TargetParams::Rtmp {
+                                url: format!("rtmp://localhost/{}/{}", result_rtmp_app, stream.id.0),
+                            },
+                        };
+
+                        let id = Uuid::new_v4();
+                        let (sender, receiver) = unbounded_channel();
+                        let _ = self.ffmpeg_endpoint.send(FfmpegEndpointRequest::StartFfmpeg {
+                            id: id.clone(),
+                            params: parameters,
+                            notification_channel: sender,
+                        });
+
+                        outputs.futures.push(wait_for_ffmpeg_notification(stream.id.clone(), receiver).boxed());
+                        stream.ffmpeg_status = FfmpegStatus::Pending { id };
+                    }
+                }
+
+                _ => (),
+            }
+        }
+    }
+
+    fn stop_stream(&mut self, stream_id: &StreamId) -> bool {
+        if let Some(stream) = self.active_streams.remove(stream_id) {
+            match &stream.ffmpeg_status {
+                FfmpegStatus::Pending {id} => {
+                    let _ = self.ffmpeg_endpoint.send(FfmpegEndpointRequest::StopFfmpeg {
+                        id: id.clone(),
+                    });
+                }
+
+                FfmpegStatus::Active {id} => {
+                    let _ = self.ffmpeg_endpoint.send(FfmpegEndpointRequest::StopFfmpeg {
+                        id: id.clone(),
+                    });
+                }
+
+                FfmpegStatus::Inactive => (),
+            }
+
+            // TODO: Add support for manually unregistering from rtmp endpoints
+
+            return true;
+        }
+
+        return false;
+    }
+
+    fn handle_rtmp_watch_notification(
+        &mut self,
+        stream_id: StreamId,
+        notification: RtmpEndpointWatcherNotification,
+        outputs: &mut StepOutputs,
+    ) {
+        if let Some(stream) = self.active_streams.get_mut(&stream_id) {
+            match notification {
+                RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => {
+                    let new_status = match &stream.rtmp_output_status {
+                        WatchRegistrationStatus::Pending { media_channel } => {
+                            info!("Step {}: Watch registration successful for stream id {:?}", self.definition.get_id(), stream.id);
+                            Some(WatchRegistrationStatus::Active { media_channel: media_channel.clone() })
+                        }
+
+                        status => {
+                            error!("Step {}: Received watch registration successful notification for stream id \
+                            {:?}, but this stream's watch status is {:?}", self.definition.get_id(), stream.id, status);
+
+                            None
+                        }
+                    };
+
+                    if let Some(new_status) = new_status {
+                        stream.rtmp_output_status = new_status;
+                    }
+                }
+
+                RtmpEndpointWatcherNotification::WatcherRegistrationFailed => {
+                    warn!("Step {}: Received watch registration failed for stream id {:?}", self.definition.get_id(), stream.id);
+                    stream.rtmp_output_status = WatchRegistrationStatus::Inactive;
+                }
+
+                RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key: _ } => (),
+                RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key: _ } => (),
+            }
+        }
+
+        self.prepare_stream(stream_id, outputs);
+    }
+
+    fn handle_rtmp_publish_notification(
+        &mut self,
+        stream_id: StreamId,
+        notification: RtmpEndpointPublisherMessage,
+        outputs: &mut StepOutputs,
+    ) {
+        let mut prepare_stream = false;
+        if let Some(stream) = self.active_streams.get_mut(&stream_id) {
+            match notification {
+                RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
+                    warn!("Step {}: Rtmp publish registration failed for stream {:?}", self.definition.get_id(), stream_id);
+                    stream.rtmp_input_status = PublishRegistrationStatus::Inactive;
+                    prepare_stream = true;
+                }
+
+                RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
+                    info!("Step {}: Rtmp publish registration successful for stream {:?}", self.definition.get_id(), stream_id);
+                    stream.rtmp_input_status = PublishRegistrationStatus::Active;
+                    prepare_stream = true;
+                }
+
+                RtmpEndpointPublisherMessage::NewPublisherConnected {stream_id: _, stream_key: _, connection_id: _} => (),
+                RtmpEndpointPublisherMessage::PublishingStopped {connection_id: _} => (),
+
+                RtmpEndpointPublisherMessage::StreamMetadataChanged {publisher: _, metadata} => {
+                    let metadata = stream_metadata_to_hash_map(metadata);
+                    outputs.media.push(MediaNotification {
+                        stream_id: stream_id.clone(),
+                        content: MediaNotificationContent::Metadata {
+                            data: metadata,
+                        }
+                    });
+                }
+
+                RtmpEndpointPublisherMessage::NewVideoData {
+                    publisher: _,
+                    codec,
+                    data,
+                    is_sequence_header,
+                    is_keyframe,
+                    timestamp,
+                } => {
+                    outputs.media.push(MediaNotification {
+                        stream_id: stream_id.clone(),
+                        content: MediaNotificationContent::Video {
+                            codec,
+                            timestamp: Duration::from_millis(timestamp.value as u64),
+                            is_keyframe,
+                            is_sequence_header,
+                            data
+                        }
+                    })
+                }
+
+                RtmpEndpointPublisherMessage::NewAudioData {
+                    publisher: _,
+                    codec,
+                    data,
+                    is_sequence_header,
+                    timestamp,
+                } => {
+                    outputs.media.push(MediaNotification {
+                        stream_id: stream_id.clone(),
+                        content: MediaNotificationContent::Audio {
+                            codec,
+                            timestamp: Duration::from_millis(timestamp.value as u64),
+                            is_sequence_header,
+                            data
+                        }
+                    })
+                }
+            }
+        }
+
+        if prepare_stream {
+            self.prepare_stream(stream_id, outputs);
+        }
+    }
+
+    fn handle_ffmpeg_notification(
+        &mut self,
+        stream_id: StreamId,
+        notification: FfmpegEndpointNotification,
+        outputs: &mut StepOutputs,
+    ) {
+        if let Some(stream) = self.active_streams.get_mut(&stream_id) {
+            match notification {
+                FfmpegEndpointNotification::FfmpegStarted => {
+                    let new_status = match &stream.ffmpeg_status {
+                        FfmpegStatus::Pending { id } => {
+                            info!("Step {}: Received notification that ffmpeg became active for stream id \
+                        {:?} with ffmpeg id {}", self.definition.get_id(), stream.id, id);
+
+                            Some(FfmpegStatus::Active { id: id.clone() })
+                        }
+
+                        status => {
+                            error!("Step {}: Received notification that ffmpeg became active for stream id \
+                        {:?}, but this stream was in the {:?} status instead of pending", self.definition.get_id(), stream.id, status);
+
+                            None
+                        }
+                    };
+
+                    if let Some(new_status) = new_status {
+                        stream.ffmpeg_status = new_status;
+                    }
+                }
+
+                FfmpegEndpointNotification::FfmpegStopped => {
+                    info!("Step {}: Got ffmpeg stopped notification for stream {:?}", self.definition.get_id(), stream.id);
+                    stream.ffmpeg_status = FfmpegStatus::Inactive;
+                }
+
+                FfmpegEndpointNotification::FfmpegFailedToStart { cause } => {
+                    warn!("Step {}: Ffmpeg failed to start for stream {:?}: {:?}", self.definition.get_id(), stream.id, cause);
+                    stream.ffmpeg_status = FfmpegStatus::Inactive;
+                }
+            }
+        }
+
+        self.prepare_stream(stream_id, outputs);
+    }
+}
+
+impl WorkflowStep for FfmpegTranscoder {
+    fn get_status(&self) -> &StepStatus {
+        &self.status
+    }
+
+    fn get_definition(&self) -> &WorkflowStepDefinition {
+        &self.definition
+    }
+
+    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+        if self.status == StepStatus::Error {
+            return;
+        }
+
+        for notification in inputs.notifications.drain(..) {
+            self.handle_resolved_future(notification, outputs);
+        }
+
+        for media in inputs.media.drain(..) {
+            self.handle_media(media, outputs);
+        }
+    }
+}
+
+async fn notify_when_ffmpeg_endpoint_is_gone(
+    endpoint: UnboundedSender<FfmpegEndpointRequest>,
+) -> Box<dyn StepFutureResult> {
+    endpoint.closed().await;
+
+    Box::new(FutureResult::FfmpegEndpointGone)
+}
+
+async fn notify_when_rtmp_endpoint_is_gone(
+    endpoint: UnboundedSender<RtmpEndpointRequest>,
+) -> Box<dyn StepFutureResult> {
+    endpoint.closed().await;
+
+    Box::new(FutureResult::RtmpEndpointGone)
+}
+
+async fn wait_for_watch_notification(
+    stream_id: StreamId,
+    mut receiver: UnboundedReceiver<RtmpEndpointWatcherNotification>,
+) -> Box<dyn StepFutureResult> {
+    let result = match receiver.recv().await {
+        Some(msg) => FutureResult::RtmpWatchNotificationReceived(stream_id, msg, receiver),
+        None => FutureResult::RtmpWatchChannelGone(stream_id),
+    };
+
+    Box::new(result)
+}
+
+async fn wait_for_publish_notification(
+    stream_id: StreamId,
+    mut receiver: UnboundedReceiver<RtmpEndpointPublisherMessage>,
+) -> Box<dyn StepFutureResult> {
+    let result = match receiver.recv().await {
+        Some(msg) => FutureResult::RtmpPublishNotificationReceived(stream_id, msg, receiver),
+        None => FutureResult::RtmpPublishChannelGone(stream_id),
+    };
+
+    Box::new(result)
+}
+
+async fn wait_for_ffmpeg_notification(
+    stream_id: StreamId,
+    mut receiver: UnboundedReceiver<FfmpegEndpointNotification>,
+) -> Box<dyn StepFutureResult> {
+    let result = match receiver.recv().await {
+        Some(msg) => FutureResult::FfmpegNotificationReceived(stream_id, msg, receiver),
+        None => FutureResult::FfmpegChannelGone(stream_id),
+    };
+
+    Box::new(result)
+}

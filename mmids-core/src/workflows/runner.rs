@@ -140,8 +140,7 @@ impl<'a> Actor<'a> {
             self.futures.push(wait_for_step_future(step_id, future).boxed());
         }
 
-        // TODO: Check if all steps have been instantiated.  If so swap pending and active steps so
-        // the pipeline becomes active.
+        self.check_if_all_pending_steps_are_active();
     }
 
     fn execute_steps(&mut self, initial_step_id: u64, future_result: Option<Box<dyn StepFutureResult>>) {

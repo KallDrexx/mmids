@@ -1,4 +1,5 @@
 pub mod factory;
+pub mod ffmpeg_transcode;
 pub mod rtmp_receive;
 pub mod rtmp_watch;
 
@@ -12,6 +13,7 @@ impl_downcast!(StepFutureResult);
 
 pub type FutureList<'a> = Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>;
 pub type StepCreationResult = Result<(Box<dyn WorkflowStep + Sync + Send>, FutureList<'static>), Box<dyn std::error::Error + Sync + Send>>;
+pub type CreateFactoryFnResult = Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StepStatus {

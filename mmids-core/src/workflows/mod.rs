@@ -9,8 +9,12 @@ use crate::StreamId;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::time::Duration;
+use rml_rtmp::time::RtmpTimestamp;
+use crate::endpoints::rtmp_server::RtmpEndpointMediaData;
+use crate::utils::hash_map_to_stream_metadata;
 
 /// Notification about media coming across a specific stream
+#[derive(Clone)]
 pub struct MediaNotification {
     /// The identifier for the stream that this notification pertains to
     pub stream_id: StreamId,
@@ -20,7 +24,7 @@ pub struct MediaNotification {
 }
 
 /// The detailed information contained within a media notification
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MediaNotificationContent {
     /// Announces that this stream has now connected, and steps that receive this notification
     /// should prepare for media data to start coming through
@@ -54,4 +58,37 @@ pub enum MediaNotificationContent {
 
     /// New stream metadata
     Metadata { data: HashMap<String, String> },
+}
+
+impl MediaNotificationContent {
+    pub fn to_rtmp_media_data(&self) -> Option<RtmpEndpointMediaData> {
+        match self {
+            MediaNotificationContent::StreamDisconnected => return None,
+            MediaNotificationContent::NewIncomingStream {stream_name: _} => return None,
+            MediaNotificationContent::Metadata {data} => {
+                Some(RtmpEndpointMediaData::NewStreamMetaData {
+                    metadata: hash_map_to_stream_metadata(&data),
+                })
+            }
+
+            MediaNotificationContent::Video {codec, is_keyframe, is_sequence_header, timestamp, data} => {
+                Some(RtmpEndpointMediaData::NewVideoData {
+                    data: data.clone(),
+                    codec: codec.clone(),
+                    is_keyframe: *is_keyframe,
+                    is_sequence_header: *is_sequence_header,
+                    timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                })
+            }
+
+            MediaNotificationContent::Audio {codec, is_sequence_header, timestamp, data} => {
+                Some(RtmpEndpointMediaData::NewAudioData {
+                    data: data.clone(),
+                    codec: codec.clone(),
+                    timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                    is_sequence_header: *is_sequence_header
+                })
+            }
+        }
+    }
 }

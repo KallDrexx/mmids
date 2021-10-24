@@ -3,16 +3,19 @@ use std::time::Duration;
 use log::info;
 use mmids_core::net::tcp::start_socket_manager;
 use mmids_core::endpoints::rtmp_server::start_rtmp_server_endpoint;
+use mmids_core::endpoints::ffmpeg::start_ffmpeg_endpoint;
 use mmids_core::workflows::{start_workflow, WorkflowRequest};
 use mmids_core::workflows::definitions::{WorkflowStepDefinition, WorkflowDefinition, WorkflowStepType};
 use mmids_core::workflows::steps::factory::{FactoryRequest, start_step_factory};
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStep;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStep;
+use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoder;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::time::sleep;
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
+const FFMPEG_TRANSCODE: &str = "ffmpeg_transcode";
 
 #[tokio::main]
 pub async fn main() {
@@ -34,6 +37,9 @@ async fn init() -> Result<UnboundedSender<WorkflowRequest>, Box<dyn std::error::
     let rtmp_endpoint = start_rtmp_server_endpoint(socket_manager);
     let step_factory = start_step_factory();
 
+    let ffmpeg_path = "c:\\users\\me\\tools\\ffmpeg\\bin\\ffmpeg.exe";
+    let ffmpeg_endpoint = start_ffmpeg_endpoint(ffmpeg_path.to_string())?;
+
     let (factory_response_sender, mut factory_response_receiver) = unbounded_channel();
     let _ = step_factory.send(FactoryRequest::RegisterFunction {
         step_type: WorkflowStepType(RTMP_RECEIVE.to_string()),
@@ -46,7 +52,15 @@ async fn init() -> Result<UnboundedSender<WorkflowRequest>, Box<dyn std::error::
     let _ = step_factory.send(FactoryRequest::RegisterFunction {
         step_type: WorkflowStepType(RTMP_WATCH.to_string()),
         creation_fn: RtmpWatchStep::create_factory_fn(rtmp_endpoint.clone()),
-        response_channel: factory_response_sender,
+        response_channel: factory_response_sender.clone(),
+    });
+
+    factory_response_receiver.recv().await.unwrap()?;
+
+    let _ = step_factory.send(FactoryRequest::RegisterFunction {
+        step_type: WorkflowStepType(FFMPEG_TRANSCODE.to_string()),
+        creation_fn: FfmpegTranscoder::create_factory_fn(ffmpeg_endpoint.clone(), rtmp_endpoint.clone()),
+        response_channel: factory_response_sender.clone(),
     });
 
     factory_response_receiver.recv().await.unwrap()?;
@@ -66,16 +80,40 @@ fn define_workflow() -> WorkflowDefinition {
     receive_step.parameters.insert("rtmp_app".to_string(), "receive".to_string());
     receive_step.parameters.insert("stream_key".to_string(), "*".to_string());
 
+    let mut preview_step = WorkflowStepDefinition {
+        step_type: WorkflowStepType(RTMP_WATCH.to_string()),
+        parameters: HashMap::new(),
+    };
+
+    preview_step.parameters.insert("rtmp_app".to_string(), "preview".to_string());
+    preview_step.parameters.insert("stream_key".to_string(), "*".to_string());
+
+    let mut transcode_step = WorkflowStepDefinition {
+        step_type: WorkflowStepType(FFMPEG_TRANSCODE.to_string()),
+        parameters: HashMap::new(),
+    };
+
+    transcode_step.parameters.insert("vcodec".to_string(), "h264".to_string());
+    transcode_step.parameters.insert("acodec".to_string(), "aac".to_string());
+    transcode_step.parameters.insert("h264_preset".to_string(), "ultrafast".to_string());
+    transcode_step.parameters.insert("size".to_string(), "640x480".to_string());
+    transcode_step.parameters.insert("kbps".to_string(), "1000".to_string());
+
     let mut watch_step = WorkflowStepDefinition {
         step_type: WorkflowStepType(RTMP_WATCH.to_string()),
         parameters: HashMap::new(),
     };
 
-    watch_step.parameters.insert("rtmp_app".to_string(), "watch".to_string());
+    watch_step.parameters.insert("rtmp_app".to_string(), "live".to_string());
     watch_step.parameters.insert("stream_key".to_string(), "*".to_string());
 
     WorkflowDefinition {
         name: "Test".to_string(),
-        steps: vec![receive_step, watch_step],
+        steps: vec![
+            receive_step,
+            preview_step,
+            transcode_step,
+            watch_step,
+        ],
     }
 }
