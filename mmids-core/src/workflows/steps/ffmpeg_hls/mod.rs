@@ -1,12 +1,11 @@
 use crate::endpoints::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams,
-    H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
+    TargetParams, VideoTranscodeParams,
 };
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
-    RtmpEndpointWatcherNotification, StreamKeyRegistration,
+    RtmpEndpointMediaMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
+    StreamKeyRegistration,
 };
-use crate::utils::stream_metadata_to_hash_map;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::{
     CreateFactoryFnResult, StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
@@ -17,27 +16,23 @@ use crate::StreamId;
 use futures::FutureExt;
 use log::{error, info, warn};
 use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
-const VIDEO_CODEC_NAME: &'static str = "vcodec";
-const AUDIO_CODEC_NAME: &'static str = "acodec";
-const H264_PRESET_NAME: &'static str = "h264_preset";
-const SIZE_NAME: &'static str = "size";
-const BITRATE_NAME: &'static str = "kbps";
+const PATH: &str = "path";
+const SEGMENT_DURATION: &str = "duration";
+const SEGMENT_COUNT: &str = "count";
 
-pub struct FfmpegTranscoder {
+pub struct FfmpegHlsStep {
     definition: WorkflowStepDefinition,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
     rtmp_server_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    video_codec_params: VideoTranscodeParams,
-    audio_codec_params: AudioTranscodeParams,
-    video_scale_params: Option<VideoScale>,
-    bitrate: Option<u16>,
     active_streams: HashMap<StreamId, ActiveStream>,
     status: StepStatus,
+    path: String,
+    duration: u16,
+    segment_count: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -52,13 +47,6 @@ enum WatchRegistrationStatus {
 }
 
 #[derive(Debug)]
-enum PublishRegistrationStatus {
-    Inactive,
-    Pending,
-    Active,
-}
-
-#[derive(Debug)]
 enum FfmpegStatus {
     Inactive,
     Pending { id: Uuid },
@@ -70,7 +58,6 @@ struct ActiveStream {
     stream_name: String,
     pending_media: VecDeque<MediaNotificationContent>,
     rtmp_output_status: WatchRegistrationStatus,
-    rtmp_input_status: PublishRegistrationStatus,
     ffmpeg_status: FfmpegStatus,
 }
 
@@ -83,12 +70,6 @@ enum FutureResult {
         UnboundedReceiver<RtmpEndpointWatcherNotification>,
     ),
     RtmpWatchChannelGone(StreamId),
-    RtmpPublishNotificationReceived(
-        StreamId,
-        RtmpEndpointPublisherMessage,
-        UnboundedReceiver<RtmpEndpointPublisherMessage>,
-    ),
-    RtmpPublishChannelGone(StreamId),
     FfmpegNotificationReceived(
         StreamId,
         FfmpegEndpointNotification,
@@ -101,32 +82,26 @@ impl StepFutureResult for FutureResult {}
 
 #[derive(Error, Debug)]
 enum StepStartupError {
-    #[error("Invalid video codec specified ({0}).  {} is a required field and valid values are: 'copy' and 'h264'", VIDEO_CODEC_NAME)]
-    InvalidVideoCodecSpecified(String),
+    #[error("No path specified.  A 'path' is required")]
+    NoPathProvided,
 
-    #[error("Invalid audio codec specified ({0}).  {} is a required field and valid values are: 'copy' and 'aac'", AUDIO_CODEC_NAME)]
-    InvalidAudioCodecSpecified(String),
-
-    #[error("Invalid h264 preset specified ({0}).  {} is the name of any h264 profile (e.g. veryfast, medium, etc...)", H264_PRESET_NAME)]
-    InvalidH264PresetSpecified(String),
+    #[error("Invalid duration of '{0}'.  {} should be a number.", SEGMENT_DURATION)]
+    InvalidSegmentLength(String),
 
     #[error(
-        "Invalid video size specified ({0}).  {} must be in the format of '<width>x<height>'",
-        SIZE_NAME
+        "Invalid segment count of '{0}'.  {} should be a positive number",
+        SEGMENT_COUNT
     )]
-    InvalidVideoSizeSpecified(String),
-
-    #[error("Invalid bitrate specified ({0}).  {} must be a number", BITRATE_NAME)]
-    InvalidBitrateSpecified(String),
+    InvalidSegmentCount(String),
 }
 
-impl FfmpegTranscoder {
+impl FfmpegHlsStep {
     pub fn create_factory_fn(
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ) -> CreateFactoryFnResult {
         Box::new(move |definition| {
-            FfmpegTranscoder::new(definition, ffmpeg_endpoint.clone(), rtmp_endpoint.clone())
+            FfmpegHlsStep::new(definition, ffmpeg_endpoint.clone(), rtmp_endpoint.clone())
         })
     }
 
@@ -135,133 +110,46 @@ impl FfmpegTranscoder {
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ) -> StepCreationResult {
-        let vcodec = match definition.parameters.get(VIDEO_CODEC_NAME) {
-            Some(value) => match value.to_lowercase().trim() {
-                "copy" => VideoTranscodeParams::Copy,
-                "h264" => match definition.parameters.get(H264_PRESET_NAME) {
-                    Some(value) => match value.to_lowercase().trim() {
-                        "ultrafast" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::UltraFast,
-                        },
-                        "superfast" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::SuperFast,
-                        },
-                        "veryfast" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::VeryFast,
-                        },
-                        "faster" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::Faster,
-                        },
-                        "fast" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::Fast,
-                        },
-                        "medium" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::Medium,
-                        },
-                        "slow" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::Slow,
-                        },
-                        "slower" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::Slower,
-                        },
-                        "veryslow" => VideoTranscodeParams::H264 {
-                            preset: H264Preset::VerySlow,
-                        },
-                        x => {
-                            return Err(Box::new(StepStartupError::InvalidH264PresetSpecified(
-                                x.to_string(),
-                            )))
-                        }
-                    },
-                    None => VideoTranscodeParams::H264 {
-                        preset: H264Preset::VeryFast,
-                    },
-                },
-                x => {
-                    return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified(
-                        x.to_string(),
+        let path = match definition.parameters.get(PATH) {
+            Some(value) => value,
+            None => return Err(Box::new(StepStartupError::NoPathProvided)),
+        };
+
+        let duration = match definition.parameters.get(SEGMENT_DURATION) {
+            Some(value) => match value.parse() {
+                Ok(num) => num,
+                Err(_) => {
+                    return Err(Box::new(StepStartupError::InvalidSegmentLength(
+                        value.clone(),
                     )))
                 }
             },
 
-            None => {
-                return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified(
-                    "".to_string(),
-                )))
-            }
+            None => 2,
         };
 
-        let acodec = match definition.parameters.get(AUDIO_CODEC_NAME) {
-            Some(value) => match value.to_lowercase().trim() {
-                "copy" => AudioTranscodeParams::Copy,
-                "aac" => AudioTranscodeParams::Aac,
-                x => {
-                    return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified(
-                        x.to_string(),
+        let count = match definition.parameters.get(SEGMENT_COUNT) {
+            Some(value) => match value.parse::<u16>() {
+                Ok(num) => num,
+                Err(_) => {
+                    return Err(Box::new(StepStartupError::InvalidSegmentCount(
+                        value.clone(),
                     )))
                 }
             },
 
-            None => {
-                return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified(
-                    "".to_string(),
-                )))
-            }
+            None => 0,
         };
 
-        let size = match definition.parameters.get(SIZE_NAME) {
-            Some(value) => {
-                let mut dimensions = Vec::new();
-                for part in value.split('x') {
-                    match part.parse::<u16>() {
-                        Ok(num) => dimensions.push(num),
-                        Err(_) => {
-                            return Err(Box::new(StepStartupError::InvalidVideoSizeSpecified(
-                                value.clone(),
-                            )))
-                        }
-                    }
-                }
-
-                if dimensions.len() != 2 {
-                    return Err(Box::new(StepStartupError::InvalidVideoSizeSpecified(
-                        value.clone(),
-                    )));
-                }
-
-                Some(VideoScale {
-                    width: dimensions[0],
-                    height: dimensions[1],
-                })
-            }
-
-            None => None,
-        };
-
-        let bitrate = match definition.parameters.get(BITRATE_NAME) {
-            Some(value) => {
-                if let Ok(num) = value.parse() {
-                    Some(num)
-                } else {
-                    return Err(Box::new(StepStartupError::InvalidBitrateSpecified(
-                        value.clone(),
-                    )));
-                }
-            }
-
-            None => None,
-        };
-
-        let step = FfmpegTranscoder {
+        let step = FfmpegHlsStep {
             definition: definition.clone(),
-            active_streams: HashMap::new(),
-            audio_codec_params: acodec,
             rtmp_server_endpoint: rtmp_endpoint.clone(),
             ffmpeg_endpoint: ffmpeg_endpoint.clone(),
-            video_scale_params: size,
-            video_codec_params: vcodec,
-            bitrate,
+            active_streams: HashMap::new(),
             status: StepStatus::Active,
+            path: path.clone(),
+            segment_count: Some(count),
+            duration,
         };
 
         let futures = vec![
@@ -272,12 +160,8 @@ impl FfmpegTranscoder {
         Ok((Box::new(step), futures))
     }
 
-    fn get_source_rtmp_app(&self) -> String {
-        format!("ffmpeg-transcoder-original-{}", self.definition.get_id())
-    }
-
-    fn get_result_rtmp_app(&self) -> String {
-        format!("ffmpeg-transcoder-result-{}", self.definition.get_id())
+    fn get_rtmp_app(&self) -> String {
+        format!("ffmpeg-hls-{}", self.definition.get_id())
     }
 
     fn handle_resolved_future(
@@ -328,16 +212,6 @@ impl FfmpegTranscoder {
                 }
             }
 
-            FutureResult::RtmpPublishChannelGone(stream_id) => {
-                if self.stop_stream(&stream_id) {
-                    error!(
-                        "Step {}: Rtmp publish channel dissappeared for stream id {:?}",
-                        self.definition.get_id(),
-                        stream_id
-                    );
-                }
-            }
-
             FutureResult::FfmpegChannelGone(stream_id) => {
                 if self.stop_stream(&stream_id) {
                     error!(
@@ -358,18 +232,6 @@ impl FfmpegTranscoder {
                     .futures
                     .push(wait_for_watch_notification(stream_id.clone(), receiver).boxed());
                 self.handle_rtmp_watch_notification(stream_id, notification, outputs);
-            }
-
-            FutureResult::RtmpPublishNotificationReceived(stream_id, notification, receiver) => {
-                if !self.active_streams.contains_key(&stream_id) {
-                    // late notification after stopping a stream
-                    return;
-                }
-
-                outputs
-                    .futures
-                    .push(wait_for_publish_notification(stream_id.clone(), receiver).boxed());
-                self.handle_rtmp_publish_notification(stream_id, notification, outputs);
             }
 
             FutureResult::FfmpegNotificationReceived(stream_id, notification, receiver) => {
@@ -413,14 +275,11 @@ impl FfmpegTranscoder {
                     stream_name: stream_name.clone(),
                     pending_media: VecDeque::new(),
                     rtmp_output_status: WatchRegistrationStatus::Inactive,
-                    rtmp_input_status: PublishRegistrationStatus::Inactive,
                     ffmpeg_status: FfmpegStatus::Inactive,
                 };
 
                 self.active_streams.insert(media.stream_id.clone(), stream);
                 self.prepare_stream(media.stream_id.clone(), outputs);
-
-                outputs.media.push(media.clone());
             }
 
             MediaNotificationContent::StreamDisconnected => {
@@ -431,8 +290,6 @@ impl FfmpegTranscoder {
                         media.stream_id
                     );
                 }
-
-                outputs.media.push(media.clone());
             }
 
             _ => {
@@ -452,11 +309,12 @@ impl FfmpegTranscoder {
                 }
             }
         }
+
+        outputs.media.push(media);
     }
 
     fn prepare_stream(&mut self, stream_id: StreamId, outputs: &mut StepOutputs) {
-        let source_rtmp_app = self.get_source_rtmp_app();
-        let result_rtmp_app = self.get_result_rtmp_app();
+        let rtmp_app = self.get_rtmp_app();
 
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             let output_is_active = match &stream.rtmp_output_status {
@@ -467,7 +325,7 @@ impl FfmpegTranscoder {
                         self.rtmp_server_endpoint
                             .send(RtmpEndpointRequest::ListenForWatchers {
                                 notification_channel: watch_sender,
-                                rtmp_app: source_rtmp_app.clone(),
+                                rtmp_app: rtmp_app.clone(),
                                 rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
                                 port: 1935,
                                 media_channel: media_receiver,
@@ -487,47 +345,21 @@ impl FfmpegTranscoder {
                 WatchRegistrationStatus::Active { media_channel: _ } => true,
             };
 
-            let input_is_active = match &stream.rtmp_input_status {
-                PublishRegistrationStatus::Inactive => {
-                    let (sender, receiver) = unbounded_channel();
-                    let _ =
-                        self.rtmp_server_endpoint
-                            .send(RtmpEndpointRequest::ListenForPublishers {
-                                port: 1935,
-                                rtmp_app: result_rtmp_app.clone(),
-                                rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
-                                stream_id: Some(stream.id.clone()),
-                                message_channel: sender,
-                            });
-
-                    outputs
-                        .futures
-                        .push(wait_for_publish_notification(stream.id.clone(), receiver).boxed());
-                    stream.rtmp_input_status = PublishRegistrationStatus::Pending;
-
-                    false
-                }
-
-                PublishRegistrationStatus::Pending => false,
-                PublishRegistrationStatus::Active => true,
-            };
-
             match &stream.ffmpeg_status {
                 FfmpegStatus::Inactive => {
                     // Not worth starting ffmpeg until both input and outputs registrations are complete
-                    if input_is_active && output_is_active {
+                    if output_is_active {
                         let parameters = FfmpegParams {
                             read_in_real_time: true,
-                            bitrate_in_kbps: self.bitrate,
-                            input: format!("rtmp://localhost/{}/{}", source_rtmp_app, stream.id.0),
-                            video_transcode: self.video_codec_params.clone(),
-                            audio_transcode: self.audio_codec_params.clone(),
-                            scale: self.video_scale_params.clone(),
-                            target: TargetParams::Rtmp {
-                                url: format!(
-                                    "rtmp://localhost/{}/{}",
-                                    result_rtmp_app, stream.id.0
-                                ),
+                            input: format!("rtmp://localhost/{}/{}", rtmp_app, stream.id.0),
+                            video_transcode: VideoTranscodeParams::Copy,
+                            audio_transcode: AudioTranscodeParams::Copy,
+                            scale: None,
+                            bitrate_in_kbps: None,
+                            target: TargetParams::Hls {
+                                path: format!("{}/{}.m3u8", self.path, stream.stream_name),
+                                max_entries: self.segment_count,
+                                segment_length: self.duration,
                             },
                         };
 
@@ -630,94 +462,6 @@ impl FfmpegTranscoder {
         self.prepare_stream(stream_id, outputs);
     }
 
-    fn handle_rtmp_publish_notification(
-        &mut self,
-        stream_id: StreamId,
-        notification: RtmpEndpointPublisherMessage,
-        outputs: &mut StepOutputs,
-    ) {
-        let mut prepare_stream = false;
-        if let Some(stream) = self.active_streams.get_mut(&stream_id) {
-            match notification {
-                RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
-                    warn!(
-                        "Step {}: Rtmp publish registration failed for stream {:?}",
-                        self.definition.get_id(),
-                        stream_id
-                    );
-                    stream.rtmp_input_status = PublishRegistrationStatus::Inactive;
-                    prepare_stream = true;
-                }
-
-                RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
-                    info!(
-                        "Step {}: Rtmp publish registration successful for stream {:?}",
-                        self.definition.get_id(),
-                        stream_id
-                    );
-                    stream.rtmp_input_status = PublishRegistrationStatus::Active;
-                    prepare_stream = true;
-                }
-
-                RtmpEndpointPublisherMessage::NewPublisherConnected {
-                    stream_id: _,
-                    stream_key: _,
-                    connection_id: _,
-                } => (),
-                RtmpEndpointPublisherMessage::PublishingStopped { connection_id: _ } => (),
-
-                RtmpEndpointPublisherMessage::StreamMetadataChanged {
-                    publisher: _,
-                    metadata,
-                } => {
-                    let metadata = stream_metadata_to_hash_map(metadata);
-                    outputs.media.push(MediaNotification {
-                        stream_id: stream_id.clone(),
-                        content: MediaNotificationContent::Metadata { data: metadata },
-                    });
-                }
-
-                RtmpEndpointPublisherMessage::NewVideoData {
-                    publisher: _,
-                    codec,
-                    data,
-                    is_sequence_header,
-                    is_keyframe,
-                    timestamp,
-                } => outputs.media.push(MediaNotification {
-                    stream_id: stream_id.clone(),
-                    content: MediaNotificationContent::Video {
-                        codec,
-                        timestamp: Duration::from_millis(timestamp.value as u64),
-                        is_keyframe,
-                        is_sequence_header,
-                        data,
-                    },
-                }),
-
-                RtmpEndpointPublisherMessage::NewAudioData {
-                    publisher: _,
-                    codec,
-                    data,
-                    is_sequence_header,
-                    timestamp,
-                } => outputs.media.push(MediaNotification {
-                    stream_id: stream_id.clone(),
-                    content: MediaNotificationContent::Audio {
-                        codec,
-                        timestamp: Duration::from_millis(timestamp.value as u64),
-                        is_sequence_header,
-                        data,
-                    },
-                }),
-            }
-        }
-
-        if prepare_stream {
-            self.prepare_stream(stream_id, outputs);
-        }
-    }
-
     fn handle_ffmpeg_notification(
         &mut self,
         stream_id: StreamId,
@@ -773,7 +517,7 @@ impl FfmpegTranscoder {
     }
 }
 
-impl WorkflowStep for FfmpegTranscoder {
+impl WorkflowStep for FfmpegHlsStep {
     fn get_status(&self) -> &StepStatus {
         &self.status
     }
@@ -820,18 +564,6 @@ async fn wait_for_watch_notification(
     let result = match receiver.recv().await {
         Some(msg) => FutureResult::RtmpWatchNotificationReceived(stream_id, msg, receiver),
         None => FutureResult::RtmpWatchChannelGone(stream_id),
-    };
-
-    Box::new(result)
-}
-
-async fn wait_for_publish_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<RtmpEndpointPublisherMessage>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::RtmpPublishNotificationReceived(stream_id, msg, receiver),
-        None => FutureResult::RtmpPublishChannelGone(stream_id),
     };
 
     Box::new(result)

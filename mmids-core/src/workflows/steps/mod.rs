@@ -1,4 +1,5 @@
 pub mod factory;
+pub mod ffmpeg_hls;
 pub mod ffmpeg_transcode;
 pub mod rtmp_receive;
 pub mod rtmp_watch;

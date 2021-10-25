@@ -6,6 +6,7 @@ use mmids_core::workflows::definitions::{
     WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType,
 };
 use mmids_core::workflows::steps::factory::{start_step_factory, FactoryRequest};
+use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStep;
 use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoder;
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStep;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStep;
@@ -18,6 +19,7 @@ use tokio::time::sleep;
 const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
 const FFMPEG_TRANSCODE: &str = "ffmpeg_transcode";
+const FFMPEG_HLS: &str = "ffmpeg_hls";
 
 #[tokio::main]
 pub async fn main() {
@@ -71,6 +73,17 @@ async fn init() -> Result<UnboundedSender<WorkflowRequest>, Box<dyn std::error::
 
     factory_response_receiver.recv().await.unwrap()?;
 
+    let _ = step_factory.send(FactoryRequest::RegisterFunction {
+        step_type: WorkflowStepType(FFMPEG_HLS.to_string()),
+        creation_fn: FfmpegHlsStep::create_factory_fn(
+            ffmpeg_endpoint.clone(),
+            rtmp_endpoint.clone(),
+        ),
+        response_channel: factory_response_sender.clone(),
+    });
+
+    factory_response_receiver.recv().await.unwrap()?;
+
     let workflow_definition = define_workflow();
     let workflow = start_workflow(workflow_definition, step_factory);
 
@@ -89,6 +102,21 @@ fn define_workflow() -> WorkflowDefinition {
     receive_step
         .parameters
         .insert("stream_key".to_string(), "*".to_string());
+
+    let mut hls_step = WorkflowStepDefinition {
+        step_type: WorkflowStepType(FFMPEG_HLS.to_string()),
+        parameters: HashMap::new(),
+    };
+
+    hls_step
+        .parameters
+        .insert("path".to_string(), "c:\\temp\\hls".to_string());
+    hls_step
+        .parameters
+        .insert("duration".to_string(), "2".to_string());
+    hls_step
+        .parameters
+        .insert("count".to_string(), "5".to_string());
 
     let mut preview_step = WorkflowStepDefinition {
         step_type: WorkflowStepType(RTMP_WATCH.to_string()),
@@ -137,6 +165,12 @@ fn define_workflow() -> WorkflowDefinition {
 
     WorkflowDefinition {
         name: "Test".to_string(),
-        steps: vec![receive_step, preview_step, transcode_step, watch_step],
+        steps: vec![
+            receive_step,
+            hls_step,
+            preview_step,
+            transcode_step,
+            watch_step,
+        ],
     }
 }
