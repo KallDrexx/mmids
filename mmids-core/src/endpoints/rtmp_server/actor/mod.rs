@@ -164,11 +164,14 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         None => continue,
                     };
 
-                    let key_details = match app_map.active_stream_keys.get_mut(stream_key.as_str())
-                    {
-                        Some(x) => x,
-                        None => continue,
-                    };
+                    let key_details = app_map.active_stream_keys
+                        .entry(stream_key.clone())
+                        .or_insert(StreamKeyConnections {
+                            watchers: HashMap::new(),
+                            publisher: None,
+                            latest_video_sequence_header: None,
+                            latest_audio_sequence_header: None,
+                        });
 
                     match &data {
                         RtmpEndpointMediaData::NewVideoData {
