@@ -1,16 +1,20 @@
-use mmids_core::endpoints::ffmpeg::{start_ffmpeg_endpoint, FfmpegEndpointRequest, FfmpegEndpointNotification, FfmpegParams, VideoTranscodeParams, H264Preset, AudioTranscodeParams, VideoScale, TargetParams};
 use log::info;
-use tokio::sync::mpsc::{unbounded_channel};
+use mmids_core::endpoints::ffmpeg::{
+    start_ffmpeg_endpoint, AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest,
+    FfmpegParams, H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
+};
+use tokio::sync::mpsc::unbounded_channel;
 use uuid::Uuid;
 
 #[tokio::main()]
 pub async fn main() {
     env_logger::init();
 
-    let endpoint = match start_ffmpeg_endpoint( "c:\\users\\me\\tools\\ffmpeg\\bin\\ffmpeg.exe".to_string()) {
-        Ok(x) => x,
-        Err(e) => panic!("Error starting ffmpeg: {:?}", e),
-    };
+    let endpoint =
+        match start_ffmpeg_endpoint("c:\\users\\me\\tools\\ffmpeg\\bin\\ffmpeg.exe".to_string()) {
+            Ok(x) => x,
+            Err(e) => panic!("Error starting ffmpeg: {:?}", e),
+        };
 
     info!("Ffmpeg runner started");
 
@@ -24,7 +28,7 @@ pub async fn main() {
     match notification_receiver.recv().await {
         None => panic!("ffmpeg endpoint is dead"),
         Some(FfmpegEndpointNotification::FfmpegStopped) => panic!("Premature ffmpeg stop received"),
-        Some(FfmpegEndpointNotification::FfmpegFailedToStart {cause}) => {
+        Some(FfmpegEndpointNotification::FfmpegFailedToStart { cause }) => {
             panic!("Ffmpeg failed to start: {:?}", cause);
         }
 
@@ -36,8 +40,12 @@ pub async fn main() {
     // wait for it to stop
     match notification_receiver.recv().await {
         None => panic!("ffmpeg endpoint died"),
-        Some(FfmpegEndpointNotification::FfmpegStarted) => panic!("Unexpected started notification received"),
-        Some(FfmpegEndpointNotification::FfmpegFailedToStart {cause: _}) => panic!("Unexpected start failure received"),
+        Some(FfmpegEndpointNotification::FfmpegStarted) => {
+            panic!("Unexpected started notification received")
+        }
+        Some(FfmpegEndpointNotification::FfmpegFailedToStart { cause: _ }) => {
+            panic!("Unexpected start failure received")
+        }
         Some(FfmpegEndpointNotification::FfmpegStopped) => {
             info!("Received expected stopped notification");
         }
@@ -48,9 +56,14 @@ fn hls_test() -> FfmpegParams {
     FfmpegParams {
         read_in_real_time: false,
         input: "C:\\users\\me\\Documents\\bbb.flv".to_string(),
-        video_transcode: VideoTranscodeParams::H264 { preset: H264Preset::UltraFast },
+        video_transcode: VideoTranscodeParams::H264 {
+            preset: H264Preset::UltraFast,
+        },
         audio_transcode: AudioTranscodeParams::Aac,
-        scale: Some(VideoScale { width: 640, height: 480 }),
+        scale: Some(VideoScale {
+            width: 640,
+            height: 480,
+        }),
         bitrate_in_kbps: Some(3000),
         target: TargetParams::Hls {
             path: "c:\\temp\\test\\hlstest.m3u8".to_string(),

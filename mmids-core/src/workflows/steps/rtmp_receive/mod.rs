@@ -6,7 +6,10 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::net::ConnectionId;
 use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::{StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep, FutureList, CreateFactoryFnResult};
+use crate::workflows::steps::{
+    CreateFactoryFnResult, FutureList, StepFutureResult, StepInputs, StepOutputs, StepStatus,
+    WorkflowStep,
+};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
@@ -27,7 +30,7 @@ pub struct RtmpReceiverStep {
     rtmp_app: String,
     stream_key: StreamKeyRegistration,
     status: StepStatus,
-connection_stream_id_map: HashMap<ConnectionId, StreamId>,
+    connection_stream_id_map: HashMap<ConnectionId, StreamId>,
 }
 
 impl StepFutureResult for RtmpReceiveFutureResult {}
@@ -43,33 +46,33 @@ enum RtmpReceiveFutureResult {
 #[derive(ThisError, Debug)]
 enum StepStartupError {
     #[error(
-    "No RTMP app specified.  A non-empty parameter of '{}' is required",
-    PORT_PROPERTY_NAME
+        "No RTMP app specified.  A non-empty parameter of '{}' is required",
+        PORT_PROPERTY_NAME
     )]
     NoRtmpAppSpecified,
 
     #[error(
-    "No stream key specified.  A non-empty parameter of '{}' is required",
-    APP_PROPERTY_NAME
+        "No stream key specified.  A non-empty parameter of '{}' is required",
+        APP_PROPERTY_NAME
     )]
     NoStreamKeySpecified,
 
     #[error(
-    "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
+        "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
     )]
     InvalidPortSpecified(String),
 }
 
 impl RtmpReceiverStep {
     pub fn create_factory_fn(
-        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>
+        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     ) -> CreateFactoryFnResult {
-        Box::new(move |definition|
+        Box::new(move |definition| {
             match RtmpReceiverStep::new(definition, rtmp_endpoint_sender.clone()) {
                 Ok((step, futures)) => Ok((Box::new(step), futures)),
-                Err(e) => Err(e)
+                Err(e) => Err(e),
             }
-        )
+        })
     }
 
     pub fn new<'a>(

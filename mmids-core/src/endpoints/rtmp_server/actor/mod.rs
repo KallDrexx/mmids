@@ -164,7 +164,8 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         None => continue,
                     };
 
-                    let key_details = app_map.active_stream_keys
+                    let key_details = app_map
+                        .active_stream_keys
                         .entry(stream_key.clone())
                         .or_insert(StreamKeyConnections {
                             watchers: HashMap::new(),

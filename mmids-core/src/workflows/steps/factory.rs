@@ -3,7 +3,7 @@ use crate::workflows::steps::StepCreationResult;
 use log::info;
 use std::collections::HashMap;
 use thiserror::Error;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub type FactoryCreateResponse = Result<StepCreationResult, FactoryCreateError>;
 
@@ -45,9 +45,14 @@ async fn run(mut receiver: UnboundedReceiver<FactoryRequest>) {
     info!("Starting workflow step factory");
     while let Some(request) = receiver.recv().await {
         match request {
-            FactoryRequest::RegisterFunction { step_type, creation_fn, response_channel } => {
+            FactoryRequest::RegisterFunction {
+                step_type,
+                creation_fn,
+                response_channel,
+            } => {
                 if registered_functions.contains_key(&step_type.0) {
-                    let _ = response_channel.send(Err(FactoryRegistrationError::DuplicateName(step_type.0)));
+                    let _ = response_channel
+                        .send(Err(FactoryRegistrationError::DuplicateName(step_type.0)));
                     continue;
                 }
 
@@ -55,11 +60,16 @@ async fn run(mut receiver: UnboundedReceiver<FactoryRequest>) {
                 let _ = response_channel.send(Ok(()));
             }
 
-            FactoryRequest::CreateInstance { definition, response_channel } => {
+            FactoryRequest::CreateInstance {
+                definition,
+                response_channel,
+            } => {
                 let creation_fn = match registered_functions.get(&definition.step_type.0) {
                     Some(x) => x,
                     None => {
-                        let _ = response_channel.send(Err(FactoryCreateError::NoRegisteredStep(definition.step_type.0.clone())));
+                        let _ = response_channel.send(Err(FactoryCreateError::NoRegisteredStep(
+                            definition.step_type.0.clone(),
+                        )));
                         continue;
                     }
                 };

@@ -1,12 +1,14 @@
 use crate::workflows::definitions::WorkflowDefinition;
-use crate::workflows::steps::{WorkflowStep, StepFutureResult, StepInputs, StepOutputs, StepStatus};
-use crate::workflows::steps::factory::{FactoryRequest, FactoryCreateResponse, FactoryCreateError};
-use std::collections::HashMap;
+use crate::workflows::steps::factory::{FactoryCreateError, FactoryCreateResponse, FactoryRequest};
+use crate::workflows::steps::{
+    StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
+};
 use futures::future::BoxFuture;
-use futures::{FutureExt, StreamExt};
 use futures::stream::FuturesUnordered;
-use log::{info, warn, error};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use futures::{FutureExt, StreamExt};
+use log::{error, info, warn};
+use std::collections::HashMap;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub enum WorkflowRequest {}
 
@@ -33,7 +35,7 @@ enum FutureResult {
     StepFutureResolved {
         step_id: u64,
         result: Box<dyn StepFutureResult>,
-    }
+    },
 }
 
 struct Actor<'a> {
@@ -55,7 +57,12 @@ impl<'a> Actor<'a> {
         let futures = FuturesUnordered::new();
         let mut pending_steps = Vec::new();
         for step in &definition.steps {
-            info!("Workflow {}: step defined with type {} and id {}", definition.name, step.step_type.0, step.get_id());
+            info!(
+                "Workflow {}: step defined with type {} and id {}",
+                definition.name,
+                step.step_type.0,
+                step.get_id()
+            );
             pending_steps.push(step.get_id());
 
             let (factory_sender, factory_receiver) = unbounded_channel();
@@ -96,14 +103,18 @@ impl<'a> Actor<'a> {
                 }
 
                 FutureResult::WorkflowRequestReceived(_request, receiver) => {
-                   self.futures.push(wait_for_workflow_request(receiver).boxed());
+                    self.futures
+                        .push(wait_for_workflow_request(receiver).boxed());
                 }
 
-                FutureResult::StepCreationResultReceived {step_id, result: factory_response} => {
+                FutureResult::StepCreationResultReceived {
+                    step_id,
+                    result: factory_response,
+                } => {
                     self.handle_step_creation_result(step_id, factory_response);
                 }
 
-                FutureResult::StepFutureResolved {step_id, result} => {
+                FutureResult::StepFutureResolved { step_id, result } => {
                     self.execute_steps(step_id, Some(result));
                 }
             }
@@ -112,38 +123,57 @@ impl<'a> Actor<'a> {
         info!("Workflow '{}' closing", self.name);
     }
 
-    fn handle_step_creation_result(&mut self, step_id: u64, factory_response: FactoryCreateResponse) {
+    fn handle_step_creation_result(
+        &mut self,
+        step_id: u64,
+        factory_response: FactoryCreateResponse,
+    ) {
         let step_result = match factory_response {
             Ok(x) => x,
             Err(error) => match error {
                 FactoryCreateError::NoRegisteredStep(step) => {
-                    error!("Workflow {}: Requested creation of step '{}' but no step has \
-                                been registered with that name.", self.name, step);
+                    error!(
+                        "Workflow {}: Requested creation of step '{}' but no step has \
+                                been registered with that name.",
+                        self.name, step
+                    );
 
                     return;
                 }
-            }
+            },
         };
 
         let (step, mut future_list) = match step_result {
             Ok(x) => x,
             Err(error) => {
-                error!("Workflow {}: Creation of step id {} failed: {}", self.name, step_id, error);
+                error!(
+                    "Workflow {}: Creation of step id {} failed: {}",
+                    self.name, step_id, error
+                );
                 return;
             }
         };
 
-        info!("Workflow {}: Successfully got created instance of step id {}", self.name, step_id);
-        self.steps_by_definition_id.insert(step.get_definition().get_id(), step);
+        info!(
+            "Workflow {}: Successfully got created instance of step id {}",
+            self.name, step_id
+        );
+        self.steps_by_definition_id
+            .insert(step.get_definition().get_id(), step);
 
         for future in future_list.drain(..) {
-            self.futures.push(wait_for_step_future(step_id, future).boxed());
+            self.futures
+                .push(wait_for_step_future(step_id, future).boxed());
         }
 
         self.check_if_all_pending_steps_are_active();
     }
 
-    fn execute_steps(&mut self, initial_step_id: u64, future_result: Option<Box<dyn StepFutureResult>>) {
+    fn execute_steps(
+        &mut self,
+        initial_step_id: u64,
+        future_result: Option<Box<dyn StepFutureResult>>,
+    ) {
         self.step_inputs.clear();
         self.step_outputs.clear();
 
@@ -164,7 +194,10 @@ impl<'a> Actor<'a> {
                 let step = match self.steps_by_definition_id.get_mut(&self.active_steps[x]) {
                     Some(x) => x,
                     None => {
-                        error!("Workflow {}: step id {} is marked as active but no definition exists", self.name, self.active_steps[x]);
+                        error!(
+                            "Workflow {}: step id {} is marked as active but no definition exists",
+                            self.name, self.active_steps[x]
+                        );
                         return;
                     }
                 };
@@ -172,10 +205,13 @@ impl<'a> Actor<'a> {
                 step.execute(&mut self.step_inputs, &mut self.step_outputs);
 
                 self.step_inputs.clear();
-                self.step_inputs.media.extend( self.step_outputs.media.drain(..));
+                self.step_inputs
+                    .media
+                    .extend(self.step_outputs.media.drain(..));
 
                 for future in self.step_outputs.futures.drain(..) {
-                    self.futures.push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
+                    self.futures
+                        .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
                 }
 
                 self.step_outputs.clear();
@@ -186,8 +222,11 @@ impl<'a> Actor<'a> {
             let step = match self.steps_by_definition_id.get_mut(&initial_step_id) {
                 Some(x) => x,
                 None => {
-                    error!("Workflow {}: step id {} got a resolved future but we do not have \
-                    a definition for it", self.name, initial_step_id);
+                    error!(
+                        "Workflow {}: step id {} got a resolved future but we do not have \
+                    a definition for it",
+                        self.name, initial_step_id
+                    );
 
                     return;
                 }
@@ -196,7 +235,8 @@ impl<'a> Actor<'a> {
             step.execute(&mut self.step_inputs, &mut self.step_outputs);
 
             for future in self.step_outputs.futures.drain(..) {
-                self.futures.push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
+                self.futures
+                    .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
             }
 
             // TODO: Figure out what to do with media outputs in this case.  We probably need to
@@ -214,7 +254,7 @@ impl<'a> Actor<'a> {
                 None => {
                     error!("Workflow {}: workflow had step id {} pending but this step was not defined", self.name, id);
                     return; // TODO: set workflow in error state
-                },
+                }
             };
 
             match step.get_status() {
@@ -243,11 +283,13 @@ impl<'a> Actor<'a> {
 
 unsafe impl Send for Actor<'_> {}
 
-async fn wait_for_workflow_request<'a>(mut receiver: UnboundedReceiver<WorkflowRequest>) -> FutureResult {
+async fn wait_for_workflow_request<'a>(
+    mut receiver: UnboundedReceiver<WorkflowRequest>,
+) -> FutureResult {
     match receiver.recv().await {
         Some(x) => FutureResult::WorkflowRequestReceived(x, receiver),
-       None => FutureResult::AllConsumersGone,
-   }
+        None => FutureResult::AllConsumersGone,
+    }
 }
 
 async fn wait_for_factory_response<'a>(
@@ -255,15 +297,15 @@ async fn wait_for_factory_response<'a>(
     step_id: u64,
 ) -> FutureResult {
     match receiver.recv().await {
-        Some(result) => FutureResult::StepCreationResultReceived {step_id, result},
+        Some(result) => FutureResult::StepCreationResultReceived { step_id, result },
         None => FutureResult::StepFactoryGone,
     }
 }
 
-async fn wait_for_step_future<'a>(step_id: u64, future: BoxFuture<'a, Box<dyn StepFutureResult>>) -> FutureResult {
+async fn wait_for_step_future<'a>(
+    step_id: u64,
+    future: BoxFuture<'a, Box<dyn StepFutureResult>>,
+) -> FutureResult {
     let result = future.await;
-    FutureResult::StepFutureResolved {
-        step_id,
-        result,
-    }
+    FutureResult::StepFutureResolved { step_id, result }
 }

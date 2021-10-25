@@ -6,11 +6,11 @@ use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use bytes::Bytes;
+use futures::future::BoxFuture;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
-use futures::future::BoxFuture;
 use tokio::time::timeout;
 
 const TEST_PORT: u16 = 9999;
