@@ -1,0 +1,33 @@
+content = _{ SOI ~ (trailing_eol | setting_block | workflow_block)* ~ EOI }
+
+setting_block = {
+	whitespace* ~ ^"settings" ~ whitespace* ~ "{" ~ trailing_eol ~
+        ((whitespace* ~ setting_name ~ whitespace? ~ setting_value)? ~ trailing_eol)* ~
+    whitespace* ~ "}" ~ trailing_eol?
+}
+
+setting_name = { word }
+setting_value = { quoted_string | word }
+
+workflow_block = {
+	whitespace* ~ ^"workflow" ~ whitespace* ~ workflow_name ~ whitespace* ~ "{" ~ trailing_eol ~
+    	(whitespace* ~ step_type ~ arguments ~ trailing_eol)* ~
+    whitespace* ~ "}" ~ trailing_eol?
+}
+
+arguments = { (whitespace+ ~ argument)* }
+argument = { key_value_pair | quoted_string | argument_flag }
+argument_flag = { word }
+step_type = { word }
+workflow_name = { word }
+
+key_value_pair = { key ~ "=" ~ value }
+key = { word }
+value = { quoted_string | word }
+quoted_string = _{ "\"" ~ quoted_string_value ~ "\"" }
+quoted_string_value = { (whitespace | character)* }
+word = _{ character* }
+trailing_eol = _{ whitespace* ~ comment? ~ NEWLINE }
+comment = _{ whitespace* ~ "#" ~ (whitespace | character | "{" | "}" | "#")* }
+whitespace = _{ " " | "\t" }
+character = _{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "_"|  "/" | "\\" | "*" | "." | ":" }
