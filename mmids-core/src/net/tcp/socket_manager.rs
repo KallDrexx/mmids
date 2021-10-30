@@ -1,7 +1,6 @@
 use super::listener::{start as start_listener, ListenerParams};
 use super::{TcpSocketRequest, TcpSocketResponse};
 use crate::net::tcp::RequestFailureReason;
-use crate::send;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
@@ -69,11 +68,10 @@ impl<'a> SocketManager<'a> {
                 SocketManagerFutureResult::ListenerShutdown { port } => {
                     match self.open_ports.remove(&port) {
                         None => (),
-                        Some(mut details) => {
-                            send(
-                                &mut details.response_channel,
-                                TcpSocketResponse::PortForciblyClosed { port },
-                            );
+                        Some(details) => {
+                            let _ = details
+                                .response_channel
+                                .send(TcpSocketResponse::PortForciblyClosed { port });
                         }
                     }
                 }
@@ -87,7 +85,7 @@ impl<'a> SocketManager<'a> {
         match request {
             TcpSocketRequest::OpenPort {
                 port,
-                mut response_channel,
+                response_channel,
             } => {
                 if self.open_ports.contains_key(&port) {
                     debug!("Port {} is already in use!", port);
@@ -95,7 +93,7 @@ impl<'a> SocketManager<'a> {
                         reason: RequestFailureReason::PortInUse,
                     };
 
-                    send(&mut response_channel, message);
+                    let _ = response_channel.send(message);
                 } else {
                     debug!("TCP port {} being opened", port);
                     let details = OpenPort {
@@ -112,7 +110,7 @@ impl<'a> SocketManager<'a> {
                     self.futures
                         .push(listener_shutdown_future(port, listener_shutdown).boxed());
 
-                    send(&mut response_channel, TcpSocketResponse::RequestAccepted {});
+                    let _ = response_channel.send(TcpSocketResponse::RequestAccepted {});
                 }
             }
         }

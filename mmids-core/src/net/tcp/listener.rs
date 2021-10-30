@@ -1,9 +1,8 @@
 use super::TcpSocketResponse;
 use crate::net::ConnectionId;
-use crate::{send, spawn_and_log};
 use bytes::{Bytes, BytesMut};
 use futures::future::FutureExt;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -34,15 +33,12 @@ pub struct ListenerParams {
 /// callers can use to know if the listener has shut down unexpectedly.
 pub fn start(params: ListenerParams) -> UnboundedSender<()> {
     let (self_disconnect_sender, self_disconnect_receiver) = unbounded_channel();
-    spawn_and_log(listen(params, self_disconnect_receiver));
+    tokio::spawn(listen(params, self_disconnect_receiver));
 
     self_disconnect_sender
 }
 
-async fn listen(
-    params: ListenerParams,
-    _self_disconnection_signal: UnboundedReceiver<()>,
-) -> Result<(), std::io::Error> {
+async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedReceiver<()>) {
     debug!("Socket listener for port {} started", params.port);
 
     let ListenerParams {
@@ -50,14 +46,26 @@ async fn listen(
         response_channel,
     } = params;
     let bind_address = "0.0.0.0:".to_string() + &port.to_string();
-    let listener = TcpListener::bind(bind_address).await?;
+    let listener = match TcpListener::bind(bind_address.clone()).await {
+        Ok(x) => x,
+        Err(e) => {
+            error!("Error occurred binding socket to {}: {:?}", bind_address, e);
+            return;
+        }
+    };
 
     debug!("Listener for port {} started", port);
     loop {
         let disconnect = response_channel.clone();
         tokio::select! {
             result = listener.accept() => {
-                let (socket, client_info) = result?;
+                let (socket, client_info) = match result {
+                    Ok(x) => x,
+                    Err(e) => {
+                        error!("Error accepting connection for listener on port {}: {:?}", port, e);
+                        return;
+                    }
+                };
                 handle_new_connection(socket, client_info, response_channel.clone(), port);
             },
 
@@ -66,16 +74,13 @@ async fn listen(
             }
         }
     }
-    debug!("Listener for port {} stopped", port);
-
     debug!("Socket listener for port {} closing", port);
-    Ok(())
 }
 
 fn handle_new_connection(
     socket: TcpStream,
     client_info: SocketAddr,
-    mut response_channel: UnboundedSender<TcpSocketResponse>,
+    response_channel: UnboundedSender<TcpSocketResponse>,
     port: u16,
 ) {
     let connection_id = ConnectionId(Uuid::new_v4().to_string());
@@ -95,43 +100,52 @@ fn handle_new_connection(
         outgoing_bytes: outgoing_sender,
     };
 
-    if !send(&mut response_channel, message) {
+    if let Err(_) = response_channel.send(message) {
         info!(
             "Connection {}: Port owner disconnected before connection was handled",
             connection_id
         );
+
         return;
     }
 
     let (reader, writer) = tokio::io::split(socket);
-    spawn_and_log(socket_reader(
+    tokio::spawn(socket_reader(
         connection_id.clone(),
         reader,
         incoming_sender,
         response_channel,
     ));
 
-    spawn_and_log(socket_writer(connection_id, writer, outgoing_receiver));
+    tokio::spawn(socket_writer(connection_id, writer, outgoing_receiver));
 }
 
 async fn socket_reader(
     connection_id: ConnectionId,
     mut reader: ReadHalf<TcpStream>,
-    mut incoming_sender: UnboundedSender<Bytes>,
+    incoming_sender: UnboundedSender<Bytes>,
     tcp_response_sender: UnboundedSender<TcpSocketResponse>,
-) -> Result<(), std::io::Error> {
+) {
     let mut buffer = BytesMut::with_capacity(4096);
     loop {
         tokio::select! {
             bytes_read = reader.read_buf(&mut buffer) => {
-                let bytes_read = bytes_read?;
+                let bytes_read = match bytes_read {
+                    Ok(x) => x,
+                    Err(e) => {
+                        error!("Error reading from byte buffer: {:?}", e);
+                        return;
+                    }
+                };
+
                 if bytes_read == 0 {
                     break;
                 }
 
                 let bytes = buffer.split_off(bytes_read);
                 let received_bytes = buffer.freeze();
-                if !send(&mut incoming_sender, received_bytes) {
+
+                if let Err(_) = incoming_sender.send(received_bytes) {
                     break;
                 }
 
@@ -146,15 +160,13 @@ async fn socket_reader(
 
     info!("Connection {}: reader task closed", connection_id);
     let _ = tcp_response_sender.send(TcpSocketResponse::Disconnection { connection_id });
-
-    Ok(())
 }
 
 async fn socket_writer(
     connection_id: ConnectionId,
     mut writer: WriteHalf<TcpStream>,
     mut outgoing_receiver: UnboundedReceiver<OutboundPacket>,
-) -> Result<(), std::io::Error> {
+) {
     const INITIAL_BACKLOG_THRESHOLD: usize = 100;
     const LETHAL_BACKLOG_THRESHOLD: usize = 1000;
 
@@ -198,7 +210,10 @@ async fn socket_writer(
         let mut dropped_packet_count = 0;
         for packet in send_queue.drain(..) {
             if !packet.can_be_dropped || !drop_optional_packets {
-                writer.write_all(packet.bytes.as_ref()).await?;
+                if let Err(e) = writer.write_all(packet.bytes.as_ref()).await {
+                    error!("Error when writing packet bytes: {:?}", e);
+                    return;
+                }
             } else {
                 dropped_packet_count += 1;
             }
@@ -213,6 +228,4 @@ async fn socket_writer(
     }
 
     info!("Connection {}: writer task closed", connection_id);
-
-    Ok(())
 }
