@@ -1,5 +1,5 @@
 use log::info;
-use mmids_core::config::{MmidsConfig, parse as parse_config_file};
+use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::endpoints::ffmpeg::start_ffmpeg_endpoint;
 use mmids_core::endpoints::rtmp_server::start_rtmp_server_endpoint;
 use mmids_core::net::tcp::start_socket_manager;
@@ -33,22 +33,24 @@ pub async fn main() {
 }
 
 fn read_config() -> MmidsConfig {
-    let contents = fs::read_to_string("mmids.config")
-        .expect("Failed to read 'mmids.config'");
+    let contents = fs::read_to_string("mmids.config").expect("Failed to read 'mmids.config'");
 
-    return parse_config_file(contents.as_str())
-        .expect("Failed to parse config file");
+    return parse_config_file(contents.as_str()).expect("Failed to parse config file");
 }
 
-async fn init(config: MmidsConfig) -> Result<Vec<UnboundedSender<WorkflowRequest>>, Box<dyn std::error::Error + Send + Sync>>
-{
+async fn init(
+    config: MmidsConfig,
+) -> Result<Vec<UnboundedSender<WorkflowRequest>>, Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting all endpoints");
     let socket_manager = start_socket_manager();
     let rtmp_endpoint = start_rtmp_server_endpoint(socket_manager);
     let step_factory = start_step_factory();
 
-    let ffmpeg_path = config.settings.get("ffmpeg_path")
-        .expect("No ffmpeg_path setting found").as_ref()
+    let ffmpeg_path = config
+        .settings
+        .get("ffmpeg_path")
+        .expect("No ffmpeg_path setting found")
+        .as_ref()
         .expect("no ffmpeg path specified");
 
     let ffmpeg_endpoint = start_ffmpeg_endpoint(ffmpeg_path.to_string())?;
@@ -102,4 +104,3 @@ async fn init(config: MmidsConfig) -> Result<Vec<UnboundedSender<WorkflowRequest
 
     Ok(workflows)
 }
-

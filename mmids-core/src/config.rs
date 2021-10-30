@@ -1,7 +1,7 @@
-use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepType, WorkflowStepDefinition};
-use std::collections::HashMap;
+use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType};
 use pest::iterators::Pair;
 use pest::Parser;
+use std::collections::HashMap;
 use thiserror::Error;
 
 pub struct MmidsConfig {
@@ -15,10 +15,10 @@ pub enum ConfigParseError {
     InvalidConfig(#[from] pest::error::Error<Rule>),
 
     #[error("Found unexpected rule '{rule:?}' in the {section} section")]
-    UnexpectedRule {rule: Rule, section: String},
+    UnexpectedRule { rule: Rule, section: String },
 
     #[error("Duplicate workflow name: '{name}'")]
-    DuplicateWorkflowName {name: String},
+    DuplicateWorkflowName { name: String },
 }
 
 #[derive(Parser)]
@@ -44,7 +44,10 @@ pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
     Ok(config)
 }
 
-fn handle_setting_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(), ConfigParseError> {
+fn handle_setting_block(
+    config: &mut MmidsConfig,
+    pair: Pair<Rule>,
+) -> Result<(), ConfigParseError> {
     let mut current_setting_name = None;
     for pair in pair.into_inner() {
         match pair.as_rule() {
@@ -67,12 +70,16 @@ fn handle_setting_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<()
                 for pair in pair.into_inner() {
                     match pair.as_rule() {
                         Rule::quoted_string_value => quoted_value = Some(pair.as_str().to_string()),
-                        _ => ()
+                        _ => (),
                     }
                 }
 
                 if let Some(name) = current_setting_name {
-                    let value = if let Some(value) = quoted_value {value} else {raw_value};
+                    let value = if let Some(value) = quoted_value {
+                        value
+                    } else {
+                        raw_value
+                    };
                     if value.trim() == "" {
                         config.settings.insert(name, None);
                     } else {
@@ -83,7 +90,12 @@ fn handle_setting_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<()
                 }
             }
 
-            _ => return Err(ConfigParseError::UnexpectedRule {rule: pair.as_rule(), section: "setting_block".to_string()})
+            _ => {
+                return Err(ConfigParseError::UnexpectedRule {
+                    rule: pair.as_rule(),
+                    section: "setting_block".to_string(),
+                })
+            }
         }
     }
 
@@ -94,7 +106,10 @@ fn handle_setting_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<()
     Ok(())
 }
 
-fn handle_workflow_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(), ConfigParseError> {
+fn handle_workflow_block(
+    config: &mut MmidsConfig,
+    pair: Pair<Rule>,
+) -> Result<(), ConfigParseError> {
     let mut workflow = WorkflowDefinition {
         name: "".to_string(),
         steps: Vec::new(),
@@ -117,7 +132,8 @@ fn handle_workflow_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(
             }
 
             Rule::arguments => {
-                let arguments  = pair.into_inner()
+                let arguments = pair
+                    .into_inner()
                     .filter(|p| p.as_rule() == Rule::argument)
                     .map(|p| p.into_inner())
                     .flatten();
@@ -134,19 +150,25 @@ fn handle_workflow_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(
                                         value = inner.as_str().to_string();
                                         for inner in inner.into_inner() {
                                             match inner.as_rule() {
-                                                Rule::quoted_string_value => value = inner.as_str().to_string(),
-                                                x => return Err(ConfigParseError::UnexpectedRule {
-                                                    rule: x,
-                                                    section: "key value pair value".to_string(),
-                                                })
+                                                Rule::quoted_string_value => {
+                                                    value = inner.as_str().to_string()
+                                                }
+                                                x => {
+                                                    return Err(ConfigParseError::UnexpectedRule {
+                                                        rule: x,
+                                                        section: "key value pair value".to_string(),
+                                                    })
+                                                }
                                             }
                                         }
-                                    },
+                                    }
 
-                                    x => return Err(ConfigParseError::UnexpectedRule {
-                                        rule: x,
-                                        section: "key value pair".to_string(),
-                                    })
+                                    x => {
+                                        return Err(ConfigParseError::UnexpectedRule {
+                                            rule: x,
+                                            section: "key value pair".to_string(),
+                                        })
+                                    }
                                 }
                             }
 
@@ -154,25 +176,37 @@ fn handle_workflow_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(
                         }
 
                         Rule::quoted_string_value => {
-                            current_step.as_mut().unwrap().parameters.insert(argument.as_str().to_string(), "".to_string());
+                            current_step
+                                .as_mut()
+                                .unwrap()
+                                .parameters
+                                .insert(argument.as_str().to_string(), "".to_string());
                         }
 
                         Rule::argument_flag => {
-                            current_step.as_mut().unwrap().parameters.insert(argument.as_str().to_string(), "".to_string());
+                            current_step
+                                .as_mut()
+                                .unwrap()
+                                .parameters
+                                .insert(argument.as_str().to_string(), "".to_string());
                         }
 
-                        x => return Err(ConfigParseError::UnexpectedRule {
-                            rule: x,
-                            section: "argument".to_string()
-                        })
+                        x => {
+                            return Err(ConfigParseError::UnexpectedRule {
+                                rule: x,
+                                section: "argument".to_string(),
+                            })
+                        }
                     }
                 }
             }
 
-            x => return Err(ConfigParseError::UnexpectedRule {
-                rule: x,
-                section: "workflow block".to_string(),
-            })
+            x => {
+                return Err(ConfigParseError::UnexpectedRule {
+                    rule: x,
+                    section: "workflow block".to_string(),
+                })
+            }
         }
     }
 
@@ -181,7 +215,9 @@ fn handle_workflow_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(
     }
 
     if let Some(prev_workflow) = config.workflows.insert(workflow.name.clone(), workflow) {
-        return Err(ConfigParseError::DuplicateWorkflowName {name: prev_workflow.name});
+        return Err(ConfigParseError::DuplicateWorkflowName {
+            name: prev_workflow.name,
+        });
     }
 
     Ok(())
@@ -204,9 +240,23 @@ settings {
 
         let config = parse(content).unwrap();
         assert_eq!(config.settings.len(), 3, "Unexpected number of settings");
-        assert_eq!(config.settings.get("first"), Some(&Some("a".to_string())), "Unexpected first value");
-        assert_eq!(config.settings.get("second"), Some(&Some("C:\\program files\\ffmpeg\\bin\\ffmpeg.exe".to_string())), "Unexpected second value");
-        assert_eq!(config.settings.get("flag"), Some(&None), "Unexpected flag value");
+        assert_eq!(
+            config.settings.get("first"),
+            Some(&Some("a".to_string())),
+            "Unexpected first value"
+        );
+        assert_eq!(
+            config.settings.get("second"),
+            Some(&Some(
+                "C:\\program files\\ffmpeg\\bin\\ffmpeg.exe".to_string()
+            )),
+            "Unexpected second value"
+        );
+        assert_eq!(
+            config.settings.get("flag"),
+            Some(&None),
+            "Unexpected flag value"
+        );
     }
 
     #[test]
@@ -219,26 +269,73 @@ workflow name {
 ";
         let config = parse(content).unwrap();
         assert_eq!(config.workflows.len(), 1, "Unexpected number of workflows");
-        assert!(config.workflows.contains_key("name"), "workflow 'name' did not exist");
+        assert!(
+            config.workflows.contains_key("name"),
+            "workflow 'name' did not exist"
+        );
 
         let workflow = config.workflows.get("name").unwrap();
-        assert_eq!(workflow.name, "name".to_string(), "Unexpected workflow name");
-        assert_eq!(workflow.steps.len(), 2, "Unexpected number of workflow steps");
+        assert_eq!(
+            workflow.name,
+            "name".to_string(),
+            "Unexpected workflow name"
+        );
+        assert_eq!(
+            workflow.steps.len(),
+            2,
+            "Unexpected number of workflow steps"
+        );
 
         let step1 = workflow.steps.get(0).unwrap();
-        assert_eq!(step1.step_type.0, "rtmp_receive".to_string(), "Unexpected type of step 1");
+        assert_eq!(
+            step1.step_type.0,
+            "rtmp_receive".to_string(),
+            "Unexpected type of step 1"
+        );
         assert_eq!(step1.parameters.len(), 3, "Unexpected number of parameters");
-        assert_eq!(step1.parameters.get("port"), Some(&"1935".to_string()), "Unexpected step 1 port value");
-        assert_eq!(step1.parameters.get("app"), Some(&"receive".to_string()), "Unexpected step 1 app value");
-        assert_eq!(step1.parameters.get("stream_key"), Some(&"*".to_string()), "Unexpected step 1 stream_key value");
+        assert_eq!(
+            step1.parameters.get("port"),
+            Some(&"1935".to_string()),
+            "Unexpected step 1 port value"
+        );
+        assert_eq!(
+            step1.parameters.get("app"),
+            Some(&"receive".to_string()),
+            "Unexpected step 1 app value"
+        );
+        assert_eq!(
+            step1.parameters.get("stream_key"),
+            Some(&"*".to_string()),
+            "Unexpected step 1 stream_key value"
+        );
 
         let step2 = workflow.steps.get(1).unwrap();
-        assert_eq!(step2.step_type.0, "hls".to_string(), "Unexpected type of step 1");
+        assert_eq!(
+            step2.step_type.0,
+            "hls".to_string(),
+            "Unexpected type of step 1"
+        );
         assert_eq!(step2.parameters.len(), 4, "Unexpected number of parameters");
-        assert_eq!(step2.parameters.get("path"), Some(&"c:\\temp\\test.m3u8".to_string()), "Unexpected step 2 path value");
-        assert_eq!(step2.parameters.get("segment_size"), Some(&"3".to_string()), "Unexpected step 2 segment_size value");
-        assert_eq!(step2.parameters.get("size"), Some(&"640x480".to_string()), "Unexpected step 2 size value");
-        assert_eq!(step2.parameters.get("flag"), Some(&"".to_string()), "Unexpected step 2 flag value");
+        assert_eq!(
+            step2.parameters.get("path"),
+            Some(&"c:\\temp\\test.m3u8".to_string()),
+            "Unexpected step 2 path value"
+        );
+        assert_eq!(
+            step2.parameters.get("segment_size"),
+            Some(&"3".to_string()),
+            "Unexpected step 2 segment_size value"
+        );
+        assert_eq!(
+            step2.parameters.get("size"),
+            Some(&"640x480".to_string()),
+            "Unexpected step 2 size value"
+        );
+        assert_eq!(
+            step2.parameters.get("flag"),
+            Some(&"".to_string()),
+            "Unexpected step 2 flag value"
+        );
     }
 
     #[test]
@@ -256,8 +353,14 @@ workflow name2 {
         let config = parse(content).unwrap();
 
         assert_eq!(config.workflows.len(), 2, "Unexpected number of workflows");
-        assert!(config.workflows.contains_key("name"), "Could not find a workflow named 'name'");
-        assert!(config.workflows.contains_key("name2"), "Could not find a workflow named 'name2'");
+        assert!(
+            config.workflows.contains_key("name"),
+            "Could not find a workflow named 'name'"
+        );
+        assert!(
+            config.workflows.contains_key("name2"),
+            "Could not find a workflow named 'name2'"
+        );
     }
 
     #[test]
@@ -273,12 +376,15 @@ workflow name {
 }
 ";
         match parse(content) {
-            Err(ConfigParseError::DuplicateWorkflowName {name }) => {
+            Err(ConfigParseError::DuplicateWorkflowName { name }) => {
                 if name != "name".to_string() {
                     panic!("Unexpected name in workflow: '{}'", name);
                 }
             }
-            Err(e) => panic!("Expected duplicate workflow name error, instead got: {:?}", e),
+            Err(e) => panic!(
+                "Expected duplicate workflow name error, instead got: {:?}",
+                e
+            ),
             Ok(_) => panic!("Received successful parse, but an error was expected"),
         }
     }
