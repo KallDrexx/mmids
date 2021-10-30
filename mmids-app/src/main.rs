@@ -6,6 +6,7 @@ use mmids_core::net::tcp::start_socket_manager;
 use mmids_core::workflows::definitions::WorkflowStepType;
 use mmids_core::workflows::steps::factory::{start_step_factory, FactoryRequest};
 use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStep;
+use mmids_core::workflows::steps::ffmpeg_rtmp_push::FfmpegRtmpPushStep;
 use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoder;
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStep;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStep;
@@ -19,6 +20,7 @@ const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
 const FFMPEG_TRANSCODE: &str = "ffmpeg_transcode";
 const FFMPEG_HLS: &str = "ffmpeg_hls";
+const FFMPEG_PUSH: &str = "ffmpeg_push";
 
 #[tokio::main]
 pub async fn main() {
@@ -87,6 +89,17 @@ async fn init(
     let _ = step_factory.send(FactoryRequest::RegisterFunction {
         step_type: WorkflowStepType(FFMPEG_HLS.to_string()),
         creation_fn: FfmpegHlsStep::create_factory_fn(
+            ffmpeg_endpoint.clone(),
+            rtmp_endpoint.clone(),
+        ),
+        response_channel: factory_response_sender.clone(),
+    });
+
+    factory_response_receiver.recv().await.unwrap()?;
+
+    let _ = step_factory.send(FactoryRequest::RegisterFunction {
+        step_type: WorkflowStepType(FFMPEG_PUSH.to_string()),
+        creation_fn: FfmpegRtmpPushStep::create_factory_fn(
             ffmpeg_endpoint.clone(),
             rtmp_endpoint.clone(),
         ),

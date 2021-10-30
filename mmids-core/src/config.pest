@@ -30,4 +30,4 @@ word = _{ character* }
 trailing_eol = _{ whitespace* ~ comment? ~ NEWLINE }
 comment = _{ whitespace* ~ "#" ~ (whitespace | character | "{" | "}" | "#")* }
 whitespace = _{ " " | "\t" }
-character = _{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "_"|  "/" | "\\" | "*" | "." | ":" }
+character = _{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "-" | "_" |  "/" | "\\" | "*" | "." | ":" }
