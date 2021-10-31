@@ -305,6 +305,18 @@ impl<'a> Actor<'a> {
             }
         }
 
+        if let Some(bitrate) = &params.bitrate_in_kbps {
+            let rate = format!("{}K", bitrate);
+            args.push("-b:v".to_string());
+            args.push(rate.clone());
+
+            args.push("-minrate".to_string());
+            args.push(rate.clone());
+
+            args.push("-maxrate".to_string());
+            args.push(rate.clone());
+        }
+
         if let Some(scale) = &params.scale {
             args.push("-vf".to_string());
             args.push(format!("scale={}:{}", scale.width, scale.height));
