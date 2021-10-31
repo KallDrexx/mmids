@@ -14,9 +14,14 @@ use log::{error, info, warn};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-/// Represents a basic workflow step logic for that exposes streams to an RTMP endpoint
-/// for consumption by an external resource, such as ffmpeg. An external stream reader assumes that all
-/// media passed into it should not be consumed, and instead should flow to the next step
+/// Represents logic for a basic workflow step that exposes streams to an RTMP endpoint
+/// so that an external system can read the video stream.  This exposes a read-only interface for
+/// media, which means the external system is not expected to push media back into the same workflow
+/// as the same identifiable stream.  An example of this is providing media for ffmpeg to generate
+/// HLS feeds for.
+///
+/// Since this is a read-only interface all media passed into it will flow as-is to the next
+/// workflow step.
 pub struct ExternalStreamReader {
     pub status: StepStatus,
     id: String,
