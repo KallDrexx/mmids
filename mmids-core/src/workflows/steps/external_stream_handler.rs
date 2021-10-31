@@ -4,7 +4,12 @@ use downcast_rs::{impl_downcast, Downcast};
 
 /// Trait used to handle different external resources for a single stream
 pub trait ExternalStreamHandler {
-    fn prepare_stream(&mut self, stream_id: &StreamId, outputs: &mut StepOutputs);
+    fn prepare_stream(
+        &mut self,
+        stream_id: &StreamId,
+        stream_name: &String,
+        outputs: &mut StepOutputs,
+    );
     fn stop_stream(&mut self);
     fn handle_resolved_future(
         &mut self,

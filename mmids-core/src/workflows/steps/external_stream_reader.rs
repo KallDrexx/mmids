@@ -236,9 +236,11 @@ impl ExternalStreamReader {
             };
 
             if output_is_active {
-                stream
-                    .external_stream_handler
-                    .prepare_stream(&stream_id, outputs);
+                stream.external_stream_handler.prepare_stream(
+                    &stream_id,
+                    &stream.stream_name,
+                    outputs,
+                );
             }
         }
     }

@@ -24,7 +24,7 @@ pub struct FfmpegHandlerGenerator {
 }
 
 pub trait FfmpegParameterGenerator {
-    fn form_parameters(&self, stream_id: &StreamId) -> FfmpegParams;
+    fn form_parameters(&self, stream_id: &StreamId, stream_name: &String) -> FfmpegParams;
 }
 
 #[derive(Debug)]
@@ -109,10 +109,15 @@ impl FfmpegHandler {
 }
 
 impl ExternalStreamHandler for FfmpegHandler {
-    fn prepare_stream(&mut self, stream_id: &StreamId, outputs: &mut StepOutputs) {
+    fn prepare_stream(
+        &mut self,
+        stream_id: &StreamId,
+        stream_name: &String,
+        outputs: &mut StepOutputs,
+    ) {
         match &self.status {
             FfmpegHandlerStatus::Inactive => {
-                let parameters = self.param_generator.form_parameters(stream_id);
+                let parameters = self.param_generator.form_parameters(stream_id, stream_name);
                 let id = Uuid::new_v4();
                 let (sender, receiver) = unbounded_channel();
                 let _ = self
