@@ -113,6 +113,7 @@ impl RtmpWatchStep {
             StreamKeyRegistration::Exact(stream_key.to_string())
         };
 
+
         let (media_sender, media_receiver) = unbounded_channel();
 
         let step = RtmpWatchStep {
@@ -172,6 +173,14 @@ impl RtmpWatchStep {
         if self.status == StepStatus::Active {
             match &media.content {
                 MediaNotificationContent::NewIncomingStream { stream_name } => {
+                    // If this step was registered with an exact stream name, then we don't care
+                    // what stream name this was originally published as.  For watch purposes treat
+                    // it as the configured stream key
+                    let stream_name = match &self.stream_key {
+                        StreamKeyRegistration::Any => stream_name,
+                        StreamKeyRegistration::Exact(configured_stream_name) => configured_stream_name,
+                    };
+
                     info!("New incoming stream notification found for stream id {:?} and stream name '{}",
                 media.stream_id, stream_name);
 
