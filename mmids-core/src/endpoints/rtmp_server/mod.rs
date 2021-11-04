@@ -76,6 +76,9 @@ pub enum RtmpEndpointRequest {
 
         /// What IP restriction rules should be in place for this registration
         ip_restrictions: IpRestriction,
+
+        /// If true, this port should be on a TLS socket (i.e. RTMPS)
+        use_tls: bool,
     },
 
     /// Requests the RTMP server to allow clients to receive video on the given port, app,
@@ -98,6 +101,9 @@ pub enum RtmpEndpointRequest {
 
         /// What IP restriction rules should be in place for this registration
         ip_restrictions: IpRestriction,
+
+        /// If true, this port should be on a TLS socket (i.e. RTMPS)
+        use_tls: bool,
     },
 }
 

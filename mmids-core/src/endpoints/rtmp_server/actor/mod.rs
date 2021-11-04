@@ -232,6 +232,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 message_channel,
                 stream_id,
                 ip_restrictions: ip_restriction,
+                use_tls,
             } => {
                 self.register_listener(
                     port,
@@ -243,6 +244,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         stream_id,
                     },
                     ip_restriction,
+                    use_tls,
                 );
             }
 
@@ -253,6 +255,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 media_channel,
                 notification_channel,
                 ip_restrictions,
+                use_tls,
             } => {
                 self.register_listener(
                     port,
@@ -264,6 +267,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         media_channel,
                     },
                     ip_restrictions,
+                    use_tls,
                 );
             }
         }
@@ -277,6 +281,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
         socket_sender: UnboundedSender<TcpSocketRequest>,
         listener: ListenerRequest,
         ip_restrictions: IpRestriction,
+        use_tls: bool,
     ) {
         let mut new_port_requested = false;
         let port_map = self.ports.entry(port).or_insert_with(|| {
@@ -284,6 +289,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 rtmp_applications: HashMap::new(),
                 status: PortStatus::Requested,
                 connections: HashMap::new(),
+                tls: use_tls,
             };
 
             new_port_requested = true;
@@ -291,11 +297,36 @@ impl<'a> RtmpServerEndpointActor<'a> {
             port_map
         });
 
+        if port_map.tls != use_tls {
+            error!(
+                "Request to open port {} with tls set to {} failed, as the port is already mapped \
+            with tls set to {}",
+                port, use_tls, port_map.tls
+            );
+
+            match listener {
+                ListenerRequest::Publisher { channel, .. } => {
+                    let _ = channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationFailed);
+                }
+
+                ListenerRequest::Watcher {
+                    notification_channel,
+                    ..
+                } => {
+                    let _ = notification_channel
+                        .send(RtmpEndpointWatcherNotification::WatcherRegistrationFailed);
+                }
+            }
+
+            return;
+        }
+
         if new_port_requested {
             let (sender, receiver) = unbounded_channel();
             let request = TcpSocketRequest::OpenPort {
                 port,
                 response_channel: sender,
+                use_tls,
             };
 
             let _ = socket_sender.send(request);

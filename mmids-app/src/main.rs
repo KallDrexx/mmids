@@ -2,7 +2,7 @@ use log::info;
 use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::endpoints::ffmpeg::start_ffmpeg_endpoint;
 use mmids_core::endpoints::rtmp_server::start_rtmp_server_endpoint;
-use mmids_core::net::tcp::start_socket_manager;
+use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
 use mmids_core::workflows::definitions::WorkflowStepType;
 use mmids_core::workflows::steps::factory::{start_step_factory, FactoryRequest};
 use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStep;
@@ -46,7 +46,32 @@ async fn init(
     config: MmidsConfig,
 ) -> Result<Vec<UnboundedSender<WorkflowRequest>>, Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting all endpoints");
-    let socket_manager = start_socket_manager();
+
+    let cert_path = match config.settings.get("tls_cert_path") {
+        Some(x) => x.clone(),
+        None => None,
+    };
+
+    let cert_password = match config.settings.get("tls_cert_password") {
+        Some(x) => x.clone(),
+        None => None,
+    };
+
+    let tls_options = if let Some(path) = cert_path {
+        if let Some(password) = cert_password {
+            Some(TlsOptions {
+                pfx_file_location: path,
+                cert_password: password,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let socket_manager = start_socket_manager(tls_options);
+
     let rtmp_endpoint = start_rtmp_server_endpoint(socket_manager);
     let step_factory = start_step_factory();
 

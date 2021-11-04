@@ -24,6 +24,7 @@ pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
 pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
 pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
 pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
+pub const RTMPS_FLAG: &'static str = "rtmps";
 
 pub struct RtmpReceiverStep {
     definition: WorkflowStepDefinition,
@@ -91,6 +92,11 @@ impl RtmpReceiverStep {
         definition: &WorkflowStepDefinition,
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     ) -> Result<(Self, FutureList<'a>), Box<dyn std::error::Error + Sync + Send>> {
+        let use_rtmps = match definition.parameters.get(RTMPS_FLAG) {
+            Some(_) => true,
+            None => false,
+        };
+
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(value) => match value.parse::<u16>() {
                 Ok(num) => num,
@@ -101,7 +107,13 @@ impl RtmpReceiverStep {
                 }
             },
 
-            None => 1935,
+            None => {
+                if use_rtmps {
+                    443
+                } else {
+                    1935
+                }
+            }
         };
 
         let app = match definition.parameters.get(APP_PROPERTY_NAME) {
@@ -124,7 +136,7 @@ impl RtmpReceiverStep {
             (true, true) => {
                 return Err(Box::new(
                     StepStartupError::BothDenyAndAllowIpRestrictionsSpecified,
-                ))
+                ));
             }
             (true, false) => IpRestriction::Allow(allowed_ips),
             (false, true) => IpRestriction::Deny(denied_ips),
@@ -155,6 +167,7 @@ impl RtmpReceiverStep {
                 rtmp_stream_key: step.stream_key.clone(),
                 stream_id: None,
                 ip_restrictions: ip_restriction,
+                use_tls: use_rtmps,
             });
 
         Ok((
@@ -279,6 +292,7 @@ impl RtmpReceiverStep {
 }
 
 unsafe impl Send for RtmpReceiverStep {}
+
 unsafe impl Sync for RtmpReceiverStep {}
 
 impl WorkflowStep for RtmpReceiverStep {

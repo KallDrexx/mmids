@@ -158,4 +158,5 @@ pub struct PortMapping {
     pub rtmp_applications: HashMap<String, RtmpAppMapping>,
     pub status: PortStatus,
     pub connections: HashMap<ConnectionId, Connection>,
+    pub tls: bool,
 }

@@ -101,6 +101,7 @@ impl FfmpegPullStep {
             stream_id: None,
             message_channel: sender,
             ip_restrictions: IpRestriction::None,
+            use_tls: false,
         });
 
         let futures = vec![

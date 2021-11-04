@@ -472,6 +472,7 @@ impl FfmpegTranscoder {
                                 port: 1935,
                                 media_channel: media_receiver,
                                 ip_restrictions: IpRestriction::None,
+                                use_tls: false,
                             });
 
                     outputs.futures.push(
@@ -500,6 +501,7 @@ impl FfmpegTranscoder {
                                 stream_id: Some(stream.id.clone()),
                                 message_channel: sender,
                                 ip_restrictions: IpRestriction::None,
+                                use_tls: false,
                             });
 
                     outputs

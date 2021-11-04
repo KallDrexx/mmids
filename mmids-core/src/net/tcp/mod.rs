@@ -12,6 +12,14 @@ pub use socket_manager::start as start_socket_manager;
 #[derive(Debug)]
 pub enum RequestFailureReason {
     PortInUse,
+    InvalidCertificate(String),
+    CertPasswordIncorrect,
+    NoTlsDetailsGiven,
+}
+
+pub struct TlsOptions {
+    pub pfx_file_location: String,
+    pub cert_password: String,
 }
 
 /// Requests by callers to the TCP socket manager
@@ -20,6 +28,9 @@ pub enum TcpSocketRequest {
     OpenPort {
         /// TCP port to be opened
         port: u16,
+
+        /// If the port should be accepting TLS connections or not
+        use_tls: bool,
 
         /// The channel in which responses should be sent.  If the port is successfully opened
         /// then all state changes for the port (such as new connections) will use this channel

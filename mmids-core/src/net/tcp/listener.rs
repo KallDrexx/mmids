@@ -1,13 +1,18 @@
 use super::TcpSocketResponse;
+use crate::net::tcp::TlsOptions;
 use crate::net::ConnectionId;
 use bytes::{Bytes, BytesMut};
 use futures::future::FutureExt;
 use log::{debug, error, info, warn};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio_native_tls::native_tls::Identity;
+use tokio_native_tls::TlsAcceptor;
 use uuid::Uuid;
 
 /// Set of bytes that should be sent over a TCP socket
@@ -25,8 +30,24 @@ pub struct ListenerParams {
     /// The port to listen on
     pub port: u16,
 
+    /// Should this port accept TLS connections
+    pub use_tls: bool,
+
+    /// Options for TLS. Required if use_tls is true
+    pub tls_options: Arc<Option<TlsOptions>>,
+
     /// The channel in which to send notifications of port activity to
     pub response_channel: UnboundedSender<TcpSocketResponse>,
+}
+
+enum ReadSocket {
+    Bare(ReadHalf<TcpStream>),
+    Tls(ReadHalf<tokio_native_tls::TlsStream<TcpStream>>),
+}
+
+enum WriteSocket {
+    Bare(WriteHalf<TcpStream>),
+    Tls(WriteHalf<tokio_native_tls::TlsStream<TcpStream>>),
 }
 
 /// Starts listening for TCP connections on the specified port.  It returns a channel which
@@ -44,7 +65,55 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
     let ListenerParams {
         port,
         response_channel,
+        use_tls,
+        tls_options,
     } = params;
+
+    let tls = if let Some(tls) = tls_options.as_ref() {
+        let mut file = match File::open(&tls.pfx_file_location).await {
+            Ok(file) => file,
+            Err(e) => {
+                error!("Error reading pfx at '{}': {:?}", tls.pfx_file_location, e);
+                return;
+            }
+        };
+
+        let mut file_content = Vec::new();
+        match file.read_to_end(&mut file_content).await {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Failed to open file {}: {:?}", tls.pfx_file_location, e);
+                return;
+            }
+        }
+
+        let identity = match Identity::from_pkcs12(&file_content, tls.cert_password.as_str()) {
+            Ok(identity) => identity,
+            Err(e) => {
+                error!(
+                    "Failed reading cert from '{}': {:?}",
+                    tls.pfx_file_location, e
+                );
+                return;
+            }
+        };
+
+        let tls_acceptor = match native_tls::TlsAcceptor::builder(identity).build() {
+            Ok(x) => x,
+            Err(e) => {
+                error!("Failed to build tls acceptor: {:?}", e);
+                return;
+            }
+        };
+
+        Some(tokio_native_tls::TlsAcceptor::from(tls_acceptor))
+    } else {
+        None
+    };
+
+    let tls = if use_tls { tls } else { None };
+    let tls = Arc::new(tls);
+
     let bind_address = "0.0.0.0:".to_string() + &port.to_string();
     let listener = match TcpListener::bind(bind_address.clone()).await {
         Ok(x) => x,
@@ -66,7 +135,8 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
                         return;
                     }
                 };
-                handle_new_connection(socket, client_info, response_channel.clone(), port);
+
+                tokio::spawn(handle_new_connection(socket, client_info, response_channel.clone(), port, tls.clone()));
             },
 
             _ = disconnect.closed() => {
@@ -77,11 +147,12 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
     debug!("Socket listener for port {} closing", port);
 }
 
-fn handle_new_connection(
+async fn handle_new_connection(
     socket: TcpStream,
     client_info: SocketAddr,
     response_channel: UnboundedSender<TcpSocketResponse>,
     port: u16,
+    tls_acceptor: Arc<Option<TlsAcceptor>>,
 ) {
     let connection_id = ConnectionId(Uuid::new_v4().to_string());
     info!(
@@ -110,7 +181,17 @@ fn handle_new_connection(
         return;
     }
 
-    let (reader, writer) = tokio::io::split(socket);
+    let (reader, writer) = match split_socket(socket, tls_acceptor).await {
+        Ok(x) => x,
+        Err(e) => {
+            error!(
+                "Connection {}: Error splitting socket: {:?}",
+                connection_id, e
+            );
+            return;
+        }
+    };
+
     tokio::spawn(socket_reader(
         connection_id.clone(),
         reader,
@@ -123,14 +204,14 @@ fn handle_new_connection(
 
 async fn socket_reader(
     connection_id: ConnectionId,
-    mut reader: ReadHalf<TcpStream>,
+    mut reader: ReadSocket,
     incoming_sender: UnboundedSender<Bytes>,
     tcp_response_sender: UnboundedSender<TcpSocketResponse>,
 ) {
     let mut buffer = BytesMut::with_capacity(4096);
     loop {
         tokio::select! {
-            bytes_read = reader.read_buf(&mut buffer) => {
+            bytes_read = read_buf(&mut reader, &mut buffer) => {
                 let bytes_read = match bytes_read {
                     Ok(x) => x,
                     Err(e) => {
@@ -165,7 +246,7 @@ async fn socket_reader(
 
 async fn socket_writer(
     connection_id: ConnectionId,
-    mut writer: WriteHalf<TcpStream>,
+    mut writer: WriteSocket,
     mut outgoing_receiver: UnboundedReceiver<OutboundPacket>,
 ) {
     const INITIAL_BACKLOG_THRESHOLD: usize = 100;
@@ -211,7 +292,7 @@ async fn socket_writer(
         let mut dropped_packet_count = 0;
         for packet in send_queue.drain(..) {
             if !packet.can_be_dropped || !drop_optional_packets {
-                if let Err(e) = writer.write_all(packet.bytes.as_ref()).await {
+                if let Err(e) = write_packet(&mut writer, packet).await {
                     error!("Error when writing packet bytes: {:?}", e);
                     return;
                 }
@@ -229,4 +310,36 @@ async fn socket_writer(
     }
 
     info!("Connection {}: writer task closed", connection_id);
+}
+
+async fn split_socket(
+    socket: TcpStream,
+    tls_acceptor: Arc<Option<TlsAcceptor>>,
+) -> Result<(ReadSocket, WriteSocket), Box<dyn std::error::Error + Sync + Send>> {
+    match tls_acceptor.as_ref() {
+        None => {
+            let (reader, writer) = tokio::io::split(socket);
+            Ok((ReadSocket::Bare(reader), WriteSocket::Bare(writer)))
+        }
+
+        Some(tls) => {
+            let tls_stream = tls.accept(socket).await?;
+            let (reader, writer) = tokio::io::split(tls_stream);
+            Ok((ReadSocket::Tls(reader), WriteSocket::Tls(writer)))
+        }
+    }
+}
+
+async fn read_buf(reader: &mut ReadSocket, buffer: &mut BytesMut) -> std::io::Result<usize> {
+    match reader {
+        ReadSocket::Bare(socket) => socket.read_buf(buffer).await,
+        ReadSocket::Tls(socket) => socket.read_buf(buffer).await,
+    }
+}
+
+async fn write_packet(writer: &mut WriteSocket, packet: OutboundPacket) -> std::io::Result<()> {
+    match writer {
+        WriteSocket::Bare(socket) => socket.write_all(packet.bytes.as_ref()).await,
+        WriteSocket::Tls(socket) => socket.write_all(packet.bytes.as_ref()).await,
+    }
 }

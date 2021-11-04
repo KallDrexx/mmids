@@ -225,6 +225,7 @@ impl ExternalStreamReader {
                                 port: 1935,
                                 media_channel: media_receiver,
                                 ip_restrictions: IpRestriction::None,
+                                use_tls: false,
                             });
 
                     outputs.futures.push(
