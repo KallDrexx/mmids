@@ -3,6 +3,7 @@ mod socket_manager;
 
 use super::ConnectionId;
 use bytes::Bytes;
+use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
 pub use listener::OutboundPacket;
@@ -59,6 +60,9 @@ pub enum TcpSocketResponse {
 
         /// Channel the owner can use to send bytes to the client
         outgoing_bytes: mpsc::UnboundedSender<OutboundPacket>,
+
+        /// The socket address the client connected from
+        socket_address: SocketAddr,
     },
 
     Disconnection {

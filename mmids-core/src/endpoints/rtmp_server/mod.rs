@@ -2,7 +2,7 @@ mod actor;
 
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::tcp::TcpSocketRequest;
-use crate::net::ConnectionId;
+use crate::net::{ConnectionId, IpAddress};
 use crate::StreamId;
 use actor::actor_types::RtmpServerEndpointActor;
 use bytes::Bytes;
@@ -37,6 +37,19 @@ pub enum StreamKeyRegistration {
     Exact(String),
 }
 
+/// Specifies if there are any IP address restrictions as part of an RTMP server registration
+#[derive(Debug)]
+pub enum IpRestriction {
+    /// All IP addresses are allowed
+    None,
+
+    /// Only the specified IP addresses are allowed.
+    Allow(Vec<IpAddress>),
+
+    /// All IP addresses are allowed except for the ones specified.
+    Deny(Vec<IpAddress>),
+}
+
 /// Operations the rtmp server endpoint is being requested to make
 #[derive(Debug)]
 pub enum RtmpEndpointRequest {
@@ -60,6 +73,9 @@ pub enum RtmpEndpointRequest {
         /// to correlate media streams that may have been pulled, processed externally, then brought
         /// back in for later workflow steps (e.g. an external transcoding workflow).
         stream_id: Option<StreamId>,
+
+        /// What IP restriction rules should be in place for this registration
+        ip_restrictions: IpRestriction,
     },
 
     /// Requests the RTMP server to allow clients to receive video on the given port, app,
@@ -79,6 +95,9 @@ pub enum RtmpEndpointRequest {
 
         /// The channel that the registrant will send updated media data to the rtmp endpoint on
         media_channel: UnboundedReceiver<RtmpEndpointMediaMessage>,
+
+        /// What IP restriction rules should be in place for this registration
+        ip_restrictions: IpRestriction,
     },
 }
 

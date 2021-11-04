@@ -1,6 +1,6 @@
 use super::external_stream_handler::{ExternalStreamHandler, StreamHandlerFutureWrapper};
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointMediaMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
+    IpRestriction, RtmpEndpointMediaMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,
 };
 use crate::workflows::steps::external_stream_handler::{
@@ -224,6 +224,7 @@ impl ExternalStreamReader {
                                 rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
                                 port: 1935,
                                 media_channel: media_receiver,
+                                ip_restrictions: IpRestriction::None,
                             });
 
                     outputs.futures.push(

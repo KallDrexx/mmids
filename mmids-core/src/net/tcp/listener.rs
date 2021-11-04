@@ -98,6 +98,7 @@ fn handle_new_connection(
         connection_id: connection_id.clone(),
         incoming_bytes: incoming_receiver,
         outgoing_bytes: outgoing_sender,
+        socket_address: client_info,
     };
 
     if let Err(_) = response_channel.send(message) {

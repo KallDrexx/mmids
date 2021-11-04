@@ -2,9 +2,10 @@
 mod tests;
 
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointRequest,
+    IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointRequest,
     RtmpEndpointWatcherNotification, StreamKeyRegistration,
 };
+use crate::net::{IpAddress, IpAddressParseError};
 use crate::utils::hash_map_to_stream_metadata;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::{
@@ -23,6 +24,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 pub const PORT_PROPERTY_NAME: &'static str = "port";
 pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
 pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
+pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
+pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
 
 pub struct RtmpWatchStep {
     definition: WorkflowStepDefinition,
@@ -63,6 +66,16 @@ enum StepStartupError {
         "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
     )]
     InvalidPortSpecified(String),
+
+    #[error("Failed to parse ip address")]
+    InvalidIpAddressSpecified(#[from] IpAddressParseError),
+
+    #[error(
+        "Both {} and {} were specified, but only one is allowed",
+        IP_ALLOW_PROPERTY_NAME,
+        IP_DENY_PROPERTY_NAME
+    )]
+    BothDenyAndAllowIpRestrictionsSpecified,
 }
 
 impl RtmpWatchStep {
@@ -113,6 +126,22 @@ impl RtmpWatchStep {
             StreamKeyRegistration::Exact(stream_key.to_string())
         };
 
+        let allowed_ips = IpAddress::parse_comma_delimited_list(
+            definition.parameters.get(IP_ALLOW_PROPERTY_NAME),
+        )?;
+        let denied_ips = IpAddress::parse_comma_delimited_list(
+            definition.parameters.get(IP_DENY_PROPERTY_NAME),
+        )?;
+        let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
+            (true, true) => {
+                return Err(Box::new(
+                    StepStartupError::BothDenyAndAllowIpRestrictionsSpecified,
+                ))
+            }
+            (true, false) => IpRestriction::Allow(allowed_ips),
+            (false, true) => IpRestriction::Deny(denied_ips),
+            (false, false) => IpRestriction::None,
+        };
 
         let (media_sender, media_receiver) = unbounded_channel();
 
@@ -136,6 +165,7 @@ impl RtmpWatchStep {
                 rtmp_stream_key: step.stream_key.clone(),
                 media_channel: media_receiver,
                 notification_channel: notification_sender,
+                ip_restrictions: ip_restriction,
             });
 
         Ok((
@@ -178,7 +208,9 @@ impl RtmpWatchStep {
                     // it as the configured stream key
                     let stream_name = match &self.stream_key {
                         StreamKeyRegistration::Any => stream_name,
-                        StreamKeyRegistration::Exact(configured_stream_name) => configured_stream_name,
+                        StreamKeyRegistration::Exact(configured_stream_name) => {
+                            configured_stream_name
+                        }
                     };
 
                     info!("New incoming stream notification found for stream id {:?} and stream name '{}",

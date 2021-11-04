@@ -2,7 +2,7 @@ use super::connection_handler::{ConnectionRequest, ConnectionResponse};
 use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
+    IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
 };
 
 use crate::net::tcp::TcpSocketResponse;
@@ -12,6 +12,7 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub enum FutureResult {
@@ -75,10 +76,12 @@ pub struct PublishingRegistrant {
     pub id: PublisherRegistrantId,
     pub response_channel: UnboundedSender<RtmpEndpointPublisherMessage>,
     pub stream_id: Option<StreamId>,
+    pub ip_restrictions: IpRestriction,
 }
 
 pub struct WatcherRegistrant {
     pub response_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
+    pub ip_restrictions: IpRestriction,
 }
 
 pub struct VideoSequenceHeader {
@@ -148,6 +151,7 @@ pub enum ConnectionState {
 pub struct Connection {
     pub response_channel: UnboundedSender<ConnectionResponse>,
     pub state: ConnectionState,
+    pub socket_address: SocketAddr,
 }
 
 pub struct PortMapping {

@@ -3,7 +3,7 @@ use crate::endpoints::ffmpeg::{
     H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
 };
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
+    IpRestriction, RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
     RtmpEndpointWatcherNotification, StreamKeyRegistration,
 };
 use crate::utils::stream_metadata_to_hash_map;
@@ -471,6 +471,7 @@ impl FfmpegTranscoder {
                                 rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
                                 port: 1935,
                                 media_channel: media_receiver,
+                                ip_restrictions: IpRestriction::None,
                             });
 
                     outputs.futures.push(
@@ -498,6 +499,7 @@ impl FfmpegTranscoder {
                                 rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
                                 stream_id: Some(stream.id.clone()),
                                 message_channel: sender,
+                                ip_restrictions: IpRestriction::None,
                             });
 
                     outputs

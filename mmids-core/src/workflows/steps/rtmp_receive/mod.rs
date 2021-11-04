@@ -2,9 +2,9 @@
 mod tests;
 
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
+    IpRestriction, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
 };
-use crate::net::ConnectionId;
+use crate::net::{ConnectionId, IpAddress, IpAddressParseError};
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::{
     CreateFactoryFnResult, FutureList, StepFutureResult, StepInputs, StepOutputs, StepStatus,
@@ -22,6 +22,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 pub const PORT_PROPERTY_NAME: &'static str = "port";
 pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
 pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
+pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
+pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
 
 pub struct RtmpReceiverStep {
     definition: WorkflowStepDefinition,
@@ -61,6 +63,16 @@ enum StepStartupError {
         "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
     )]
     InvalidPortSpecified(String),
+
+    #[error("Failed to parse ip address")]
+    InvalidIpAddressSpecified(#[from] IpAddressParseError),
+
+    #[error(
+        "Both {} and {} were specified, but only one is allowed",
+        IP_ALLOW_PROPERTY_NAME,
+        IP_DENY_PROPERTY_NAME
+    )]
+    BothDenyAndAllowIpRestrictionsSpecified,
 }
 
 impl RtmpReceiverStep {
@@ -102,6 +114,23 @@ impl RtmpReceiverStep {
             None => return Err(Box::new(StepStartupError::NoStreamKeySpecified)),
         };
 
+        let allowed_ips = IpAddress::parse_comma_delimited_list(
+            definition.parameters.get(IP_ALLOW_PROPERTY_NAME),
+        )?;
+        let denied_ips = IpAddress::parse_comma_delimited_list(
+            definition.parameters.get(IP_DENY_PROPERTY_NAME),
+        )?;
+        let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
+            (true, true) => {
+                return Err(Box::new(
+                    StepStartupError::BothDenyAndAllowIpRestrictionsSpecified,
+                ))
+            }
+            (true, false) => IpRestriction::Allow(allowed_ips),
+            (false, true) => IpRestriction::Deny(denied_ips),
+            (false, false) => IpRestriction::None,
+        };
+
         let step = RtmpReceiverStep {
             definition: definition.clone(),
             status: StepStatus::Created,
@@ -125,6 +154,7 @@ impl RtmpReceiverStep {
                 rtmp_app: step.rtmp_app.clone(),
                 rtmp_stream_key: step.stream_key.clone(),
                 stream_id: None,
+                ip_restrictions: ip_restriction,
             });
 
         Ok((

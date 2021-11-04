@@ -5,7 +5,7 @@ use super::{
     RtmpEndpointMediaData, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
 };
 use crate::endpoints::rtmp_server::actor::connection_handler::ConnectionResponse;
-use crate::endpoints::rtmp_server::RtmpEndpointWatcherNotification;
+use crate::endpoints::rtmp_server::{IpRestriction, RtmpEndpointWatcherNotification};
 use crate::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use crate::net::ConnectionId;
 use crate::StreamId;
@@ -16,6 +16,7 @@ use futures::StreamExt;
 use log::{error, info, warn};
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
@@ -230,6 +231,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 rtmp_stream_key,
                 message_channel,
                 stream_id,
+                ip_restrictions: ip_restriction,
             } => {
                 self.register_listener(
                     port,
@@ -240,6 +242,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         channel: message_channel,
                         stream_id,
                     },
+                    ip_restriction,
                 );
             }
 
@@ -249,6 +252,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 rtmp_stream_key,
                 media_channel,
                 notification_channel,
+                ip_restrictions,
             } => {
                 self.register_listener(
                     port,
@@ -259,6 +263,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         notification_channel,
                         media_channel,
                     },
+                    ip_restrictions,
                 );
             }
         }
@@ -271,6 +276,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
         stream_key: StreamKeyRegistration,
         socket_sender: UnboundedSender<TcpSocketRequest>,
         listener: ListenerRequest,
+        ip_restrictions: IpRestriction,
     ) {
         let mut new_port_requested = false;
         let port_map = self.ports.entry(port).or_insert_with(|| {
@@ -357,6 +363,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         id: id.clone(),
                         response_channel: channel.clone(),
                         stream_id,
+                        ip_restrictions,
                     },
                 );
 
@@ -429,6 +436,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     stream_key.clone(),
                     WatcherRegistrant {
                         response_channel: notification_channel.clone(),
+                        ip_restrictions,
                     },
                 );
 
@@ -527,6 +535,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     connection_id,
                     outgoing_bytes,
                     incoming_bytes,
+                    socket_address,
                 } => {
                     let (request_sender, request_receiver) = unbounded_channel();
                     let (response_sender, response_receiver) = unbounded_channel();
@@ -542,6 +551,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         Connection {
                             response_channel: response_sender,
                             state: ConnectionState::None,
+                            socket_address,
                         },
                     );
 
@@ -682,6 +692,23 @@ fn handle_connection_request_watch(
         }
     };
 
+    if !is_ip_allowed(&connection.socket_address, &registrant.ip_restrictions) {
+        error!(
+            "Connection {} requested watching to '{}/{}', but the client's ip address of '{}' \
+        is not allowed",
+            connection_id,
+            rtmp_app,
+            stream_key,
+            connection.socket_address.ip()
+        );
+
+        let _ = connection
+            .response_channel
+            .send(ConnectionResponse::RequestRejected);
+
+        return;
+    }
+
     let active_stream_key = application
         .active_stream_keys
         .entry(stream_key.clone())
@@ -821,6 +848,23 @@ fn handle_connection_request_publish(
         let _ = connection
             .response_channel
             .send(ConnectionResponse::RequestRejected);
+        return;
+    }
+
+    if !is_ip_allowed(&connection.socket_address, &registrant.ip_restrictions) {
+        error!(
+            "Connection {} requested publishing to '{}/{}', but the client's ip address of '{}' \
+        is not allowed",
+            connection_id,
+            rtmp_app,
+            stream_key,
+            connection.socket_address.ip()
+        );
+
+        let _ = connection
+            .response_channel
+            .send(ConnectionResponse::RequestRejected);
+
         return;
     }
 
@@ -1081,4 +1125,25 @@ mod internal_futures {
             },
         }
     }
+}
+
+fn is_ip_allowed(client_socket: &SocketAddr, ip_restrictions: &IpRestriction) -> bool {
+    match ip_restrictions {
+        IpRestriction::None => return true,
+        IpRestriction::Allow(allowed_ips) => {
+            if let SocketAddr::V4(client_ip) = client_socket {
+                return allowed_ips.into_iter().any(|ip| ip.matches(client_ip.ip()));
+            }
+
+            return false; // ipv6 clients not supported atm
+        }
+
+        IpRestriction::Deny(denied_ips) => {
+            if let SocketAddr::V4(client_ip) = client_socket {
+                return denied_ips.into_iter().all(|ip| !ip.matches(client_ip.ip()));
+            }
+
+            return false; // ipv6
+        }
+    };
 }

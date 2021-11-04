@@ -3,7 +3,7 @@ use crate::endpoints::ffmpeg::{
     TargetParams, VideoTranscodeParams,
 };
 use crate::endpoints::rtmp_server::{
-    RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
+    IpRestriction, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
 };
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::{
@@ -100,6 +100,7 @@ impl FfmpegPullStep {
             rtmp_stream_key: StreamKeyRegistration::Exact(stream_name),
             stream_id: None,
             message_channel: sender,
+            ip_restrictions: IpRestriction::None,
         });
 
         let futures = vec![
