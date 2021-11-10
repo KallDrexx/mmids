@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use log::{error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub enum WorkflowRequest {}
@@ -43,6 +43,7 @@ struct Actor<'a> {
     steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep>>,
     active_steps: Vec<u64>,
     pending_steps: Vec<u64>,
+    steps_waiting_for_creation: HashSet<u64>,
     futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
     step_inputs: StepInputs,
     step_outputs: StepOutputs<'a>,
@@ -56,6 +57,7 @@ impl<'a> Actor<'a> {
     ) -> Self {
         let futures = FuturesUnordered::new();
         let mut pending_steps = Vec::new();
+        let mut steps_waiting_for_creation = HashSet::new();
         for step in &definition.steps {
             info!(
                 "Workflow {}: step defined with type {} and id {}",
@@ -64,6 +66,7 @@ impl<'a> Actor<'a> {
                 step.get_id()
             );
             pending_steps.push(step.get_id());
+            steps_waiting_for_creation.insert(step.get_id());
 
             let (factory_sender, factory_receiver) = unbounded_channel();
             let _ = step_factory.send(FactoryRequest::CreateInstance {
@@ -82,6 +85,7 @@ impl<'a> Actor<'a> {
             steps_by_definition_id: HashMap::new(),
             active_steps: Vec::new(),
             pending_steps,
+            steps_waiting_for_creation,
             step_inputs: StepInputs::new(),
             step_outputs: StepOutputs::new(),
         }
@@ -158,6 +162,8 @@ impl<'a> Actor<'a> {
             "Workflow {}: Successfully got created instance of step id {}",
             self.name, step_id
         );
+
+        self.steps_waiting_for_creation.remove(&step_id);
         self.steps_by_definition_id
             .insert(step.get_definition().get_id(), step);
 
@@ -250,17 +256,25 @@ impl<'a> Actor<'a> {
         let mut any_pending = false;
         for id in &self.pending_steps {
             let step = match self.steps_by_definition_id.get(id) {
-                Some(x) => x,
+                Some(x) => Some(x),
                 None => {
-                    error!("Workflow {}: workflow had step id {} pending but this step was not defined", self.name, id);
-                    return; // TODO: set workflow in error state
+                    if self.steps_waiting_for_creation.contains(&id) {
+                        None
+                    } else {
+                        error!("Workflow {}: workflow had step id {} pending but this step was not defined", self.name, id);
+                        return; // TODO: set workflow in error state
+                    }
                 }
             };
 
-            match step.get_status() {
-                StepStatus::Created => any_pending = true,
-                StepStatus::Active => (),
-                StepStatus::Error => return, // TODO: Set workflow in error state
+            if let Some(step) = step {
+                match step.get_status() {
+                    StepStatus::Created => any_pending = true,
+                    StepStatus::Active => (),
+                    StepStatus::Error => return, // TODO: Set workflow in error state
+                }
+            } else {
+                any_pending = true // the step is still waiting to be instantiated by the factory
             }
         }
 

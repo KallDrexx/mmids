@@ -142,8 +142,11 @@ impl WorkflowStep for FfmpegHlsStep {
         }
 
         if self.stream_reader.status == StepStatus::Error {
-            error!("Step {}: external stream reader is in error status, so putting the step in \
-            in error status as well.", self.definition.get_id());
+            error!(
+                "Step {}: external stream reader is in error status, so putting the step in \
+            in error status as well.",
+                self.definition.get_id()
+            );
 
             self.status = StepStatus::Error;
             return;
