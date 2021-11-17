@@ -1,3 +1,18 @@
+//! This endpoint acts as a server for RTMP clients that want to publish or watch RTMP live streams.
+//! Workflow steps send a message requesting to allow RTMP publishers or watchers for specific
+//! port, RTMP application and stream key combinations.  The RTMP server endpoint will register the
+//! specified port with the networking infrastructure for listening for connections, and any
+//! networked traffic over that port will be forwarded to this endpoint.
+//!
+//! It will then perform handshaking and all other RTMP protocol actions, disconnecting clients if
+//! they don't conform to the RTMP protocol correctly, or if they attempt to publish or watch an
+//! application name and stream key combination that isn't actively registered.
+//!
+//! Incoming publish actions (such as new metadata, media packets, etc...) are passed to the workflow
+//! steps that were registered for that application/stream key combination.  Likewise, when the
+//! endpoint receives media from workflow steps it will route that media to the correct RTMP watcher
+//! clients
+
 mod actor;
 
 use crate::codecs::{AudioCodec, VideoCodec};
@@ -12,6 +27,8 @@ use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
+/// Starts a new RTMP server endpoint, returning a channel that can be used to send notifications
+/// and requests to it.
 pub fn start_rtmp_server_endpoint(
     socket_request_sender: UnboundedSender<TcpSocketRequest>,
 ) -> UnboundedSender<RtmpEndpointRequest> {

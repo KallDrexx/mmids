@@ -4,11 +4,14 @@ use pest::Parser;
 use std::collections::HashMap;
 use thiserror::Error;
 
+/// Configuration for a Mmids system.  Defines the settings and any workflows that should be
+/// active.
 pub struct MmidsConfig {
     pub settings: HashMap<String, Option<String>>,
     pub workflows: HashMap<String, WorkflowDefinition>,
 }
 
+/// Errors that can occur when parsing a configuration entry
 #[derive(Error, Debug)]
 pub enum ConfigParseError {
     #[error("The config provided could not be parsed")]
@@ -25,6 +28,7 @@ pub enum ConfigParseError {
 #[grammar = "config.pest"]
 struct RawConfigParser;
 
+/// Parses configuration from a text block.
 pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
     let mut config = MmidsConfig {
         settings: HashMap::new(),

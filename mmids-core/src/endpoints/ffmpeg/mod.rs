@@ -1,3 +1,7 @@
+//! Endpoint used to manage a local ffmpeg executable.  Workflow steps can request FFMPEG be run
+//! with specific parameters, and the endpoint will run it.  If the ffmpeg process stops before
+//! being requested to stop, then the endpoint will ensure it gets re-run.
+
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -11,31 +15,51 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use uuid::Uuid;
 
+/// Requests of ffmpeg operations
 pub enum FfmpegEndpointRequest {
+    /// Request that ffmpeg should be started with the specified parameters
     StartFfmpeg {
+        /// A unique identifier to use for this ffmpeg operation.  Any further requests that should
+        /// affect this ffmpeg operation should use this same identifier
         id: Uuid,
+
+        /// The channel that the endpoint will send notifications on to notify the requester of
+        /// changes in the ffmpeg operation.
         notification_channel: UnboundedSender<FfmpegEndpointNotification>,
+
+        /// What parameters ffmpeg should be run with
         params: FfmpegParams,
     },
 
+    /// Requests that the specified ffmpeg operation should be stopped
     StopFfmpeg {
+        /// The identifier of the existing ffmpeg operation
         id: Uuid,
     },
 }
 
+/// Notifications of what's happening with an ffmpeg operation
 pub enum FfmpegEndpointNotification {
     FfmpegStarted,
     FfmpegStopped,
     FfmpegFailedToStart { cause: FfmpegFailureCause },
 }
 
+/// Reasons that ffmpeg may fail to start
 #[derive(Debug)]
 pub enum FfmpegFailureCause {
+    /// The log file for ffmpeg's standard output could not be created
     LogFileCouldNotBeCreated(String),
+
+    /// ffmpeg was requested to be started with an identifier that matches an ffmpeg operation
+    /// that's already being run.
     DuplicateId(Uuid),
+
+    /// The ffmpeg process failed to start due to an issue with the executable itself
     FfmpegFailedToStart,
 }
 
+/// Error that occurs when starting the ffmpeg endpoint
 #[derive(Error, Debug)]
 pub enum FfmpegEndpointStartError {
     #[error("The ffmpeg executable '{0}' was not found")]
@@ -45,6 +69,7 @@ pub enum FfmpegEndpointStartError {
     LogDirectoryFailure(#[from] std::io::Error),
 }
 
+/// H264 presets
 #[derive(Clone, Debug)]
 pub enum H264Preset {
     UltraFast,
@@ -58,36 +83,50 @@ pub enum H264Preset {
     VerySlow,
 }
 
+/// Video transcode instructions
 #[derive(Clone, Debug)]
 pub enum VideoTranscodeParams {
     Copy,
     H264 { preset: H264Preset },
 }
 
+/// Audio transcode instructions
 #[derive(Clone, Debug)]
 pub enum AudioTranscodeParams {
     Copy,
     Aac,
 }
 
+/// Where should ffmpeg send the media
 #[derive(Clone, Debug)]
 pub enum TargetParams {
+    /// Send the media stream to an RTMP server
     Rtmp {
         url: String,
     },
+
+    /// Save the media stream as an HLS playlist
     Hls {
+        /// The directory the playlist should be saved to.
         path: String,
+
+        /// How long (in seconds) should each segment be
         segment_length: u16,
+
+        /// The maximum number of segments that should be in the playlist.  If none is specified
+        /// than ffmpeg's default will be used
         max_entries: Option<u16>,
     },
 }
 
+/// The dimensions video should be scaled to
 #[derive(Clone, Debug)]
 pub struct VideoScale {
     pub width: u16,
     pub height: u16,
 }
 
+/// Parameters to pass to the ffmpeg process
 #[derive(Clone, Debug)]
 pub struct FfmpegParams {
     pub read_in_real_time: bool,
@@ -99,6 +138,8 @@ pub struct FfmpegParams {
     pub target: TargetParams,
 }
 
+/// Starts a new ffmpeg endpoint, and returns the channel in which the newly created endpoint
+/// can be communicated with
 pub fn start_ffmpeg_endpoint(
     ffmpeg_exe_path: String,
 ) -> Result<UnboundedSender<FfmpegEndpointRequest>, FfmpegEndpointStartError> {

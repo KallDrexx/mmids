@@ -1,6 +1,8 @@
 use rml_rtmp::sessions::StreamMetadata;
 use std::collections::HashMap;
 
+/// Takes items from an RTMP stream metadata message and maps them to standardized key/value
+/// entries in a hash map.
 pub fn stream_metadata_to_hash_map(metadata: StreamMetadata) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
@@ -51,6 +53,7 @@ pub fn stream_metadata_to_hash_map(metadata: StreamMetadata) -> HashMap<String, 
     map
 }
 
+/// Attempts to extract RTMP stream metadata values from a hash map
 pub fn hash_map_to_stream_metadata(properties: &HashMap<String, String>) -> StreamMetadata {
     let mut metadata = StreamMetadata::new();
     if let Some(video_codec_id) = properties.get("videocodecid") {

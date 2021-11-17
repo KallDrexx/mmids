@@ -1,3 +1,6 @@
+//! A TCP socket manager actor that allows other systems to request TCP connections.  The socket
+//! manager will manage listeners for different ports, accept connections, unwrap SSL sessions (if
+//! requested), and pass networked data to requesters.
 mod listener;
 mod socket_manager;
 
@@ -9,14 +12,25 @@ use tokio::sync::mpsc;
 pub use listener::OutboundPacket;
 pub use socket_manager::start as start_socket_manager;
 
+/// Reasons why the request to listen for TCP connections can fail
 #[derive(Debug)]
 pub enum RequestFailureReason {
+    /// The port being requested has already been opened for another requester
     PortInUse,
+
+    /// A TLS port was requested to be opened, but the certificate could not be opened
     InvalidCertificate(String),
+
+    /// A TLS port was requested to be opened, but the password provided did not unlock the
+    /// provided certificate.
     CertPasswordIncorrect,
+
+    /// A TLS port was requested to be opened, but the TCP socket manager was not given any
+    /// details required to accept TLS sessions.
     NoTlsDetailsGiven,
 }
 
+/// Options required for TLS session handling
 pub struct TlsOptions {
     pub pfx_file_location: String,
     pub cert_password: String,
@@ -76,7 +90,9 @@ pub enum TcpSocketResponse {
         socket_address: SocketAddr,
     },
 
+    /// Notification that a client has disconnected from a TCP port
     Disconnection {
+        /// Unique identifier of the connection that disconnected
         connection_id: ConnectionId,
     },
 }

@@ -1,3 +1,5 @@
+//! Networking layer for Mmids applications
+
 use cidr_utils::cidr::{IpCidr, Ipv4Cidr};
 use std::fmt::Formatter;
 use std::net::Ipv4Addr;
@@ -5,6 +7,8 @@ use thiserror::Error;
 
 pub mod tcp;
 
+/// A unique identifier for any given TCP connection, or unique UDP client.  If a TCP client
+/// disconnects and reconnects it will be seen with a brand new connection id
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct ConnectionId(pub String);
 
@@ -20,12 +24,14 @@ impl PartialEq<Self> for ConnectionId {
     }
 }
 
+/// Enumeration to make handling ip addresses vs subnets easier
 #[derive(Debug)]
 pub enum IpAddress {
     Exact(Ipv4Addr),
     Cidr(Ipv4Cidr),
 }
 
+/// Error when a given ip address or subnet could not be parsed from a given input
 #[derive(Error, Debug)]
 pub enum IpAddressParseError {
     #[error("The value '{0}' was not a valid ip address or cidr value")]
@@ -33,6 +39,10 @@ pub enum IpAddressParseError {
 }
 
 impl IpAddress {
+    /// Checks if the other exact ip address is a match for the current ip address specification.
+    /// An address is a match if the current ip address is an exact one and both are exactly equal,
+    /// or if the current ip address is a CIDR subnet mask and the other ip address is contained
+    /// within.
     pub fn matches(&self, other_address: &Ipv4Addr) -> bool {
         match self {
             IpAddress::Exact(self_address) => self_address == other_address,
