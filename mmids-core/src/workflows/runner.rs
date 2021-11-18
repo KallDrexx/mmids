@@ -10,8 +10,10 @@ use log::{error, info, warn};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
+/// Requests that can be made to an actively running workflow
 pub enum WorkflowRequest {}
 
+/// Starts the execution of a workflow with the specified definition
 pub fn start(
     definition: WorkflowDefinition,
     step_factory: UnboundedSender<FactoryRequest>,

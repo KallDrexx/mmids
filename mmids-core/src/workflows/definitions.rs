@@ -2,15 +2,18 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+/// Identifier representing the type of the workflow step being defined
 #[derive(Clone, Hash)]
 pub struct WorkflowStepType(pub String);
 
+/// The definition of a workflow step and any parameters it may be using
 #[derive(Clone)]
 pub struct WorkflowStepDefinition {
     pub step_type: WorkflowStepType,
     pub parameters: HashMap<String, String>,
 }
 
+/// The definition of a workflow and the steps (in order) it contains
 #[derive(Clone)]
 pub struct WorkflowDefinition {
     pub name: String,

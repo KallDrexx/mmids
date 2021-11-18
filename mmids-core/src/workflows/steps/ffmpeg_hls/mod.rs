@@ -1,3 +1,8 @@
+//! This step utilizes ffmpeg to create an HLS playlist.
+//!
+//! Media packets that are received from previous steps are passed to the RTMP endpoint for ffmpeg
+//! consumption, and then passed on to the next step as-is.
+
 use crate::endpoints::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,
 };

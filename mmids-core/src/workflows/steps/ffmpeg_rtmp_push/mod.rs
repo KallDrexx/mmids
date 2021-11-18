@@ -1,3 +1,9 @@
+//! This step utilizes the ffmpeg endpoint to send media to an external system, such as another
+//! RTMP server.
+//!
+//! Any incoming media packets are passed to the rtmp endpoint for sending to ffmpeg, and then
+//! passed along as is for the next workflow step.
+
 use super::external_stream_reader::ExternalStreamReader;
 use crate::endpoints::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,

@@ -1,3 +1,16 @@
+//! A workflow step that that utilizes the ffmpeg executable to transcode media streams.  When a
+//! new stream comes into the step, it will coordinate with the RTMP server endpoint to provision
+//! a special app/stream key combination to push a video stream out and another app/stream key
+//! combination to receive the transcoded video stream back.
+//!
+//! It will then request the ffmpeg endpoint to pull video from the output rtmp location, how
+//! ffmpeg should transcode the video, and to send the resulting video back.  The transcoded media
+//! is then passed to onto the next step.
+//!
+//! Media notifications that this step receives are passed to the RTMP endpoint but are not
+//! passed along to the next step.  When the step receives transcoded media it will then pass those
+//! to the next step.
+
 use crate::endpoints::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams,
     H264Preset, TargetParams, VideoScale, VideoTranscodeParams,

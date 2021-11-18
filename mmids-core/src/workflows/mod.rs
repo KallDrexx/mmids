@@ -1,3 +1,8 @@
+//! A workflow represents a single media pipeline.  Each workflow contains one or more steps that
+//! can either receive video, transform video, or send video to other sources.  Media data
+//! transitions from one step to the next in a linear fashion based on the order in which they
+//! were defined.
+
 pub mod definitions;
 mod runner;
 pub mod steps;
@@ -61,6 +66,7 @@ pub enum MediaNotificationContent {
 }
 
 impl MediaNotificationContent {
+    /// Creates an RTMP representation of the media data from the specified media content
     pub fn to_rtmp_media_data(&self) -> Option<RtmpEndpointMediaData> {
         match self {
             MediaNotificationContent::StreamDisconnected => return None,

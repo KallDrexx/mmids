@@ -1,3 +1,10 @@
+//! This workflow step utilizes ffmpeg to read video from an external source.  The external source
+//! can be a remote RTMP server or a file on the file system.  If ffmpeg closes (such as when the
+//! video file has been fully streamed) then the ffmpeg will restart until the workflow is
+//! removed.
+//!
+//! Media packets that come in from previous steps are ignored.
+
 use crate::endpoints::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams,
     TargetParams, VideoTranscodeParams,

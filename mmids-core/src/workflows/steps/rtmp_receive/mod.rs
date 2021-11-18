@@ -1,3 +1,8 @@
+//! The RTMP Receive step registers with the RTMP server endpoint to allow publishers to connect with
+//! the specified port, application name, and stream key combination.  Any media packets that
+//! RTMP publishers send in will be sent to the next steps.
+//!
+//! All media packets that come in from previous workflow steps are ignored.
 #[cfg(test)]
 mod tests;
 

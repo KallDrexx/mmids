@@ -1,3 +1,5 @@
+//! Workflow steps are individual actions that can be taken on media as part of a media pipeline.
+
 mod external_stream_handler;
 mod external_stream_reader;
 pub mod factory;
@@ -17,6 +19,8 @@ use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
 use futures::future::BoxFuture;
 
+/// Represents the result of a future for a workflow step.  It is expected that the workflow step
+/// will downcast this result into a struct that it owns.
 pub trait StepFutureResult: Downcast {}
 impl_downcast!(StepFutureResult);
 
@@ -28,15 +32,26 @@ pub type StepCreationResult = Result<
 pub type CreateFactoryFnResult =
     Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>;
 
+/// Various statuses of an individual step
 #[derive(Clone, Debug, PartialEq)]
 pub enum StepStatus {
+    /// The step has been created but it is not yet ready to handle media
     Created,
+
+    /// The step is fully active and ready for handling media
     Active,
+
+    /// The step has encountered an unrecoverable error and can no longer handle media or
+    /// notifications.  It will likely have to be recreated.
     Error,
 }
 
+/// Inputs to be passed in for execution of a workflow step.
 pub struct StepInputs {
+    /// Media notifications that the step may be interested in
     pub media: Vec<MediaNotification>,
+
+    /// Any resolved futures that are specific to this step
     pub notifications: Vec<Box<dyn StepFutureResult>>,
 }
 
@@ -54,8 +69,12 @@ impl StepInputs {
     }
 }
 
+/// Resulting outputs that come from executing a workflow step.
 pub struct StepOutputs<'a> {
+    /// Media notifications that the workflow step intends to pass to the next workflow step
     pub media: Vec<MediaNotification>,
+
+    /// Any futures the workflow should track for this step
     pub futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
 }
 
@@ -73,6 +92,7 @@ impl<'a> StepOutputs<'a> {
     }
 }
 
+/// Represents a workflow step that can be executed
 pub trait WorkflowStep {
     fn get_status(&self) -> &StepStatus;
     fn get_definition(&self) -> &WorkflowStepDefinition;

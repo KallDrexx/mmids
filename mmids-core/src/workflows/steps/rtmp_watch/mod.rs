@@ -1,3 +1,17 @@
+//! The RTMP watch step registers with the RTMP server endpoint to allow for RTMP clients to connect
+//! and watch media streams based on the specified port, application name, and stream key
+//! combinations.  When the workflow step is passed in media notifications it passes them to
+//! the RTMP endpoint for distribution for waiting clients.
+//!
+//! When a stream key of `*` is specified, this allows for RTMP clients to connect on any stream key
+//! for the rtmp application to watch video.  Media packets will be routed to clients that connected
+//! on stream key that matches the name of the stream in the pipeline.
+//!
+//! If an exact stream key is configured, then the first media stream that comes into the step will
+//! be surfaced on that stream key.
+//!
+//! All media notifications that are passed into this step are passed onto the next step.
+
 #[cfg(test)]
 mod tests;
 
