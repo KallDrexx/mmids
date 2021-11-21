@@ -13,11 +13,11 @@ use actor_types::*;
 use connection_handler::{ConnectionRequest, RtmpServerConnectionHandler};
 use futures::future::FutureExt;
 use futures::StreamExt;
-use log::{error, info, warn};
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 impl<'a> RtmpServerEndpointActor<'a> {
@@ -273,6 +273,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
         }
     }
 
+    #[instrument(skip(self, socket_sender, listener))]
     fn register_listener(
         &mut self,
         port: u16,
@@ -500,6 +501,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn handle_socket_response(&mut self, port: u16, response: TcpSocketResponse) {
         let mut remove_port = false;
         {
@@ -608,6 +610,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn handle_connection_handler_request(
         &mut self,
         port: u16,
@@ -661,6 +664,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
     }
 }
 
+#[instrument(skip(port_map))]
 fn handle_connection_request_watch(
     connection_id: ConnectionId,
     port_map: &mut PortMapping,
@@ -797,6 +801,7 @@ fn handle_connection_request_watch(
         });
 }
 
+#[instrument(skip(port_map))]
 fn handle_connection_request_publish(
     connection_id: &ConnectionId,
     port_map: &mut PortMapping,
@@ -927,6 +932,7 @@ fn handle_connection_request_publish(
         });
 }
 
+#[instrument(skip(port_map))]
 fn handle_connection_request_connect_to_app(
     connection_id: &ConnectionId,
     port_map: &mut PortMapping,
@@ -961,6 +967,7 @@ fn handle_connection_request_connect_to_app(
     let _ = connection.response_channel.send(response);
 }
 
+#[instrument(skip(port_map))]
 fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut PortMapping) {
     let connection = match port_map.connections.remove(&connection_id) {
         Some(x) => x,

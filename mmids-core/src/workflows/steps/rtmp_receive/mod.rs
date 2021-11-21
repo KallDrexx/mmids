@@ -18,11 +18,11 @@ use crate::workflows::steps::{
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
-use log::{error, info};
 use std::collections::HashMap;
 use std::time::Duration;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info};
 
 pub const PORT_PROPERTY_NAME: &'static str = "port";
 pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
@@ -207,8 +207,10 @@ impl RtmpReceiverStep {
                 stream_key,
             } => {
                 info!(
-                    "Rtmp receive step seen new publisher: {:?}, {:?}, {:?}",
-                    stream_id, connection_id, stream_key
+                    stream_id = ?stream_id,
+                    connection_id = ?connection_id,
+                    stream_key = %stream_key,
+                    "Rtmp receive step seen new publisher: {:?}, {:?}, {:?}", stream_id, connection_id, stream_key
                 );
 
                 self.connection_stream_id_map
@@ -226,7 +228,11 @@ impl RtmpReceiverStep {
                 match self.connection_stream_id_map.remove(&connection_id) {
                     None => (),
                     Some(stream_id) => {
-                        info!("Rtmp receive step notified that connection {:?} is no longer publishing stream {:?}", connection_id, stream_id);
+                        info!(
+                            stream_id = ?stream_id,
+                            connection_id = ?connection_id,
+                            "Rtmp receive step notified that connection {:?} is no longer publishing stream {:?}", connection_id, stream_id
+                        );
 
                         outputs.media.push(MediaNotification {
                             stream_id,

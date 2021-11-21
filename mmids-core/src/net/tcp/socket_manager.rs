@@ -4,10 +4,10 @@ use crate::net::tcp::{RequestFailureReason, TlsOptions};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
-use log::{debug, error, info};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{debug, error, info};
 
 /// Starts a new instance of a socket manager task.  A socket manager can be requested to open
 /// ports on behalf of another system.  If the port is successfully opened it will begin listening
@@ -96,8 +96,8 @@ impl<'a> SocketManager<'a> {
             } => {
                 if use_tls && tls_options.as_ref().is_none() {
                     error!(
-                        "Request to open port {} with tls, but we have no tls options",
-                        port
+                        port = port,
+                        "Request to open port with tls, but we have no tls options"
                     );
                     let _ = response_channel.send(TcpSocketResponse::RequestDenied {
                         reason: RequestFailureReason::NoTlsDetailsGiven,
@@ -107,14 +107,14 @@ impl<'a> SocketManager<'a> {
                 }
 
                 if self.open_ports.contains_key(&port) {
-                    debug!("Port {} is already in use!", port);
+                    debug!(port = port, "Port is already in use!");
                     let message = TcpSocketResponse::RequestDenied {
                         reason: RequestFailureReason::PortInUse,
                     };
 
                     let _ = response_channel.send(message);
                 } else {
-                    debug!("TCP port {} being opened with tls set to {}", port, use_tls);
+                    debug!(port = port, use_tls = use_tls, "TCP port being opened");
                     let details = OpenPort {
                         response_channel: response_channel.clone(),
                     };

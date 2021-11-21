@@ -20,10 +20,10 @@ use crate::workflows::steps::{
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
-use log::{error, info};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info};
 use uuid::Uuid;
 
 pub const LOCATION: &'static str = "location";
@@ -127,13 +127,13 @@ impl FfmpegPullStep {
 
         match result {
             FutureResult::FfmpegEndpointGone => {
-                error!("Step {}: Ffmpeg endpoint is gone", self.definition.get_id());
+                error!("Ffmpeg endpoint is gone");
                 self.status = StepStatus::Error;
                 self.stop_ffmpeg();
             }
 
             FutureResult::RtmpEndpointGone => {
-                error!("Step {}: Rtmp endpoint gone", self.definition.get_id());
+                error!("Rtmp endpoint gone");
                 self.status = StepStatus::Error;
                 self.stop_ffmpeg();
             }
@@ -160,23 +160,19 @@ impl FfmpegPullStep {
     ) {
         match message {
             FfmpegEndpointNotification::FfmpegFailedToStart { cause } => {
-                error!(
-                    "Step {}: Ffmpeg failed to start: {:?}",
-                    self.definition.get_id(),
-                    cause
-                );
+                error!("Ffmpeg failed to start: {:?}", cause);
                 self.status = StepStatus::Error;
             }
 
             FfmpegEndpointNotification::FfmpegStarted => {
-                info!("Step {}: Ffmpeg started", self.definition.get_id());
+                info!("Ffmpeg started");
                 outputs
                     .futures
                     .push(wait_for_ffmpeg_notification(receiver).boxed());
             }
 
             FfmpegEndpointNotification::FfmpegStopped => {
-                info!("Step {}: Ffmpeg stopped", self.definition.get_id());
+                info!("Ffmpeg stopped");
             }
         }
     }
@@ -188,18 +184,12 @@ impl FfmpegPullStep {
     ) {
         match message {
             RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
-                error!(
-                    "Step {}: publisher registration failed",
-                    self.definition.get_id()
-                );
+                error!("Publisher registration failed");
                 self.status = StepStatus::Error;
             }
 
             RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
-                info!(
-                    "Step {}: publisher registration successful",
-                    self.definition.get_id()
-                );
+                info!("Publisher registration successful");
                 self.status = StepStatus::Active;
                 self.start_ffmpeg(outputs);
             }
@@ -210,20 +200,17 @@ impl FfmpegPullStep {
                 connection_id,
             } => {
                 info!(
-                    "Step {}: new RTMP publisher seen: {:?}, {:?}, {:?}",
-                    self.definition.get_id(),
-                    stream_id,
-                    connection_id,
-                    stream_key
+                    stream_id = ?stream_id,
+                    connection_id = ?connection_id,
+                    stream_key = %stream_key,
+                    "New RTMP publisher seen: {:?}, {:?}, {:?}", stream_id, connection_id, stream_key
                 );
 
                 if stream_key != self.stream_name {
                     error!(
-                        "Step {}: Expected publisher to have a stream name of {} but instead it \
-                    was {}",
-                        self.definition.get_id(),
-                        self.stream_name,
-                        stream_key
+                        stream_name = %self.stream_name,
+                        stream_key = %stream_key,
+                        "Expected publisher to have a stream name of {} but instead it was {}", self.stream_name, stream_key
                     );
 
                     self.status = StepStatus::Error;
@@ -240,11 +227,7 @@ impl FfmpegPullStep {
             }
 
             RtmpEndpointPublisherMessage::PublishingStopped { connection_id: _ } => {
-                info!(
-                    "Step {}: RTMP publisher has stopped",
-                    self.definition.get_id()
-                );
-
+                info!("RTMP publisher has stopped");
                 if let Some(stream_id) = &self.active_stream_id {
                     outputs.media.push(MediaNotification {
                         stream_id: stream_id.clone(),
@@ -265,10 +248,7 @@ impl FfmpegPullStep {
                         },
                     });
                 } else {
-                    error!(
-                        "Step {}: Received stream metadata without an active stream id",
-                        self.definition.get_id()
-                    );
+                    error!("Received stream metadata without an active stream id");
                     self.stop_ffmpeg();
                     self.status = StepStatus::Error;
                 }
@@ -294,10 +274,7 @@ impl FfmpegPullStep {
                         },
                     });
                 } else {
-                    error!(
-                        "Step {}: Received video data without an active stream id",
-                        self.definition.get_id()
-                    );
+                    error!("Received video data without an active stream id");
                     self.stop_ffmpeg();
                     self.status = StepStatus::Error;
                 }
@@ -321,10 +298,7 @@ impl FfmpegPullStep {
                         },
                     });
                 } else {
-                    error!(
-                        "Step {}: Received audio data without an active stream id",
-                        self.definition.get_id()
-                    );
+                    error!("Received audio data without an active stream id");
                     self.stop_ffmpeg();
                     self.status = StepStatus::Error;
                 }
@@ -334,7 +308,7 @@ impl FfmpegPullStep {
 
     fn start_ffmpeg(&mut self, outputs: &mut StepOutputs) {
         if self.ffmpeg_id.is_none() {
-            info!("Step {}: Starting ffmpeg", self.definition.get_id());
+            info!("Starting ffmpeg");
             let id = Uuid::new_v4();
             let (sender, receiver) = unbounded_channel();
             let _ = self

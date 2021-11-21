@@ -6,9 +6,9 @@ use crate::workflows::steps::external_stream_handler::{
 use crate::workflows::steps::{StepFutureResult, StepOutputs};
 use crate::StreamId;
 use futures::FutureExt;
-use log::{error, info, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 pub struct FfmpegHandler {
@@ -68,26 +68,27 @@ impl ExternalStreamHandlerGenerator for FfmpegHandlerGenerator {
 }
 
 impl FfmpegHandler {
+    #[instrument(skip(self, notification), fields(stream_id = ?self.stream_id))]
     fn handle_ffmpeg_notification(&mut self, notification: FfmpegEndpointNotification) {
         match notification {
-            FfmpegEndpointNotification::FfmpegStarted => {
-                match &self.status {
-                    FfmpegHandlerStatus::Pending { id } => {
-                        info!("Received notification that ffmpeg became active for stream id {:?} and \
-                       ffmpeg id {}", self.stream_id, id);
+            FfmpegEndpointNotification::FfmpegStarted => match &self.status {
+                FfmpegHandlerStatus::Pending { id } => {
+                    info!(
+                            ffmpeg_id = ?id,
+                            "Received notification that ffmpeg became active for stream id {:?} and ffmpeg id {}",
+                            self.stream_id, id);
 
-                        self.status = FfmpegHandlerStatus::Active { id: id.clone() };
-                    }
-
-                    status => {
-                        error!(
-                            "Received notification that ffmpeg became active for stream id {:?}, \
-                        but the handler's status was {:?} instead of pending",
-                            self.stream_id, status
-                        );
-                    }
+                    self.status = FfmpegHandlerStatus::Active { id: id.clone() };
                 }
-            }
+
+                status => {
+                    error!(
+                        "Received notification that ffmpeg became active for stream id {:?}, \
+                        but the handler's status was {:?} instead of pending",
+                        self.stream_id, status
+                    );
+                }
+            },
 
             FfmpegEndpointNotification::FfmpegStopped => {
                 info!(

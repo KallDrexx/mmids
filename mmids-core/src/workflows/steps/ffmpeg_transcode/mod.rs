@@ -28,11 +28,11 @@ use crate::workflows::steps::{
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
-use log::{error, info, warn};
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const VIDEO_CODEC_NAME: &'static str = "vcodec";
@@ -309,10 +309,7 @@ impl FfmpegTranscoder {
 
         match notification {
             FutureResult::FfmpegEndpointGone => {
-                error!(
-                    "Step {}: Ffmpeg endpoint is gone!",
-                    self.definition.get_id()
-                );
+                error!("Ffmpeg endpoint is gone!");
                 self.status = StepStatus::Error;
 
                 let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
@@ -322,7 +319,7 @@ impl FfmpegTranscoder {
             }
 
             FutureResult::RtmpEndpointGone => {
-                error!("Step {}: RTMP endpoint is gone!", self.definition.get_id());
+                error!("RTMP endpoint is gone!");
                 self.status = StepStatus::Error;
 
                 let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
@@ -333,20 +330,15 @@ impl FfmpegTranscoder {
 
             FutureResult::RtmpWatchChannelGone(stream_id) => {
                 if self.stop_stream(&stream_id) {
-                    error!(
-                        "Step {}: Rtmp watch channel disappeared for stream id {:?}",
-                        self.definition.get_id(),
-                        stream_id
-                    );
+                    error!(stream_id = ?stream_id, "Rtmp watch channel disappeared for stream id {:?}", stream_id);
                 }
             }
 
             FutureResult::RtmpPublishChannelGone(stream_id) => {
                 if self.stop_stream(&stream_id) {
                     error!(
-                        "Step {}: Rtmp publish channel dissappeared for stream id {:?}",
-                        self.definition.get_id(),
-                        stream_id
+                        stream_id = ?stream_id,
+                        "Rtmp publish channel dissappeared for stream id {:?}", stream_id
                     );
                 }
             }
@@ -354,9 +346,8 @@ impl FfmpegTranscoder {
             FutureResult::FfmpegChannelGone(stream_id) => {
                 if self.stop_stream(&stream_id) {
                     error!(
-                        "Step {}: Ffmpeg channel disappeared for stream id {:?}",
-                        self.definition.get_id(),
-                        stream_id
+                        stream_id = ?stream_id,
+                        "Ffmpeg channel disappeared for stream id {:?}", stream_id
                     );
                 }
             }
@@ -408,10 +399,14 @@ impl FfmpegTranscoder {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(stream) = self.active_streams.get(&media.stream_id) {
                     if &stream.stream_name != stream_name {
-                        warn!("Step {}: Unexpected new incoming stream notification received on \
+                        warn!(
+                            stream_id = ?media.stream_id,
+                            new_stream_name = %stream_name,
+                            active_stream_name = %stream.stream_name,
+                            "Unexpected new incoming stream notification received on \
                         stream id {:?} and stream name '{}', but we already have this stream id active \
                         for stream name '{}'.  Ignoring this notification",
-                            self.definition.get_id(), media.stream_id, stream_name, stream.stream_name);
+                            media.stream_id, stream_name, stream.stream_name);
                     } else {
                         // Since the stream id / name combination is already set, this is a duplicate
                         // notification.  This is probably a bug somewhere but it's not harmful
@@ -439,9 +434,8 @@ impl FfmpegTranscoder {
             MediaNotificationContent::StreamDisconnected => {
                 if self.stop_stream(&media.stream_id) {
                     info!(
-                        "Step {}: Stopping stream id {:?} due to stream disconnection notification",
-                        self.definition.get_id(),
-                        media.stream_id
+                        stream_id = ?media.stream_id,
+                        "Stopping stream id {:?} due to stream disconnection notification", media.stream_id
                     );
                 }
 
@@ -608,9 +602,8 @@ impl FfmpegTranscoder {
                     let new_status = match &stream.rtmp_output_status {
                         WatchRegistrationStatus::Pending { media_channel } => {
                             info!(
-                                "Step {}: Watch registration successful for stream id {:?}",
-                                self.definition.get_id(),
-                                stream.id
+                                stream_id = ?stream.id,
+                                "Watch registration successful for stream id {:?}", stream.id
                             );
                             Some(WatchRegistrationStatus::Active {
                                 media_channel: media_channel.clone(),
@@ -618,8 +611,11 @@ impl FfmpegTranscoder {
                         }
 
                         status => {
-                            error!("Step {}: Received watch registration successful notification for stream id \
-                            {:?}, but this stream's watch status is {:?}", self.definition.get_id(), stream.id, status);
+                            error!(
+                                stream_id = ?stream.id,
+                                "Received watch registration successful notification for stream id \
+                            {:?}, but this stream's watch status is {:?}", stream.id, status
+                            );
 
                             None
                         }
@@ -632,9 +628,8 @@ impl FfmpegTranscoder {
 
                 RtmpEndpointWatcherNotification::WatcherRegistrationFailed => {
                     warn!(
-                        "Step {}: Received watch registration failed for stream id {:?}",
-                        self.definition.get_id(),
-                        stream.id
+                        stream_id = ?stream.id,
+                        "Received watch registration failed for stream id {:?}", stream.id
                     );
                     stream.rtmp_output_status = WatchRegistrationStatus::Inactive;
                 }
@@ -658,9 +653,8 @@ impl FfmpegTranscoder {
             match notification {
                 RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
                     warn!(
-                        "Step {}: Rtmp publish registration failed for stream {:?}",
-                        self.definition.get_id(),
-                        stream_id
+                        stream_id = ?stream_id,
+                        "Rtmp publish registration failed for stream {:?}", stream_id
                     );
                     stream.rtmp_input_status = PublishRegistrationStatus::Inactive;
                     prepare_stream = true;
@@ -668,9 +662,8 @@ impl FfmpegTranscoder {
 
                 RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
                     info!(
-                        "Step {}: Rtmp publish registration successful for stream {:?}",
-                        self.definition.get_id(),
-                        stream_id
+                        stream_id = ?stream_id,
+                        "Rtmp publish registration successful for stream {:?}", stream_id
                     );
                     stream.rtmp_input_status = PublishRegistrationStatus::Active;
                     prepare_stream = true;
@@ -746,15 +739,22 @@ impl FfmpegTranscoder {
                 FfmpegEndpointNotification::FfmpegStarted => {
                     let new_status = match &stream.ffmpeg_status {
                         FfmpegStatus::Pending { id } => {
-                            info!("Step {}: Received notification that ffmpeg became active for stream id \
-                        {:?} with ffmpeg id {}", self.definition.get_id(), stream.id, id);
+                            info!(
+                                stream_id = ?stream.id,
+                                ffmpeg_id = ?id,
+                                "Received notification that ffmpeg became active for stream id \
+                                    {:?} with ffmpeg id {}", stream.id, id
+                            );
 
                             Some(FfmpegStatus::Active { id: id.clone() })
                         }
 
                         status => {
-                            error!("Step {}: Received notification that ffmpeg became active for stream id \
-                        {:?}, but this stream was in the {:?} status instead of pending", self.definition.get_id(), stream.id, status);
+                            error!(
+                                stream_id = ?stream.id,
+                                "Received notification that ffmpeg became active for stream id \
+                                    {:?}, but this stream was in the {:?} status instead of pending", stream.id, status
+                            );
 
                             None
                         }
@@ -767,19 +767,16 @@ impl FfmpegTranscoder {
 
                 FfmpegEndpointNotification::FfmpegStopped => {
                     info!(
-                        "Step {}: Got ffmpeg stopped notification for stream {:?}",
-                        self.definition.get_id(),
-                        stream.id
+                        stream_id = ?stream.id,
+                        "Got ffmpeg stopped notification for stream {:?}", stream.id
                     );
                     stream.ffmpeg_status = FfmpegStatus::Inactive;
                 }
 
                 FfmpegEndpointNotification::FfmpegFailedToStart { cause } => {
                     warn!(
-                        "Step {}: Ffmpeg failed to start for stream {:?}: {:?}",
-                        self.definition.get_id(),
-                        stream.id,
-                        cause
+                        stream_id = ?stream.id,
+                        "Ffmpeg failed to start for stream {:?}: {:?}", stream.id, cause
                     );
                     stream.ffmpeg_status = FfmpegStatus::Inactive;
                 }

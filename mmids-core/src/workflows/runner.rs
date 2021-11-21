@@ -6,9 +6,9 @@ use crate::workflows::steps::{
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use log::{error, info, warn};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info, instrument, span, warn, Level};
 
 /// Requests that can be made to an actively running workflow
 pub enum WorkflowRequest {}
@@ -52,6 +52,7 @@ struct Actor<'a> {
 }
 
 impl<'a> Actor<'a> {
+    #[instrument(skip(definition, step_factory, receiver), fields(workflow_name = %definition.name))]
     fn new(
         definition: WorkflowDefinition,
         step_factory: UnboundedSender<FactoryRequest>,
@@ -60,10 +61,10 @@ impl<'a> Actor<'a> {
         let futures = FuturesUnordered::new();
         let mut pending_steps = Vec::new();
         let mut steps_waiting_for_creation = HashSet::new();
+        info!("Creating workflow");
         for step in &definition.steps {
             info!(
-                "Workflow {}: step defined with type {} and id {}",
-                definition.name,
+                "Step defined with type {} and id {}",
                 step.step_type.0,
                 step.get_id()
             );
@@ -93,18 +94,19 @@ impl<'a> Actor<'a> {
         }
     }
 
+    #[instrument(name = "Workflow Execution", skip(self), fields(workflow_name = %self.name))]
     async fn run(mut self) {
-        info!("Starting workflow '{}'", self.name);
+        info!("Starting workflow");
 
         while let Some(future) = self.futures.next().await {
             match future {
                 FutureResult::AllConsumersGone => {
-                    warn!("Workflow {}: All channel owners gone", self.name);
+                    warn!("All channel owners gone");
                     break;
                 }
 
                 FutureResult::StepFactoryGone => {
-                    warn!("Workflow {}: step factory is gone", self.name);
+                    warn!("Step factory is gone");
                     break;
                 }
 
@@ -126,7 +128,7 @@ impl<'a> Actor<'a> {
             }
         }
 
-        info!("Workflow '{}' closing", self.name);
+        info!("Workflow closing");
     }
 
     fn handle_step_creation_result(
@@ -138,11 +140,7 @@ impl<'a> Actor<'a> {
             Ok(x) => x,
             Err(error) => match error {
                 FactoryCreateError::NoRegisteredStep(step) => {
-                    error!(
-                        "Workflow {}: Requested creation of step '{}' but no step has \
-                                been registered with that name.",
-                        self.name, step
-                    );
+                    error!("Requested creation of step '{}' but no step has  been registered with that name.", step);
 
                     return;
                 }
@@ -152,18 +150,12 @@ impl<'a> Actor<'a> {
         let (step, mut future_list) = match step_result {
             Ok(x) => x,
             Err(error) => {
-                error!(
-                    "Workflow {}: Creation of step id {} failed: {}",
-                    self.name, step_id, error
-                );
+                error!("Creation of step id {} failed: {}", step_id, error);
                 return;
             }
         };
 
-        info!(
-            "Workflow {}: Successfully got created instance of step id {}",
-            self.name, step_id
-        );
+        info!("Successfully got created instance of step id {}", step_id);
 
         self.steps_waiting_for_creation.remove(&step_id);
         self.steps_by_definition_id
@@ -199,12 +191,19 @@ impl<'a> Actor<'a> {
 
         if let Some(start_index) = start_index {
             for x in start_index..self.active_steps.len() {
+                let span = span!(
+                    Level::INFO,
+                    "Step Execution",
+                    step_id = self.active_steps[x]
+                );
+                let _enter = span.enter();
+
                 let step = match self.steps_by_definition_id.get_mut(&self.active_steps[x]) {
                     Some(x) => x,
                     None => {
                         error!(
-                            "Workflow {}: step id {} is marked as active but no definition exists",
-                            self.name, self.active_steps[x]
+                            "Step id {} is marked as active but no definition exists",
+                            self.active_steps[x]
                         );
                         return;
                     }
@@ -225,15 +224,17 @@ impl<'a> Actor<'a> {
                 self.step_outputs.clear();
             }
         } else {
+            let span = span!(Level::INFO, "Step Execution", step_id = initial_step_id);
+            let _enter = span.enter();
+
             // We are trying to execute a workflow step that is not yet active, most likely due to
             // a resolved future specifically for it.
             let step = match self.steps_by_definition_id.get_mut(&initial_step_id) {
                 Some(x) => x,
                 None => {
                     error!(
-                        "Workflow {}: step id {} got a resolved future but we do not have \
-                    a definition for it",
-                        self.name, initial_step_id
+                        "Step id {} got a resolved future but we do not have a definition for it",
+                        initial_step_id
                     );
 
                     return;
@@ -263,7 +264,10 @@ impl<'a> Actor<'a> {
                     if self.steps_waiting_for_creation.contains(&id) {
                         None
                     } else {
-                        error!("Workflow {}: workflow had step id {} pending but this step was not defined", self.name, id);
+                        error!(
+                            step_id = id,
+                            "Workflow had step id {} pending but this step was not defined", id
+                        );
                         return; // TODO: set workflow in error state
                     }
                 }
@@ -288,11 +292,11 @@ impl<'a> Actor<'a> {
             for id in &self.pending_steps {
                 if !self.active_steps.contains(id) {
                     self.steps_by_definition_id.remove(id);
-                    info!("Workflow {}: Removing now unused step id {}", self.name, id);
+                    info!(step_id = id, "Removing now unused step id {}", id);
                 }
             }
 
-            info!("Workflow {}: All pending steps moved to active", self.name);
+            info!("All pending steps moved to active");
         }
     }
 }

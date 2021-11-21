@@ -5,7 +5,6 @@
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use log::{error, info};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command};
@@ -13,6 +12,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
+use tracing::{error, info, instrument};
 use uuid::Uuid;
 
 /// Requests of ffmpeg operations
@@ -101,9 +101,7 @@ pub enum AudioTranscodeParams {
 #[derive(Clone, Debug)]
 pub enum TargetParams {
     /// Send the media stream to an RTMP server
-    Rtmp {
-        url: String,
-    },
+    Rtmp { url: String },
 
     /// Save the media stream as an HLS playlist
     Hls {
@@ -222,6 +220,7 @@ impl<'a> Actor<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn check_status(&mut self, id: Uuid) {
         let mut has_exited = false;
         if let Some(process) = self.processes.get_mut(&id) {
@@ -256,7 +255,7 @@ impl<'a> Actor<'a> {
     }
 
     fn handle_notification_channel_gone(&mut self, id: Uuid) {
-        info!("Consumer for ffmpeg process {} is gone", id);
+        info!(id = ?id, "Consumer for ffmpeg process {} is gone", id);
         if let Some(process) = self.processes.remove(&id) {
             stop_process(id, process);
         }
@@ -398,6 +397,7 @@ impl<'a> Actor<'a> {
         args.push("-y".to_string()); // always overwrite
 
         info!(
+            id = ?id,
             "Starting ffmpeg for id {} with the following arguments: {:?}",
             id, args
         );
@@ -407,7 +407,7 @@ impl<'a> Actor<'a> {
 }
 
 fn stop_process(id: Uuid, mut process: FfmpegProcess) {
-    info!("Killing ffmpeg process {}", id);
+    info!(id = ?id, "Killing ffmpeg process {}", id);
     let _ = process.handle.kill();
 
     let _ = process

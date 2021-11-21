@@ -4,10 +4,10 @@
 //! the step definition given.
 use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
 use crate::workflows::steps::StepCreationResult;
-use log::info;
 use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::info;
 
 pub type FactoryCreateResponse = Result<StepCreationResult, FactoryCreateError>;
 

@@ -67,9 +67,7 @@ pub enum TcpSocketResponse {
 
     /// Notification to system that requested a port be opened that the port has been
     /// forced closed.  This is mostly due to an error listening onto the socket.
-    PortForciblyClosed {
-        port: u16,
-    },
+    PortForciblyClosed { port: u16 },
 
     /// Notification that a client has connected to a TCP port opened by the receiver of this
     /// notification.

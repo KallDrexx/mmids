@@ -10,9 +10,9 @@ use crate::workflows::steps::{FutureList, StepFutureResult, StepOutputs, StepSta
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
-use log::{error, info, warn};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info, warn};
 
 /// Represents logic for a basic workflow step that exposes streams to an RTMP endpoint
 /// so that an external system can read the video stream.  This exposes a read-only interface for
@@ -24,7 +24,6 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 /// workflow step.
 pub struct ExternalStreamReader {
     pub status: StepStatus,
-    id: String,
     rtmp_server_endpoint: UnboundedSender<RtmpEndpointRequest>,
     watcher_app_name: String,
     active_streams: HashMap<StreamId, ActiveStream>,
@@ -64,14 +63,12 @@ impl StepFutureResult for FutureResult {}
 
 impl ExternalStreamReader {
     pub fn new(
-        id: String,
         watcher_rtmp_app_name: String,
         rtmp_server: UnboundedSender<RtmpEndpointRequest>,
         external_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
     ) -> (Self, FutureList<'static>) {
         let step = ExternalStreamReader {
             status: StepStatus::Active,
-            id,
             watcher_app_name: watcher_rtmp_app_name,
             rtmp_server_endpoint: rtmp_server.clone(),
             active_streams: HashMap::new(),
@@ -119,17 +116,14 @@ impl ExternalStreamReader {
 
         match notification {
             FutureResult::RtmpEndpointGone => {
-                error!("Step {}: RTMP endpoint is gone!", self.id);
+                error!("RTMP endpoint is gone!");
                 self.status = StepStatus::Error;
                 self.stop_all_streams();
             }
 
             FutureResult::RtmpWatchChannelGone(stream_id) => {
                 if self.stop_stream(&stream_id) {
-                    error!(
-                        "Step {}: Rtmp watch channel disappeared for stream id {:?}",
-                        self.id, stream_id
-                    );
+                    error!(stream_id = ?stream_id, "Rtmp watch channel disappeared for stream id {:?}", stream_id);
                 }
             }
 
@@ -153,10 +147,14 @@ impl ExternalStreamReader {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(stream) = self.active_streams.get(&media.stream_id) {
                     if &stream.stream_name != stream_name {
-                        warn!("Step {}: Unexpected new incoming stream notification received on \
+                        warn!(
+                            stream_id = ?media.stream_id,
+                            new_stream_name = %stream_name,
+                            active_stream_name = %stream.stream_name,
+                            "Unexpected new incoming stream notification received on \
                         stream id {:?} and stream name '{}', but we already have this stream id active \
                         for stream name '{}'.  Ignoring this notification",
-                            self.id, media.stream_id, stream_name, stream.stream_name);
+                            media.stream_id, stream_name, stream.stream_name);
                     } else {
                         // Since the stream id / name combination is already set, this is a duplicate
                         // notification.  This is probably a bug somewhere but it's not harmful
@@ -183,8 +181,9 @@ impl ExternalStreamReader {
             MediaNotificationContent::StreamDisconnected => {
                 if self.stop_stream(&media.stream_id) {
                     info!(
-                        "Step {}: Stopping stream id {:?} due to stream disconnection notification",
-                        self.id, media.stream_id
+                        stream_id = ?media.stream_id,
+                        "Stopping stream id {:?} due to stream disconnection notification",
+                        media.stream_id
                     );
                 }
             }
@@ -281,8 +280,9 @@ impl ExternalStreamReader {
                     let new_status = match &stream.rtmp_output_status {
                         WatchRegistrationStatus::Pending { media_channel } => {
                             info!(
-                                "Step {}: Watch registration successful for stream id {:?}",
-                                self.id, stream.id
+                                stream_id = ?stream.id,
+                                "Watch registration successful for stream id {:?}",
+                                stream.id
                             );
                             Some(WatchRegistrationStatus::Active {
                                 media_channel: media_channel.clone(),
@@ -290,8 +290,11 @@ impl ExternalStreamReader {
                         }
 
                         status => {
-                            error!("Step {}: Received watch registration successful notification for stream id \
-                            {:?}, but this stream's watch status is {:?}", self.id, stream.id, status);
+                            error!(
+                                stream_id = ?stream.id,
+                                "Received watch registration successful notification for stream id \
+                            {:?}, but this stream's watch status is {:?}", stream.id, status
+                            );
 
                             None
                         }
@@ -304,8 +307,9 @@ impl ExternalStreamReader {
 
                 RtmpEndpointWatcherNotification::WatcherRegistrationFailed => {
                     warn!(
-                        "Step {}: Received watch registration failed for stream id {:?}",
-                        self.id, stream.id
+                        stream_id = ?stream.id,
+                        "Received watch registration failed for stream id {:?}",
+                        stream.id
                     );
                     stream.rtmp_output_status = WatchRegistrationStatus::Inactive;
                 }

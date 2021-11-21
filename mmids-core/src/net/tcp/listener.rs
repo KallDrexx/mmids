@@ -3,7 +3,6 @@ use crate::net::tcp::TlsOptions;
 use crate::net::ConnectionId;
 use bytes::{Bytes, BytesMut};
 use futures::future::FutureExt;
-use log::{debug, error, info, warn};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -13,6 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_native_tls::native_tls::Identity;
 use tokio_native_tls::TlsAcceptor;
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 /// Set of bytes that should be sent over a TCP socket
@@ -59,8 +59,9 @@ pub fn start(params: ListenerParams) -> UnboundedSender<()> {
     self_disconnect_sender
 }
 
+#[instrument(skip(params, _self_disconnection_signal), fields(port = params.port, use_tls = params.use_tls))]
 async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedReceiver<()>) {
-    debug!("Socket listener for port {} started", params.port);
+    info!("Socket listener for port started");
 
     let ListenerParams {
         port,
@@ -123,7 +124,6 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
         }
     };
 
-    debug!("Listener for port {} started", port);
     loop {
         let disconnect = response_channel.clone();
         tokio::select! {
@@ -136,7 +136,8 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
                     }
                 };
 
-                tokio::spawn(handle_new_connection(socket, client_info, response_channel.clone(), port, tls.clone()));
+                let connection_id = ConnectionId(Uuid::new_v4().to_string());
+                tokio::spawn(handle_new_connection(socket, client_info, response_channel.clone(), port, connection_id, tls.clone()));
             },
 
             _ = disconnect.closed() => {
@@ -144,18 +145,20 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
             }
         }
     }
-    debug!("Socket listener for port {} closing", port);
+    info!("Socket listener for port {} closing", port);
 }
 
+#[instrument(skip(tls_acceptor, response_channel, socket, client_info))]
 async fn handle_new_connection(
     socket: TcpStream,
     client_info: SocketAddr,
     response_channel: UnboundedSender<TcpSocketResponse>,
     port: u16,
+    connection_id: ConnectionId,
     tls_acceptor: Arc<Option<TlsAcceptor>>,
 ) {
-    let connection_id = ConnectionId(Uuid::new_v4().to_string());
     info!(
+        ip = %client_info.ip(),
         "Tcp Listener: new connection from {}, given id {}",
         client_info.ip(),
         connection_id
@@ -173,10 +176,7 @@ async fn handle_new_connection(
     };
 
     if let Err(_) = response_channel.send(message) {
-        info!(
-            "Connection {}: Port owner disconnected before connection was handled",
-            connection_id
-        );
+        info!("Port owner disconnected before connection was handled");
 
         return;
     }
@@ -184,10 +184,7 @@ async fn handle_new_connection(
     let (reader, writer) = match split_socket(socket, tls_acceptor).await {
         Ok(x) => x,
         Err(e) => {
-            error!(
-                "Connection {}: Error splitting socket: {:?}",
-                connection_id, e
-            );
+            error!("Error splitting socket: {:?}", e);
             return;
         }
     };
@@ -202,6 +199,7 @@ async fn handle_new_connection(
     tokio::spawn(socket_writer(connection_id, writer, outgoing_receiver));
 }
 
+#[instrument(skip(reader, incoming_sender, tcp_response_sender))]
 async fn socket_reader(
     connection_id: ConnectionId,
     mut reader: ReadSocket,
@@ -240,10 +238,11 @@ async fn socket_reader(
         }
     }
 
-    info!("Connection {}: reader task closed", connection_id);
+    info!("reader task closed");
     let _ = tcp_response_sender.send(TcpSocketResponse::Disconnection { connection_id });
 }
 
+#[instrument(skip(writer, outgoing_receiver))]
 async fn socket_writer(
     connection_id: ConnectionId,
     mut writer: WriteSocket,
@@ -280,8 +279,7 @@ async fn socket_writer(
 
         if send_queue.len() >= LETHAL_BACKLOG_THRESHOLD {
             warn!(
-                "Connection {}: {} outbound packets in the queue.  Killing writer",
-                connection_id,
+                "{} outbound packets in the queue.  Killing writer",
                 send_queue.len()
             );
             break;
@@ -303,13 +301,13 @@ async fn socket_writer(
 
         if drop_optional_packets {
             warn!(
-                "Connection {}: send queue was backlogged with {} packets ({} dropped)",
-                connection_id, queue_length, dropped_packet_count
+                "send queue was backlogged with {} packets ({} dropped)",
+                queue_length, dropped_packet_count
             );
         }
     }
 
-    info!("Connection {}: writer task closed", connection_id);
+    info!("writer task closed");
 }
 
 async fn split_socket(

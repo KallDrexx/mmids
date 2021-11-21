@@ -12,10 +12,10 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use log::{debug, error, info};
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
 use rml_rtmp::time::RtmpTimestamp;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tracing::{debug, error, info, instrument};
 
 pub struct RtmpServerConnectionHandler<'a> {
     id: ConnectionId,
@@ -140,12 +140,13 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(name = "Connection Handler Execution", skip(self, response_receiver, incoming_bytes), fields(connection_id = ?self.id))]
     pub async fn run_async(
         mut self,
         response_receiver: UnboundedReceiver<ConnectionResponse>,
         incoming_bytes: UnboundedReceiver<Bytes>,
     ) {
-        debug!("Starting new rtmp connection handler for {:?}", self.id);
+        debug!("Starting new rtmp connection handler");
         self.futures
             .push(internal_futures::wait_for_request_response(response_receiver).boxed());
 
@@ -162,8 +163,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             Ok(x) => x,
             Err(error) => {
                 error!(
-                    "Connection {} failed to generate p0 and p1 handshake packets: {:?}",
-                    self.id, error
+                    "failed to generate p0 and p1 handshake packets: {:?}",
+                    error
                 );
                 return;
             }
@@ -177,12 +178,12 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         while let Some(result) = self.futures.next().await {
             match result {
                 FutureResult::Disconnected => {
-                    info!("Connection {} has disconnected", self.id);
+                    info!("Connection disconnected");
                     break;
                 }
 
                 FutureResult::RtmpServerEndpointGone => {
-                    error!("Connection {}'s rtmp server endpoint is gone", self.id);
+                    error!("Connection's rtmp server endpoint is gone");
                     break;
                 }
 
@@ -215,16 +216,17 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             }
         }
 
-        info!("Connection {} rtmp server handler closing", self.id);
+        info!("Rtmp server handler closing");
     }
 
+    #[instrument(skip(self, bytes), fields(connection_id = ?self.id))]
     fn handle_bytes(&mut self, bytes: Bytes) -> Result<(), ()> {
         match &self.state {
             ConnectionState::Handshaking => {
                 let result = match self.handshake.process_bytes(bytes.as_ref()) {
                     Ok(x) => x,
                     Err(error) => {
-                        error!("Connection {} error handshaking: {:?}", self.id, error);
+                        error!("Error handshaking: {:?}", error);
                         return Err(());
                     }
                 };
@@ -250,10 +252,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                         let (session, results) = match ServerSession::new(config) {
                             Ok(x) => x,
                             Err(e) => {
-                                error!(
-                                    "Connection {} failed to create an rtmp server session: {:?}",
-                                    self.id, e
-                                );
+                                error!("Failed to create an rtmp server session: {:?}", e);
                                 return Err(());
                             }
                         };
@@ -270,7 +269,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                         {
                             Ok(x) => x,
                             Err(e) => {
-                                error!("Connection {} failed to handle initial post-handshake input: {:?}", self.id, e);
+                                error!("Failed to handle initial post-handshake input: {:?}", e);
                                 return Err(());
                             }
                         };
@@ -290,7 +289,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 {
                     Ok(x) => x,
                     Err(e) => {
-                        error!("Connection {} sent invalid bytes: {:?}", self.id, e);
+                        error!("Connection Sent invalid bytes: {:?}", e);
                         return Err(());
                     }
                 };
@@ -302,6 +301,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         Ok(())
     }
 
+    #[instrument(skip(self, results), fields(connection_id = ?self.id))]
     fn handle_rtmp_results(&mut self, results: Vec<ServerSessionResult>) {
         for result in results {
             match result {
@@ -369,20 +369,21 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                     ),
 
                     event => {
-                        info!("Connection {} raised RTMP event: {:?}", self.id, event);
+                        info!("Connection raised RTMP event: {:?}", event);
                     }
                 },
 
                 ServerSessionResult::UnhandleableMessageReceived(payload) => {
                     info!(
-                        "Connection {} sent an unhandleable RTMP message: {:?}",
-                        self.id, payload
+                        "Connection sent an unhandleable RTMP message: {:?}",
+                        payload
                     );
                 }
             }
         }
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_play_stream_requested(
         &mut self,
         app_name: String,
@@ -395,8 +396,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 rtmp_app: current_rtmp_app,
             } => {
                 if *current_rtmp_app != app_name {
-                    error!("Connection {} requested playback on rtmp app {}, but it's currently connected \
-                                        to rtmp app '{}'", self.id, app_name, current_rtmp_app);
+                    error!("Connection requested playback on rtmp app {}, but it's currently connected \
+                                        to rtmp app '{}'", app_name, current_rtmp_app);
 
                     self.force_disconnect = true;
                     return;
@@ -426,6 +427,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self, data), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_audio_data_received(
         &mut self,
         app_name: String,
@@ -440,9 +442,9 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             } => {
                 if *current_rtmp_app != app_name || *current_stream_key != stream_key {
                     error!(
-                        "Connection {} sent audio data for '{}/{}', but this connection is \
+                        "Connection sent audio data for '{}/{}', but this connection is \
                     currently publishing on '{}/{}'",
-                        self.id, app_name, stream_key, current_rtmp_app, current_stream_key
+                        app_name, stream_key, current_rtmp_app, current_stream_key
                     );
 
                     self.force_disconnect = true;
@@ -468,8 +470,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
 
             _ => {
                 error!(
-                    "Connection {} sent audio data is not in a publishing state: {:?}",
-                    self.id, self.state
+                    "Connection sent audio data is not in a publishing state: {:?}",
+                    self.state
                 );
 
                 self.force_disconnect = true;
@@ -478,6 +480,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self, data), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_video_data_received(
         &mut self,
         app_name: String,
@@ -492,9 +495,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             } => {
                 if *current_rtmp_app != app_name || *current_stream_key != stream_key {
                     error!(
-                        "Connection {} sent video data for '{}/{}', but \
-                                        this connection is currently publishing on '{}/{}'",
-                        self.id, app_name, stream_key, current_rtmp_app, current_stream_key
+                        "Connection sent video data for '{}/{}', but this connection is currently publishing on '{}/{}'",
+                        app_name, stream_key, current_rtmp_app, current_stream_key
                     );
 
                     self.force_disconnect = true;
@@ -522,8 +524,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
 
             _ => {
                 error!(
-                    "Conenction {} sent video data is not in a publishing state: {:?}",
-                    self.id, self.state
+                    "Conenction sent video data is not in a publishing state: {:?}",
+                    self.state
                 );
 
                 self.force_disconnect = true;
@@ -532,6 +534,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_stream_metadata_changed(
         &mut self,
         app_name: String,
@@ -545,19 +548,16 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             } => {
                 if *current_rtmp_app != app_name || *current_stream_key != stream_key {
                     error!(
-                        "Connection {} sent a stream metadata changed for '{}/{}', but \
-                                        this connection is currently publishing on '{}/{}'",
-                        self.id, app_name, stream_key, current_rtmp_app, current_stream_key
+                        "Connection sent a stream metadata changed for '{}/{}', but \
+                    this connection is currently publishing on '{}/{}'",
+                        app_name, stream_key, current_rtmp_app, current_stream_key
                     );
 
                     self.force_disconnect = true;
                     return;
                 }
 
-                info!(
-                    "Connection {} sent new stream metadata: {:?}",
-                    self.id, metadata
-                );
+                info!("Connection sent new stream metadata: {:?}", metadata);
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::StreamMetadataChanged {
@@ -569,8 +569,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
 
             _ => {
                 error!(
-                    "Conenction {} sent stream metadata but is not in a publishing state: {:?}",
-                    self.id, self.state
+                    "Connection sent stream metadata but is not in a publishing state: {:?}",
+                    self.state
                 );
 
                 self.force_disconnect = true;
@@ -579,6 +579,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_publish_stream_requested(
         &mut self,
         request_id: u32,
@@ -587,16 +588,12 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         mode: PublishMode,
     ) {
         info!(
-            "Connection {} requesting publishing to '{}/{}'",
-            self.id, app_name, stream_key
+            "Connection requesting publishing to '{}/{}'",
+            app_name, stream_key
         );
 
         if mode != PublishMode::Live {
-            error!(
-                "Connection {} requested publishing with publish mode {:?}, but \
-                                only publish mode Live is supported",
-                self.id, mode
-            );
+            error!("Connection requested publishing with publish mode {:?}, but only publish mode Live is supported", mode);
 
             self.force_disconnect = true;
             return;
@@ -608,9 +605,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             } => {
                 if *connected_app != app_name {
                     error!(
-                        "Connection {}'s publish request was for rtmp app '{}' but it's \
-                                        already connected to rtmp app '{}'",
-                        self.id, connected_app, app_name
+                        "Connection's publish request was for rtmp app '{}' but it's already connected to rtmp app '{}'",
+                        connected_app, app_name
                     );
 
                     self.force_disconnect = true;
@@ -620,8 +616,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
 
             _ => {
                 error!(
-                    "Connection {} was in state {:?}, which isn't meant for publishing",
-                    self.id, self.state
+                    "Connection was in state {:?}, which isn't meant for publishing",
+                    self.state
                 );
 
                 self.force_disconnect = true;
@@ -641,10 +637,11 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         };
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_connection_requested(&mut self, request_id: u32, app_name: String) {
         info!(
-            "Connection {} requesting connection to rtmp app '{}'",
-            self.id, app_name
+            "Connection requesting connection to rtmp app '{}'",
+            app_name
         );
 
         let _ = self
@@ -659,13 +656,11 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         };
     }
 
+    #[instrument(skip(self, response), fields(connection_id = ?self.id))]
     fn handle_endpoint_response(&mut self, response: ConnectionResponse) {
         match response {
             ConnectionResponse::RequestRejected => {
-                info!(
-                    "Disconnecting connection {:?} due to rejected request",
-                    self.id
-                );
+                info!("Disconnecting connection due to rejected request");
                 self.force_disconnect = true;
             }
 
@@ -683,6 +678,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_endpoint_watch_request_accepted(
         &mut self,
         media_channel: UnboundedReceiver<RtmpEndpointMediaData>,
@@ -698,8 +694,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 stream_id,
             } => {
                 info!(
-                    "Connection {}'s request to watch '{}/{}' was accepted",
-                    self.id, rtmp_app, stream_key
+                    "Connections request to watch '{}/{}' was accepted",
+                    rtmp_app, stream_key
                 );
                 let results = match self
                     .rtmp_session
@@ -709,10 +705,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 {
                     Ok(x) => x,
                     Err(e) => {
-                        error!(
-                            "Error from connection {} when accepting watch request: {:?}",
-                            self.id, e
-                        );
+                        error!("Error when accepting watch request: {:?}", e);
                         self.force_disconnect = true;
                         return;
                     }
@@ -728,8 +721,11 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             }
 
             state => {
-                error!("Conenction {} had a watch request accepted, but it isn't in a valid requesting \
-                        state (current state: {:?})", self.id, state);
+                error!(
+                    "Connection had a watch request accepted, but it isn't in a valid requesting \
+                        state (current state: {:?})",
+                    state
+                );
 
                 self.force_disconnect = true;
                 return;
@@ -737,6 +733,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self, channel), fields(connection_id = ?self.id))]
     fn handle_endpoint_publish_request_accepted(
         &mut self,
         channel: UnboundedSender<RtmpEndpointPublisherMessage>,
@@ -748,8 +745,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 rtmp_request_id,
             } => {
                 info!(
-                    "Connection {}'s request to publish on '{}/{}' was accepted",
-                    self.id, rtmp_app, stream_key
+                    "Connections request to publish on '{}/{}' was accepted",
+                    rtmp_app, stream_key
                 );
                 let results = match self
                     .rtmp_session
@@ -759,10 +756,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 {
                     Ok(x) => x,
                     Err(e) => {
-                        error!(
-                            "Error from connection {} when accepting publish request: {:?}",
-                            self.id, e
-                        );
+                        error!("Error when accepting publish request: {:?}", e);
                         self.force_disconnect = true;
                         return;
                     }
@@ -777,11 +771,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             }
 
             state => {
-                error!(
-                    "Connection {:?} had a request accepted, but isn't in a requesting state \
-                        (current state: {:?})",
-                    self.id, state
-                );
+                error!("Connection had a request accepted, but isn't in a requesting state (current state: {:?})", state);
 
                 self.force_disconnect = true;
                 return;
@@ -789,6 +779,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_endpoint_app_connect_request_accepted(&mut self) {
         match &self.state {
             ConnectionState::RequestedAppConnection {
@@ -796,8 +787,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 rtmp_app,
             } => {
                 info!(
-                    "Connection {}'s request to connect to the rtmp app {} was accepted",
-                    self.id, rtmp_app
+                    "Connection's request to connect to the rtmp app {} was accepted",
+                    rtmp_app
                 );
                 let results = match self
                     .rtmp_session
@@ -807,10 +798,7 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                 {
                     Ok(x) => x,
                     Err(e) => {
-                        error!(
-                            "Error from connection {} when accepting app connection request: {:?}",
-                            self.id, e
-                        );
+                        error!("Error when accepting app connection request: {:?}", e);
                         self.force_disconnect = true;
 
                         return;
@@ -824,12 +812,16 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             }
 
             state => {
-                error!("Connection {:?} had an rtmp app request accepted, but isn't in a requesting state \
-                        (current state: {:?})", self.id, state);
+                error!(
+                    "Connection had an rtmp app request accepted, but isn't in a requesting state \
+                        (current state: {:?})",
+                    state
+                );
             }
         }
     }
 
+    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_media_from_endpoint(&mut self, media_data: RtmpEndpointMediaData) {
         let stream_id = match &self.state {
             ConnectionState::Watching { stream_id, .. } => *stream_id,
@@ -853,7 +845,9 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                     Ok(x) => x,
                     Err(()) => {
                         if !self.video_parse_error_raised {
-                            error!("Connection {} received video that could not be wrapped in FLV format", self.id);
+                            error!(
+                                "Connection received video that could not be wrapped in FLV format"
+                            );
                             self.video_parse_error_raised = true;
                         }
 
@@ -874,7 +868,9 @@ impl<'a> RtmpServerConnectionHandler<'a> {
                     Ok(x) => x,
                     Err(()) => {
                         if !self.audio_parse_error_raised {
-                            error!("Connection {} received audio that could not be wrapped in FLV format", self.id);
+                            error!(
+                                "Connection received audio that could not be wrapped in FLV format"
+                            );
                             self.audio_parse_error_raised = true;
                         }
 
@@ -890,8 +886,8 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             Ok(x) => x,
             Err(e) => {
                 error!(
-                    "Connection {} failed to generate packet for media data: {:?}",
-                    self.id, e
+                    "Connection failed to generate packet for media data: {:?}",
+                    e
                 );
                 self.force_disconnect = true;
                 return;

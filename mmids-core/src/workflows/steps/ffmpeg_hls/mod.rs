@@ -15,9 +15,9 @@ use crate::workflows::steps::{
 };
 use crate::StreamId;
 use futures::FutureExt;
-use log::error;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::error;
 
 const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";
@@ -114,7 +114,6 @@ impl FfmpegHlsStep {
             FfmpegHandlerGenerator::new(ffmpeg_endpoint.clone(), Box::new(param_generator));
 
         let (reader, mut futures) = ExternalStreamReader::new(
-            definition.get_id().to_string(),
             get_rtmp_app(definition.get_id().to_string()),
             rtmp_endpoint,
             Box::new(handler_generator),
@@ -147,12 +146,7 @@ impl WorkflowStep for FfmpegHlsStep {
         }
 
         if self.stream_reader.status == StepStatus::Error {
-            error!(
-                "Step {}: external stream reader is in error status, so putting the step in \
-            in error status as well.",
-                self.definition.get_id()
-            );
-
+            error!("external stream reader is in error status, so putting the step in in error status as well.");
             self.status = StepStatus::Error;
             return;
         }

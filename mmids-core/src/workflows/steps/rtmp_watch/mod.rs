@@ -29,11 +29,11 @@ use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use log::{error, info, warn};
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{error, info, warn};
 
 pub const PORT_PROPERTY_NAME: &'static str = "port";
 pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
@@ -215,13 +215,16 @@ impl RtmpWatchStep {
 
             RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key } => {
                 info!(
-                    "At least one watcher became active for stream key '{}'",
-                    stream_key
+                    stream_key = %stream_key,
+                    "At least one watcher became active for stream key '{}'", stream_key
                 );
             }
 
             RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key } => {
-                info!("All watchers left stream key '{}'", stream_key);
+                info!(
+                    stream_key = %stream_key,
+                    "All watchers left stream key '{}'", stream_key
+                );
             }
         }
     }
@@ -240,18 +243,30 @@ impl RtmpWatchStep {
                         }
                     };
 
-                    info!("New incoming stream notification found for stream id {:?} and stream name '{}",
-                media.stream_id, stream_name);
+                    info!(
+                        stream_id = ?media.stream_id,
+                        stream_name = %stream_name,
+                        "New incoming stream notification found for stream id {:?} and stream name '{}", media.stream_id, stream_name
+                    );
 
                     match self.stream_id_to_name_map.get(&media.stream_id) {
                         None => (),
                         Some(current_stream_name) => {
                             if current_stream_name == stream_name {
-                                warn!("New incoming stream notification for stream id {:?} is already mapped \
-                            to this same stream name.", media.stream_id);
+                                warn!(
+                                    stream_id = ?media.stream_id,
+                                    stream_name = %stream_name,
+                                    "New incoming stream notification for stream id {:?} is already mapped \
+                                        to this same stream name.", media.stream_id
+                                );
                             } else {
-                                warn!("New incoming stream notification for stream id {:?} is already mapped \
-                            to the stream name '{}'", media.stream_id, current_stream_name);
+                                warn!(
+                                    stream_id = ?media.stream_id,
+                                    new_stream_name = %stream_name,
+                                    active_stream_name = %current_stream_name,
+                                    "New incoming stream notification for stream id {:?} is already mapped \
+                                        to the stream name '{}'", media.stream_id, current_stream_name
+                                );
                             }
                         }
                     }
@@ -262,15 +277,15 @@ impl RtmpWatchStep {
 
                 MediaNotificationContent::StreamDisconnected => {
                     info!(
-                        "Stream disconnected notification received for stream id {:?}",
-                        media.stream_id
+                        stream_id = ?media.stream_id,
+                        "Stream disconnected notification received for stream id {:?}", media.stream_id
                     );
                     match self.stream_id_to_name_map.remove(&media.stream_id) {
                         Some(_) => (),
                         None => {
                             warn!(
-                                "Disconnected stream {:?} was not mapped to a stream name",
-                                media.stream_id
+                                stream_id = ?media.stream_id,
+                                "Disconnected stream {:?} was not mapped to a stream name", media.stream_id
                             );
                         }
                     }

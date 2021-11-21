@@ -1,4 +1,3 @@
-use log::info;
 use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::endpoints::ffmpeg::start_ffmpeg_endpoint;
 use mmids_core::endpoints::rtmp_server::start_rtmp_server_endpoint;
@@ -16,6 +15,7 @@ use std::fs;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::time::sleep;
+use tracing::info;
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
@@ -26,7 +26,7 @@ const FFMPEG_PULL: &str = "ffmpeg_pull";
 
 #[tokio::main]
 pub async fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     let config = read_config();
     let _workflows = init(config).await.expect("Initialization failed");
