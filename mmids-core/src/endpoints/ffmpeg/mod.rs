@@ -6,10 +6,11 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
-use std::path::Path;
-use std::process::{Child, Command};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use thiserror::Error;
+use tokio::fs::File;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use tracing::{error, info, instrument};
@@ -49,7 +50,7 @@ pub enum FfmpegEndpointNotification {
 #[derive(Debug)]
 pub enum FfmpegFailureCause {
     /// The log file for ffmpeg's standard output could not be created
-    LogFileCouldNotBeCreated(String),
+    LogFileCouldNotBeCreated(String, std::io::Error),
 
     /// ffmpeg was requested to be started with an identifier that matches an ffmpeg operation
     /// that's already being run.
@@ -66,7 +67,10 @@ pub enum FfmpegEndpointStartError {
     FfmpegExecutableNotFound(String),
 
     #[error("Failed to create log directory")]
-    LogDirectoryFailure(#[from] std::io::Error),
+    LogDirectoryCreationFailure,
+
+    #[error("The log directory '{0}' is an invalid path")]
+    LogDirectoryInvalidPath(String),
 }
 
 /// H264 presets
@@ -140,8 +144,9 @@ pub struct FfmpegParams {
 /// can be communicated with
 pub fn start_ffmpeg_endpoint(
     ffmpeg_exe_path: String,
+    log_root: String,
 ) -> Result<UnboundedSender<FfmpegEndpointRequest>, FfmpegEndpointStartError> {
-    let actor = Actor::new(ffmpeg_exe_path)?;
+    let actor = Actor::new(ffmpeg_exe_path, log_root)?;
     let (sender, receiver) = unbounded_channel();
 
     tokio::spawn(actor.run(receiver));
@@ -166,21 +171,41 @@ struct FfmpegProcess {
 
 struct Actor<'a> {
     ffmpeg_exe_path: String,
+    log_path: PathBuf,
     futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
     processes: HashMap<Uuid, FfmpegProcess>,
 }
 
 impl<'a> Actor<'a> {
-    fn new(ffmpeg_exe_path: String) -> Result<Self, FfmpegEndpointStartError> {
+    fn new(ffmpeg_exe_path: String, log_root: String) -> Result<Self, FfmpegEndpointStartError> {
         let path = Path::new(ffmpeg_exe_path.as_str());
-        if !path.exists() || !path.is_file() {
+        if !path.is_file() {
             return Err(FfmpegEndpointStartError::FfmpegExecutableNotFound(
                 ffmpeg_exe_path,
             ));
         }
 
+        let mut path = PathBuf::from(log_root.as_str());
+        if path.is_file() {
+            // We expected the path to be a new or existing directory, not a file
+            return Err(FfmpegEndpointStartError::LogDirectoryInvalidPath(log_root));
+        }
+
+        path.push("ffmpeg_stdout");
+        if !path.exists() {
+            if let Err(error) = std::fs::create_dir_all(&path) {
+                error!(
+                    "Could not create log directory '{}': {:?}",
+                    path.display().to_string(),
+                    error
+                );
+                return Err(FfmpegEndpointStartError::LogDirectoryCreationFailure);
+            }
+        }
+
         Ok(Actor {
             ffmpeg_exe_path,
+            log_path: path,
             processes: HashMap::new(),
             futures: FuturesUnordered::new(),
         })
@@ -208,7 +233,7 @@ impl<'a> Actor<'a> {
 
                 FutureResult::RequestReceived(request, receiver) => {
                     self.futures.push(wait_for_request(receiver).boxed());
-                    self.handle_request(request);
+                    self.handle_request(request).await;
                 }
             }
         }
@@ -261,7 +286,7 @@ impl<'a> Actor<'a> {
         }
     }
 
-    fn handle_request(&mut self, request: FfmpegEndpointRequest) {
+    async fn handle_request(&mut self, request: FfmpegEndpointRequest) {
         match request {
             FfmpegEndpointRequest::StopFfmpeg { id } => {
                 if let Some(process) = self.processes.remove(&id) {
@@ -284,7 +309,26 @@ impl<'a> Actor<'a> {
                     return;
                 }
 
-                let handle = match self.start_ffmpeg(&id, &params) {
+                let log_file_name = format!("{}.log", id.to_string());
+                let log_path = self.log_path.as_path().join(log_file_name.as_str());
+                let log_file = match File::create(&log_path).await {
+                    Ok(x) => x,
+                    Err(e) => {
+                        error!("Failed to create ffmpeg log file '{}'", log_file_name);
+                        let _ = notification_channel.send(
+                            FfmpegEndpointNotification::FfmpegFailedToStart {
+                                cause: FfmpegFailureCause::LogFileCouldNotBeCreated(
+                                    log_file_name.to_string(),
+                                    e,
+                                ),
+                            },
+                        );
+
+                        return;
+                    }
+                };
+
+                let handle = match self.start_ffmpeg(&id, &params, log_file) {
                     Ok(x) => x,
                     Err(e) => {
                         error!("Failed to start ffmpeg: {}", e);
@@ -315,7 +359,12 @@ impl<'a> Actor<'a> {
         }
     }
 
-    fn start_ffmpeg(&self, id: &Uuid, params: &FfmpegParams) -> Result<Child, std::io::Error> {
+    fn start_ffmpeg(
+        &self,
+        id: &Uuid,
+        params: &FfmpegParams,
+        mut log_file: File,
+    ) -> Result<Child, std::io::Error> {
         let mut args = Vec::new();
         if params.read_in_real_time {
             args.push("-re".to_string());
@@ -395,6 +444,7 @@ impl<'a> Actor<'a> {
         }
 
         args.push("-y".to_string()); // always overwrite
+        args.push("-nostats".to_string());
 
         info!(
             id = ?id,
@@ -402,7 +452,20 @@ impl<'a> Actor<'a> {
             id, args
         );
 
-        Command::new(&self.ffmpeg_exe_path).args(args).spawn()
+        let mut command = Command::new(&self.ffmpeg_exe_path)
+            .args(args)
+            .stderr(Stdio::piped()) // ffmpeg seems to write output to stderr
+            .spawn()?;
+
+        if let Some(stderr) = command.stderr.take() {
+            if let Ok(mut stdout) = tokio::process::ChildStderr::from_std(stderr) {
+                tokio::spawn(async move {
+                    let _ = tokio::io::copy(&mut stdout, &mut log_file).await;
+                });
+            }
+        }
+
+        Ok(command)
     }
 }
 
