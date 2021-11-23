@@ -11,8 +11,11 @@ use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoder;
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStep;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStep;
 use mmids_core::workflows::{start_workflow, WorkflowRequest};
+use native_tls::Identity;
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::time::sleep;
 use tracing::info;
@@ -57,12 +60,9 @@ async fn init(config: MmidsConfig) -> Vec<UnboundedSender<WorkflowRequest>> {
 
     let tls_options = if let Some(path) = cert_path {
         if let Some(password) = cert_password {
-            Some(TlsOptions {
-                pfx_file_location: path,
-                cert_password: password,
-            })
+            Some(load_tls_options(path, password).await)
         } else {
-            None
+            panic!("TLS certificate specified without a password");
         }
     } else {
         None
@@ -192,4 +192,26 @@ async fn init(config: MmidsConfig) -> Vec<UnboundedSender<WorkflowRequest>> {
     }
 
     workflows
+}
+
+async fn load_tls_options(cert_path: String, password: String) -> TlsOptions {
+    let mut file = match File::open(&cert_path).await {
+        Ok(file) => file,
+        Err(e) => panic!("Error reading pfx at '{}': {:?}", cert_path, e),
+    };
+
+    let mut file_content = Vec::new();
+    match file.read_to_end(&mut file_content).await {
+        Ok(_) => (),
+        Err(e) => panic!("Failed to open file {}: {:?}", cert_path, e),
+    }
+
+    let identity = match Identity::from_pkcs12(&file_content, password.as_str()) {
+        Ok(identity) => identity,
+        Err(e) => panic!("Failed reading cert from '{}': {:?}", cert_path, e),
+    };
+
+    TlsOptions {
+        certificate: identity,
+    }
 }

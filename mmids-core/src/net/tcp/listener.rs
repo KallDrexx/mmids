@@ -6,11 +6,9 @@ use futures::future::FutureExt;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio_native_tls::native_tls::Identity;
 use tokio_native_tls::TlsAcceptor;
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
@@ -71,34 +69,7 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
     } = params;
 
     let tls = if let Some(tls) = tls_options.as_ref() {
-        let mut file = match File::open(&tls.pfx_file_location).await {
-            Ok(file) => file,
-            Err(e) => {
-                error!("Error reading pfx at '{}': {:?}", tls.pfx_file_location, e);
-                return;
-            }
-        };
-
-        let mut file_content = Vec::new();
-        match file.read_to_end(&mut file_content).await {
-            Ok(_) => (),
-            Err(e) => {
-                error!("Failed to open file {}: {:?}", tls.pfx_file_location, e);
-                return;
-            }
-        }
-
-        let identity = match Identity::from_pkcs12(&file_content, tls.cert_password.as_str()) {
-            Ok(identity) => identity,
-            Err(e) => {
-                error!(
-                    "Failed reading cert from '{}': {:?}",
-                    tls.pfx_file_location, e
-                );
-                return;
-            }
-        };
-
+        let identity = tls.certificate.clone();
         let tls_acceptor = match native_tls::TlsAcceptor::builder(identity).build() {
             Ok(x) => x,
             Err(e) => {

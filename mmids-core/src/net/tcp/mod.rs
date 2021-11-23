@@ -6,6 +6,7 @@ mod socket_manager;
 
 use super::ConnectionId;
 use bytes::Bytes;
+use native_tls::Identity;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
@@ -32,8 +33,7 @@ pub enum RequestFailureReason {
 
 /// Options required for TLS session handling
 pub struct TlsOptions {
-    pub pfx_file_location: String,
-    pub cert_password: String,
+    pub certificate: Identity,
 }
 
 /// Requests by callers to the TCP socket manager

@@ -533,6 +533,7 @@ name = "mmids-app"
 version = "0.1.0"
 dependencies = [
  "mmids-core",
+ "native-tls",
  "tokio",
  "tracing",
  "tracing-futures",
