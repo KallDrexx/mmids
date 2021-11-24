@@ -42,6 +42,12 @@ enum FutureResult {
     },
 }
 
+struct StreamDetails {
+    /// The step that first sent a new stream media notification.  We know that if this step is
+    /// removed, the stream no longer has a source of video and should be considered disconnected
+    originating_step_id: u64,
+}
+
 struct Actor<'a> {
     name: String,
     steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep>>,
@@ -52,6 +58,7 @@ struct Actor<'a> {
     step_inputs: StepInputs,
     step_outputs: StepOutputs<'a>,
     cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
+    active_streams: HashMap<StreamId, StreamDetails>,
 }
 
 impl<'a> Actor<'a> {
@@ -95,6 +102,7 @@ impl<'a> Actor<'a> {
             step_inputs: StepInputs::new(),
             step_outputs: StepOutputs::new(),
             cached_step_media: HashMap::new(),
+            active_streams: HashMap::new(),
         }
     }
 
@@ -220,6 +228,7 @@ impl<'a> Actor<'a> {
                         .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
                 }
 
+                self.update_stream_details(self.active_steps[x]);
                 self.update_media_cache_from_outputs(self.active_steps[x]);
                 self.step_inputs.clear();
                 self.step_inputs
@@ -257,6 +266,7 @@ impl<'a> Actor<'a> {
                     .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
             }
 
+            self.update_stream_details(initial_step_id);
             self.update_media_cache_from_outputs(initial_step_id);
         }
 
@@ -306,6 +316,37 @@ impl<'a> Actor<'a> {
             }
 
             info!("All pending steps moved to active");
+        }
+    }
+
+    fn update_stream_details(&mut self, current_step_id: u64) {
+        for media in &self.step_outputs.media {
+            match &media.content {
+                MediaNotificationContent::Video { .. } => (),
+                MediaNotificationContent::Audio { .. } => (),
+                MediaNotificationContent::Metadata { .. } => (),
+                MediaNotificationContent::NewIncomingStream { .. } => {
+                    if !self.active_streams.contains_key(&media.stream_id) {
+                        // Since this is the first time we've gotten a new incoming stream
+                        // notification for this stream, assume this this stream originates from
+                        // the current step
+                        self.active_streams.insert(
+                            media.stream_id.clone(),
+                            StreamDetails {
+                                originating_step_id: current_step_id,
+                            },
+                        );
+                    }
+                }
+
+                MediaNotificationContent::StreamDisconnected => {
+                    if let Some(details) = self.active_streams.get(&media.stream_id) {
+                        if details.originating_step_id == current_step_id {
+                            self.active_streams.remove(&media.stream_id);
+                        }
+                    }
+                }
+            }
         }
     }
 
