@@ -3,6 +3,8 @@ use crate::workflows::steps::factory::{FactoryCreateError, FactoryCreateResponse
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
+use crate::workflows::{MediaNotification, MediaNotificationContent};
+use crate::StreamId;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -49,6 +51,7 @@ struct Actor<'a> {
     futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
     step_inputs: StepInputs,
     step_outputs: StepOutputs<'a>,
+    cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
 }
 
 impl<'a> Actor<'a> {
@@ -91,6 +94,7 @@ impl<'a> Actor<'a> {
             steps_waiting_for_creation,
             step_inputs: StepInputs::new(),
             step_outputs: StepOutputs::new(),
+            cached_step_media: HashMap::new(),
         }
     }
 
@@ -193,7 +197,7 @@ impl<'a> Actor<'a> {
             for x in start_index..self.active_steps.len() {
                 let span = span!(
                     Level::INFO,
-                    "Step Execution",
+                    "Active Step Execution",
                     step_id = self.active_steps[x]
                 );
                 let _enter = span.enter();
@@ -211,20 +215,25 @@ impl<'a> Actor<'a> {
 
                 step.execute(&mut self.step_inputs, &mut self.step_outputs);
 
-                self.step_inputs.clear();
-                self.step_inputs
-                    .media
-                    .extend(self.step_outputs.media.drain(..));
-
                 for future in self.step_outputs.futures.drain(..) {
                     self.futures
                         .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
                 }
 
+                self.update_media_cache_from_outputs(self.active_steps[x]);
+                self.step_inputs.clear();
+                self.step_inputs
+                    .media
+                    .extend(self.step_outputs.media.drain(..));
+
                 self.step_outputs.clear();
             }
         } else {
-            let span = span!(Level::INFO, "Step Execution", step_id = initial_step_id);
+            let span = span!(
+                Level::INFO,
+                "Pending Step Execution",
+                step_id = initial_step_id
+            );
             let _enter = span.enter();
 
             // We are trying to execute a workflow step that is not yet active, most likely due to
@@ -248,8 +257,7 @@ impl<'a> Actor<'a> {
                     .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
             }
 
-            // TODO: Figure out what to do with media outputs in this case.  We probably need to
-            // store it and play it down the active stat once this becomes active.
+            self.update_media_cache_from_outputs(initial_step_id);
         }
 
         self.check_if_all_pending_steps_are_active();
@@ -292,11 +300,77 @@ impl<'a> Actor<'a> {
             for id in &self.pending_steps {
                 if !self.active_steps.contains(id) {
                     self.steps_by_definition_id.remove(id);
+                    self.cached_step_media.remove(id);
                     info!(step_id = id, "Removing now unused step id {}", id);
                 }
             }
 
             info!("All pending steps moved to active");
+        }
+    }
+
+    fn update_media_cache_from_outputs(&mut self, step_id: u64) {
+        let step_cache = self
+            .cached_step_media
+            .entry(step_id)
+            .or_insert(HashMap::new());
+
+        for media in &self.step_outputs.media {
+            enum Operation {
+                Add,
+                Remove,
+                Ignore,
+            }
+            let operation = match &media.content {
+                MediaNotificationContent::StreamDisconnected => {
+                    // Stream has ended so no reason to keep the cache around
+                    Operation::Remove
+                }
+
+                MediaNotificationContent::NewIncomingStream { .. } => Operation::Add,
+
+                MediaNotificationContent::Metadata { .. } => {
+                    // I *think* we can ignore these, since the sequence headers are really
+                    // what's important to replay
+                    Operation::Ignore
+                }
+
+                MediaNotificationContent::Video {
+                    is_sequence_header, ..
+                } => {
+                    // We must cache sequence headers.  We *may* need to cache the latest key frame
+                    if *is_sequence_header {
+                        Operation::Add
+                    } else {
+                        Operation::Ignore
+                    }
+                }
+
+                MediaNotificationContent::Audio {
+                    is_sequence_header, ..
+                } => {
+                    if *is_sequence_header {
+                        Operation::Add
+                    } else {
+                        Operation::Ignore
+                    }
+                }
+            };
+
+            match operation {
+                Operation::Ignore => (),
+                Operation::Remove => {
+                    step_cache.remove(&media.stream_id);
+                }
+
+                Operation::Add => {
+                    let collection = step_cache
+                        .entry(media.stream_id.clone())
+                        .or_insert(Vec::new());
+
+                    collection.push(media.clone());
+                }
+            }
         }
     }
 }
