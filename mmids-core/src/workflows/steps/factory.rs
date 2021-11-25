@@ -1,103 +1,69 @@
-//! The workflow step factory is an actor used to create new instances of workflow steps as needed.
-//! Any workflow steps that can be created are registered with the factory by passing in a closure.
-//! When the factory is requested to create an instance of that step, it will be created based on
-//! the step definition given.
 use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
 use crate::workflows::steps::StepCreationResult;
 use std::collections::HashMap;
 use thiserror::Error;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::info;
 
-pub type FactoryCreateResponse = Result<StepCreationResult, FactoryCreateError>;
-
-/// Requests being made to a workflow factory
-pub enum FactoryRequest {
-    /// Requests to register a function to be used to create a specific type of workflow step
-    RegisterFunction {
-        /// The type of workflow step to register for
-        step_type: WorkflowStepType,
-
-        /// The closure to use for creating new instances of the workflow step
-        creation_fn: Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>,
-
-        /// The channel to be used to send the result of the registration
-        response_channel: UnboundedSender<Result<(), FactoryRegistrationError>>,
-    },
-
-    /// Requests the workflow factory to create the specified step definition
-    CreateInstance {
-        /// The definition for the workflow step to create
-        definition: WorkflowStepDefinition,
-
-        /// The channel to send the creation result with
-        response_channel: UnboundedSender<FactoryCreateResponse>,
-    },
+/// Represents a type that can generate an instance of a workflow step
+pub trait StepGenerator {
+    /// Creates a brand new instance of a workflow step based on the supplied definition
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult;
 }
 
-/// Errors that can occur when a factory registration request fails
+/// The workflow step factory allows consumers to register different workflow step generation
+/// instances to use for specific workflow step types.  Consumers can then request the factory
+/// to generate workflow steps based on the passed in step definition.
+pub struct WorkflowStepFactory {
+    generators: HashMap<WorkflowStepType, Box<dyn StepGenerator>>,
+}
+
+/// Errors that can occur when an attempting to register a generator fails
 #[derive(Error, Debug)]
 pub enum FactoryRegistrationError {
-    #[error("The workflow step factory already has a step registered with the name '{0}'")]
-    DuplicateName(String),
+    #[error(
+        "The workflow step factory already has a step generator registered with the type '{0}'"
+    )]
+    DuplicateName(WorkflowStepType),
 }
 
-/// Errors that can occur when a creation request fails
+/// Errors that can occur when an attempt to generate a workflow step fails
 #[derive(Error, Debug)]
 pub enum FactoryCreateError {
-    #[error("No workflow step is registered for the name '{0}'")]
-    NoRegisteredStep(String),
+    #[error("No workflow step generator is registered for the type '{0}'")]
+    NoRegisteredStep(WorkflowStepType),
 }
 
-/// Starts a new workflow step factory instance, and returns the channel that can be used to send
-/// requests to it.
-pub fn start_step_factory() -> UnboundedSender<FactoryRequest> {
-    let (sender, receiver) = unbounded_channel();
-    tokio::spawn(run(receiver));
-
-    sender
-}
-
-async fn run(mut receiver: UnboundedReceiver<FactoryRequest>) {
-    let mut registered_functions = HashMap::new();
-
-    info!("Starting workflow step factory");
-    while let Some(request) = receiver.recv().await {
-        match request {
-            FactoryRequest::RegisterFunction {
-                step_type,
-                creation_fn,
-                response_channel,
-            } => {
-                if registered_functions.contains_key(&step_type.0) {
-                    let _ = response_channel
-                        .send(Err(FactoryRegistrationError::DuplicateName(step_type.0)));
-                    continue;
-                }
-
-                registered_functions.insert(step_type.0, creation_fn);
-                let _ = response_channel.send(Ok(()));
-            }
-
-            FactoryRequest::CreateInstance {
-                definition,
-                response_channel,
-            } => {
-                let creation_fn = match registered_functions.get(&definition.step_type.0) {
-                    Some(x) => x,
-                    None => {
-                        let _ = response_channel.send(Err(FactoryCreateError::NoRegisteredStep(
-                            definition.step_type.0.clone(),
-                        )));
-                        continue;
-                    }
-                };
-
-                let result = creation_fn(&definition);
-                let _ = response_channel.send(Ok(result));
-            }
+impl WorkflowStepFactory {
+    /// Creates a new workflow step factory, with an empty registration
+    pub fn new() -> Self {
+        WorkflowStepFactory {
+            generators: HashMap::new(),
         }
     }
 
-    info!("Workflow step factory closing");
+    /// Attempts to register a specific generator instance with the specified
+    pub fn register(
+        &mut self,
+        step_type: WorkflowStepType,
+        generator: Box<dyn StepGenerator>,
+    ) -> Result<(), FactoryRegistrationError> {
+        if self.generators.contains_key(&step_type) {
+            return Err(FactoryRegistrationError::DuplicateName(step_type));
+        }
+
+        self.generators.insert(step_type, generator);
+        return Ok(());
+    }
+
+    /// Attempts to create a new instance of a workflow step based on a specified definition
+    pub fn create_step(
+        &self,
+        definition: WorkflowStepDefinition,
+    ) -> Result<StepCreationResult, FactoryCreateError> {
+        let generator = match self.generators.get(&definition.step_type) {
+            Some(generator) => generator,
+            None => return Err(FactoryCreateError::NoRegisteredStep(definition.step_type)),
+        };
+
+        Ok(generator.generate(definition))
+    }
 }

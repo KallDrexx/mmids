@@ -8,10 +8,11 @@ use crate::endpoints::ffmpeg::{
 };
 use crate::endpoints::rtmp_server::RtmpEndpointRequest;
 use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::factory::StepGenerator;
 use crate::workflows::steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 use crate::workflows::steps::{
-    CreateFactoryFnResult, ExternalStreamReader, StepCreationResult, StepFutureResult, StepInputs,
-    StepOutputs, StepStatus, WorkflowStep,
+    ExternalStreamReader, StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
+    StepStatus, WorkflowStep,
 };
 use crate::StreamId;
 use futures::FutureExt;
@@ -23,7 +24,13 @@ const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";
 const SEGMENT_COUNT: &str = "count";
 
-pub struct FfmpegHlsStep {
+/// Generates new instances of the ffmpeg HLS workflow step based on specified step definitions.
+pub struct FfmpegHlsStepGenerator {
+    rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+}
+
+struct FfmpegHlsStep {
     definition: WorkflowStepDefinition,
     status: StepStatus,
     stream_reader: ExternalStreamReader,
@@ -57,21 +64,20 @@ struct ParamGenerator {
     segment_count: u16,
 }
 
-impl FfmpegHlsStep {
-    pub fn create_factory_fn(
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
-        rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    ) -> CreateFactoryFnResult {
-        Box::new(move |definition| {
-            FfmpegHlsStep::new(definition, ffmpeg_endpoint.clone(), rtmp_endpoint.clone())
-        })
-    }
-
+impl FfmpegHlsStepGenerator {
     pub fn new(
-        definition: &WorkflowStepDefinition,
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    ) -> StepCreationResult {
+        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    ) -> Self {
+        FfmpegHlsStepGenerator {
+            rtmp_endpoint,
+            ffmpeg_endpoint,
+        }
+    }
+}
+
+impl StepGenerator for FfmpegHlsStepGenerator {
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let path = match definition.parameters.get(PATH) {
             Some(value) => value,
             None => return Err(Box::new(StepStartupError::NoPathProvided)),
@@ -111,11 +117,11 @@ impl FfmpegHlsStep {
         };
 
         let handler_generator =
-            FfmpegHandlerGenerator::new(ffmpeg_endpoint.clone(), Box::new(param_generator));
+            FfmpegHandlerGenerator::new(self.ffmpeg_endpoint.clone(), Box::new(param_generator));
 
         let (reader, mut futures) = ExternalStreamReader::new(
             get_rtmp_app(definition.get_id().to_string()),
-            rtmp_endpoint,
+            self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
         );
 
@@ -125,7 +131,7 @@ impl FfmpegHlsStep {
             stream_reader: reader,
         };
 
-        futures.push(notify_when_ffmpeg_endpoint_is_gone(ffmpeg_endpoint).boxed());
+        futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());
 
         Ok((Box::new(step), futures))
     }

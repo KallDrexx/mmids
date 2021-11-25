@@ -2,7 +2,7 @@ use log::{error, info, warn};
 use mmids_core::net::tcp::start_socket_manager;
 
 use mmids_core::endpoints::rtmp_server::{
-    start_rtmp_server_endpoint, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
+    start_rtmp_server_endpoint, IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,
 };
@@ -16,7 +16,7 @@ pub async fn main() {
 
     info!("Starting rtmp server validator");
 
-    let socket_manager_sender = start_socket_manager();
+    let socket_manager_sender = start_socket_manager(None);
     let rtmp_server_sender = start_rtmp_server_endpoint(socket_manager_sender);
     let (rtmp_response_sender, mut publish_notification_receiver) = unbounded_channel();
     let _ = rtmp_server_sender.send(RtmpEndpointRequest::ListenForPublishers {
@@ -25,6 +25,8 @@ pub async fn main() {
         rtmp_stream_key: StreamKeyRegistration::Any,
         message_channel: rtmp_response_sender,
         stream_id: None,
+        ip_restrictions: IpRestriction::None,
+        use_tls: false,
     });
 
     info!("Requesting to listen for publish requests on port 1935 and app 'live'");
@@ -53,6 +55,8 @@ pub async fn main() {
         rtmp_stream_key: StreamKeyRegistration::Any,
         media_channel: media_receiver,
         notification_channel: notification_sender,
+        ip_restrictions: IpRestriction::None,
+        use_tls: false,
     });
 
     info!("Requesting to listening for play requests on port 1935 and app 'live'");

@@ -10,10 +10,10 @@ use crate::endpoints::ffmpeg::{
 };
 use crate::endpoints::rtmp_server::RtmpEndpointRequest;
 use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::factory::StepGenerator;
 use crate::workflows::steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 use crate::workflows::steps::{
-    CreateFactoryFnResult, StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
-    StepStatus, WorkflowStep,
+    StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::StreamId;
 use futures::FutureExt;
@@ -23,7 +23,13 @@ use tracing::error;
 
 const TARGET: &str = "target";
 
-pub struct FfmpegRtmpPushStep {
+/// Generates new instances of the ffmpeg rtmp push workflow step based on specified step definitions.
+pub struct FfmpegRtmpPushStepGenerator {
+    rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+}
+
+struct FfmpegRtmpPushStep {
     definition: WorkflowStepDefinition,
     status: StepStatus,
     stream_reader: ExternalStreamReader,
@@ -46,21 +52,20 @@ struct ParamGenerator {
     target: String,
 }
 
-impl FfmpegRtmpPushStep {
-    pub fn create_factory_fn(
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
-        rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    ) -> CreateFactoryFnResult {
-        Box::new(move |definition| {
-            FfmpegRtmpPushStep::new(definition, ffmpeg_endpoint.clone(), rtmp_endpoint.clone())
-        })
-    }
-
+impl FfmpegRtmpPushStepGenerator {
     pub fn new(
-        definition: &WorkflowStepDefinition,
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    ) -> StepCreationResult {
+        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    ) -> Self {
+        FfmpegRtmpPushStepGenerator {
+            rtmp_endpoint,
+            ffmpeg_endpoint,
+        }
+    }
+}
+
+impl StepGenerator for FfmpegRtmpPushStepGenerator {
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let target = match definition.parameters.get(TARGET) {
             Some(value) => value,
             None => return Err(Box::new(StepStartupError::NoTargetProvided)),
@@ -72,11 +77,11 @@ impl FfmpegRtmpPushStep {
         };
 
         let handler_generator =
-            FfmpegHandlerGenerator::new(ffmpeg_endpoint.clone(), Box::new(param_generator));
+            FfmpegHandlerGenerator::new(self.ffmpeg_endpoint.clone(), Box::new(param_generator));
 
         let (reader, mut futures) = ExternalStreamReader::new(
             format!("ffmpeg-rtmp-push-{}", definition.get_id()),
-            rtmp_endpoint,
+            self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
         );
 
@@ -86,7 +91,7 @@ impl FfmpegRtmpPushStep {
             stream_reader: reader,
         };
 
-        futures.push(notify_when_ffmpeg_endpoint_is_gone(ffmpeg_endpoint).boxed());
+        futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());
 
         Ok((Box::new(step), futures))
     }

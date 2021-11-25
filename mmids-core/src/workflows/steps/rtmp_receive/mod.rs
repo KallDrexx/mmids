@@ -11,9 +11,9 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::net::{ConnectionId, IpAddress, IpAddressParseError};
 use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::factory::StepGenerator;
 use crate::workflows::steps::{
-    CreateFactoryFnResult, FutureList, StepFutureResult, StepInputs, StepOutputs, StepStatus,
-    WorkflowStep,
+    StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
@@ -31,7 +31,12 @@ pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
 pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
 pub const RTMPS_FLAG: &'static str = "rtmps";
 
-pub struct RtmpReceiverStep {
+/// Generates new rtmp receiver workflow step instances based on specified step definitions.
+pub struct RtmpReceiverStepGenerator {
+    rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
+}
+
+struct RtmpReceiverStep {
     definition: WorkflowStepDefinition,
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     port: u16,
@@ -81,22 +86,16 @@ enum StepStartupError {
     BothDenyAndAllowIpRestrictionsSpecified,
 }
 
-impl RtmpReceiverStep {
-    pub fn create_factory_fn(
-        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> CreateFactoryFnResult {
-        Box::new(move |definition| {
-            match RtmpReceiverStep::new(definition, rtmp_endpoint_sender.clone()) {
-                Ok((step, futures)) => Ok((Box::new(step), futures)),
-                Err(e) => Err(e),
-            }
-        })
+impl RtmpReceiverStepGenerator {
+    pub fn new(rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>) -> Self {
+        RtmpReceiverStepGenerator {
+            rtmp_endpoint_sender,
+        }
     }
+}
 
-    pub fn new<'a>(
-        definition: &WorkflowStepDefinition,
-        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<(Self, FutureList<'a>), Box<dyn std::error::Error + Sync + Send>> {
+impl StepGenerator for RtmpReceiverStepGenerator {
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let use_rtmps = match definition.parameters.get(RTMPS_FLAG) {
             Some(_) => true,
             None => false,
@@ -151,7 +150,7 @@ impl RtmpReceiverStep {
         let step = RtmpReceiverStep {
             definition: definition.clone(),
             status: StepStatus::Created,
-            rtmp_endpoint_sender: rtmp_endpoint_sender.clone(),
+            rtmp_endpoint_sender: self.rtmp_endpoint_sender.clone(),
             port,
             rtmp_app: app.to_string(),
             connection_stream_id_map: HashMap::new(),
@@ -176,11 +175,13 @@ impl RtmpReceiverStep {
             });
 
         Ok((
-            step,
+            Box::new(step),
             vec![wait_for_rtmp_endpoint_response(receiver).boxed()],
         ))
     }
+}
 
+impl RtmpReceiverStep {
     fn handle_rtmp_publisher_message(
         &mut self,
         outputs: &mut StepOutputs,
@@ -343,6 +344,7 @@ impl WorkflowStep for RtmpReceiverStep {
                     outputs
                         .futures
                         .push(wait_for_rtmp_endpoint_response(receiver).boxed());
+
                     self.handle_rtmp_publisher_message(outputs, message);
                 }
             }

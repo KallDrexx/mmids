@@ -1,5 +1,5 @@
 use crate::workflows::definitions::WorkflowDefinition;
-use crate::workflows::steps::factory::{FactoryCreateError, FactoryCreateResponse, FactoryRequest};
+use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -8,7 +8,8 @@ use crate::StreamId;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, span, warn, Level};
 
@@ -18,11 +19,11 @@ pub enum WorkflowRequest {}
 /// Starts the execution of a workflow with the specified definition
 pub fn start(
     definition: WorkflowDefinition,
-    step_factory: UnboundedSender<FactoryRequest>,
+    step_factory: Arc<WorkflowStepFactory>,
 ) -> UnboundedSender<WorkflowRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(definition, step_factory, receiver);
-    tokio::spawn(actor.run());
+    let actor = Actor::new(&definition, step_factory, receiver);
+    tokio::spawn(actor.run(definition));
 
     sender
 }
@@ -30,11 +31,6 @@ pub fn start(
 enum FutureResult {
     AllConsumersGone,
     WorkflowRequestReceived(WorkflowRequest, UnboundedReceiver<WorkflowRequest>),
-    StepFactoryGone,
-    StepCreationResultReceived {
-        step_id: u64,
-        result: FactoryCreateResponse,
-    },
 
     StepFutureResolved {
         step_id: u64,
@@ -53,42 +49,23 @@ struct Actor<'a> {
     steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep>>,
     active_steps: Vec<u64>,
     pending_steps: Vec<u64>,
-    steps_waiting_for_creation: HashSet<u64>,
     futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
     step_inputs: StepInputs,
     step_outputs: StepOutputs<'a>,
     cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
     active_streams: HashMap<StreamId, StreamDetails>,
+    step_factory: Arc<WorkflowStepFactory>,
 }
 
 impl<'a> Actor<'a> {
     #[instrument(skip(definition, step_factory, receiver), fields(workflow_name = %definition.name))]
     fn new(
-        definition: WorkflowDefinition,
-        step_factory: UnboundedSender<FactoryRequest>,
+        definition: &WorkflowDefinition,
+        step_factory: Arc<WorkflowStepFactory>,
         receiver: UnboundedReceiver<WorkflowRequest>,
     ) -> Self {
         let futures = FuturesUnordered::new();
-        let mut pending_steps = Vec::new();
-        let mut steps_waiting_for_creation = HashSet::new();
         info!("Creating workflow");
-        for step in &definition.steps {
-            info!(
-                "Step defined with type {} and id {}",
-                step.step_type.0,
-                step.get_id()
-            );
-            pending_steps.push(step.get_id());
-            steps_waiting_for_creation.insert(step.get_id());
-
-            let (factory_sender, factory_receiver) = unbounded_channel();
-            let _ = step_factory.send(FactoryRequest::CreateInstance {
-                definition: step.clone(),
-                response_channel: factory_sender,
-            });
-
-            futures.push(wait_for_factory_response(factory_receiver, step.get_id()).boxed())
-        }
 
         futures.push(wait_for_workflow_request(receiver).boxed());
 
@@ -97,18 +74,20 @@ impl<'a> Actor<'a> {
             futures,
             steps_by_definition_id: HashMap::new(),
             active_steps: Vec::new(),
-            pending_steps,
-            steps_waiting_for_creation,
+            pending_steps: Vec::new(),
             step_inputs: StepInputs::new(),
             step_outputs: StepOutputs::new(),
             cached_step_media: HashMap::new(),
             active_streams: HashMap::new(),
+            step_factory,
         }
     }
 
-    #[instrument(name = "Workflow Execution", skip(self), fields(workflow_name = %self.name))]
-    async fn run(mut self) {
+    #[instrument(name = "Workflow Execution", skip(self, initial_definition), fields(workflow_name = %self.name))]
+    async fn run(mut self, initial_definition: WorkflowDefinition) {
         info!("Starting workflow");
+
+        self.apply_new_definition(initial_definition);
 
         while let Some(future) = self.futures.next().await {
             match future {
@@ -117,25 +96,13 @@ impl<'a> Actor<'a> {
                     break;
                 }
 
-                FutureResult::StepFactoryGone => {
-                    warn!("Step factory is gone");
-                    break;
-                }
-
                 FutureResult::WorkflowRequestReceived(_request, receiver) => {
                     self.futures
                         .push(wait_for_workflow_request(receiver).boxed());
                 }
 
-                FutureResult::StepCreationResultReceived {
-                    step_id,
-                    result: factory_response,
-                } => {
-                    self.handle_step_creation_result(step_id, factory_response);
-                }
-
                 FutureResult::StepFutureResolved { step_id, result } => {
-                    self.execute_steps(step_id, Some(result), false);
+                    self.execute_steps(step_id, Some(result), false, true);
                 }
             }
         }
@@ -143,42 +110,49 @@ impl<'a> Actor<'a> {
         info!("Workflow closing");
     }
 
-    fn handle_step_creation_result(
-        &mut self,
-        step_id: u64,
-        factory_response: FactoryCreateResponse,
-    ) {
-        let step_result = match factory_response {
-            Ok(x) => x,
-            Err(error) => match error {
-                FactoryCreateError::NoRegisteredStep(step) => {
-                    error!("Requested creation of step '{}' but no step has  been registered with that name.", step);
+    fn apply_new_definition(&mut self, definition: WorkflowDefinition) {
+        info!(
+            "Applying a new workflow definition with {} steps",
+            definition.steps.len()
+        );
+        self.pending_steps.clear();
+        for step_definition in definition.steps {
+            let id = step_definition.get_id();
+            let step_type = step_definition.step_type.clone();
+            self.pending_steps.push(id);
 
-                    return;
+            if !self.steps_by_definition_id.contains_key(&id) {
+                let span = span!(Level::INFO, "Step Creation", step_id = id);
+                let _ = span.enter();
+
+                let step_result = match self.step_factory.create_step(step_definition) {
+                    Ok(step_result) => step_result,
+                    Err(error) => {
+                        error!("Step factory failed to generate step instance: {:?}", error);
+
+                        // TODO: put workflow in error state
+                        return;
+                    }
+                };
+
+                let (step, futures) = match step_result {
+                    Ok((step, futures)) => (step, futures),
+                    Err(error) => {
+                        error!("Step could not be generated: {}", error);
+
+                        // TODO: put workflow in error state
+                        return;
+                    }
+                };
+
+                for future in futures {
+                    self.futures.push(wait_for_step_future(id, future).boxed());
                 }
-            },
-        };
 
-        let (step, mut future_list) = match step_result {
-            Ok(x) => x,
-            Err(error) => {
-                error!("Creation of step id {} failed: {}", step_id, error);
-                return;
+                self.steps_by_definition_id.insert(id, step);
+                info!("Step type '{}' created", step_type);
             }
-        };
-
-        info!("Successfully got created instance of step id {}", step_id);
-
-        self.steps_waiting_for_creation.remove(&step_id);
-        self.steps_by_definition_id
-            .insert(step.get_definition().get_id(), step);
-
-        for future in future_list.drain(..) {
-            self.futures
-                .push(wait_for_step_future(step_id, future).boxed());
         }
-
-        self.check_if_all_pending_steps_are_active();
     }
 
     fn execute_steps(
@@ -186,6 +160,7 @@ impl<'a> Actor<'a> {
         initial_step_id: u64,
         future_result: Option<Box<dyn StepFutureResult>>,
         preserve_current_step_inputs: bool,
+        perform_pending_check: bool,
     ) {
         if !preserve_current_step_inputs {
             self.step_inputs.clear();
@@ -213,7 +188,9 @@ impl<'a> Actor<'a> {
             self.execute_step(initial_step_id);
         }
 
-        self.check_if_all_pending_steps_are_active();
+        if perform_pending_check {
+            self.check_if_all_pending_steps_are_active();
+        }
     }
 
     fn execute_step(&mut self, step_id: u64) {
@@ -256,15 +233,12 @@ impl<'a> Actor<'a> {
             let step = match self.steps_by_definition_id.get(id) {
                 Some(x) => Some(x),
                 None => {
-                    if self.steps_waiting_for_creation.contains(&id) {
-                        None
-                    } else {
-                        error!(
-                            step_id = id,
-                            "Workflow had step id {} pending but this step was not defined", id
-                        );
-                        return; // TODO: set workflow in error state
-                    }
+                    error!(
+                        step_id = id,
+                        "Workflow had step id {} pending but this step was not defined", id
+                    );
+
+                    return; // TODO: set workflow in error state
                 }
             };
 
@@ -342,7 +316,7 @@ impl<'a> Actor<'a> {
 
                         self.step_inputs.clear();
                         self.step_inputs.media.extend(notifications);
-                        self.execute_steps(current_step_id, None, true);
+                        self.execute_steps(current_step_id, None, true, false);
 
                         // TODO: This is probably going to cause duplicate stream started notifications.
                         // Not sure a way around that and we probably need to remove those warnings.
@@ -462,16 +436,6 @@ async fn wait_for_workflow_request<'a>(
     match receiver.recv().await {
         Some(x) => FutureResult::WorkflowRequestReceived(x, receiver),
         None => FutureResult::AllConsumersGone,
-    }
-}
-
-async fn wait_for_factory_response<'a>(
-    mut receiver: UnboundedReceiver<FactoryCreateResponse>,
-    step_id: u64,
-) -> FutureResult {
-    match receiver.recv().await {
-        Some(result) => FutureResult::StepCreationResultReceived { step_id, result },
-        None => FutureResult::StepFactoryGone,
     }
 }
 

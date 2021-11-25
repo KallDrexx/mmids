@@ -10,11 +10,13 @@ use uuid::Uuid;
 pub async fn main() {
     env_logger::init();
 
-    let endpoint =
-        match start_ffmpeg_endpoint("c:\\users\\me\\tools\\ffmpeg\\bin\\ffmpeg.exe".to_string()) {
-            Ok(x) => x,
-            Err(e) => panic!("Error starting ffmpeg: {:?}", e),
-        };
+    let endpoint = match start_ffmpeg_endpoint(
+        "c:\\users\\me\\tools\\ffmpeg\\bin\\ffmpeg.exe".to_string(),
+        "c:\\temp".to_string(),
+    ) {
+        Ok(x) => x,
+        Err(e) => panic!("Error starting ffmpeg: {:?}", e),
+    };
 
     info!("Ffmpeg runner started");
 

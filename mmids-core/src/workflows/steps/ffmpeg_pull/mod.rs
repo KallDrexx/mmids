@@ -13,9 +13,9 @@ use crate::endpoints::rtmp_server::{
     IpRestriction, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
 };
 use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::factory::StepGenerator;
 use crate::workflows::steps::{
-    CreateFactoryFnResult, StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
-    StepStatus, WorkflowStep,
+    StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
@@ -29,7 +29,13 @@ use uuid::Uuid;
 pub const LOCATION: &'static str = "location";
 pub const STREAM_NAME: &'static str = "stream_name";
 
-pub struct FfmpegPullStep {
+/// Generates new instances of the ffmpeg pull workflow step based on specified step definitions.
+pub struct FfmpegPullStepGenerator {
+    rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+}
+
+struct FfmpegPullStep {
     definition: WorkflowStepDefinition,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
     status: StepStatus,
@@ -64,21 +70,20 @@ enum StepStartupError {
     NoStreamNameSpecified,
 }
 
-impl FfmpegPullStep {
-    pub fn create_factory_fn(
-        rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
-    ) -> CreateFactoryFnResult {
-        Box::new(move |definition| {
-            FfmpegPullStep::new(definition, rtmp_endpoint.clone(), ffmpeg_endpoint.clone())
-        })
-    }
-
+impl FfmpegPullStepGenerator {
     pub fn new(
-        definition: &WorkflowStepDefinition,
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
-    ) -> StepCreationResult {
+    ) -> Self {
+        FfmpegPullStepGenerator {
+            rtmp_endpoint,
+            ffmpeg_endpoint,
+        }
+    }
+}
+
+impl StepGenerator for FfmpegPullStepGenerator {
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let location = match definition.parameters.get(LOCATION) {
             Some(value) => value.clone(),
             None => return Err(Box::new(StepStartupError::NoLocationSpecified)),
@@ -93,7 +98,7 @@ impl FfmpegPullStep {
             definition: definition.clone(),
             status: StepStatus::Created,
             rtmp_app: format!("ffmpeg-pull-{}", definition.get_id()),
-            ffmpeg_endpoint: ffmpeg_endpoint.clone(),
+            ffmpeg_endpoint: self.ffmpeg_endpoint.clone(),
             pull_location: location,
             stream_name: stream_name.clone(),
             ffmpeg_id: None,
@@ -101,25 +106,29 @@ impl FfmpegPullStep {
         };
 
         let (sender, receiver) = unbounded_channel();
-        let _ = rtmp_endpoint.send(RtmpEndpointRequest::ListenForPublishers {
-            port: 1935,
-            rtmp_app: step.rtmp_app.clone(),
-            rtmp_stream_key: StreamKeyRegistration::Exact(stream_name),
-            stream_id: None,
-            message_channel: sender,
-            ip_restrictions: IpRestriction::None,
-            use_tls: false,
-        });
+        let _ = self
+            .rtmp_endpoint
+            .send(RtmpEndpointRequest::ListenForPublishers {
+                port: 1935,
+                rtmp_app: step.rtmp_app.clone(),
+                rtmp_stream_key: StreamKeyRegistration::Exact(stream_name),
+                stream_id: None,
+                message_channel: sender,
+                ip_restrictions: IpRestriction::None,
+                use_tls: false,
+            });
 
         let futures = vec![
-            notify_rtmp_endpoint_gone(rtmp_endpoint).boxed(),
-            notify_ffmpeg_endpoint_gone(ffmpeg_endpoint).boxed(),
+            notify_rtmp_endpoint_gone(self.rtmp_endpoint.clone()).boxed(),
+            notify_ffmpeg_endpoint_gone(self.ffmpeg_endpoint.clone()).boxed(),
             wait_for_rtmp_notification(receiver).boxed(),
         ];
 
         Ok((Box::new(step), futures))
     }
+}
 
+impl FfmpegPullStep {
     fn handle_resolved_future(&mut self, result: FutureResult, outputs: &mut StepOutputs) {
         if self.status == StepStatus::Error {
             return;

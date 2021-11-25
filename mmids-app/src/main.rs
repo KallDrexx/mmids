@@ -3,20 +3,21 @@ use mmids_core::endpoints::ffmpeg::start_ffmpeg_endpoint;
 use mmids_core::endpoints::rtmp_server::start_rtmp_server_endpoint;
 use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
 use mmids_core::workflows::definitions::WorkflowStepType;
-use mmids_core::workflows::steps::factory::{start_step_factory, FactoryRequest};
-use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStep;
-use mmids_core::workflows::steps::ffmpeg_pull::FfmpegPullStep;
-use mmids_core::workflows::steps::ffmpeg_rtmp_push::FfmpegRtmpPushStep;
-use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoder;
-use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStep;
-use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStep;
+use mmids_core::workflows::steps::factory::WorkflowStepFactory;
+use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStepGenerator;
+use mmids_core::workflows::steps::ffmpeg_pull::FfmpegPullStepGenerator;
+use mmids_core::workflows::steps::ffmpeg_rtmp_push::FfmpegRtmpPushStepGenerator;
+use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoderStepGenerator;
+use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
+use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
 use mmids_core::workflows::{start_workflow, WorkflowRequest};
 use native_tls::Identity;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 use tracing::info;
 
@@ -69,9 +70,7 @@ async fn init(config: MmidsConfig) -> Vec<UnboundedSender<WorkflowRequest>> {
     };
 
     let socket_manager = start_socket_manager(tls_options);
-
     let rtmp_endpoint = start_rtmp_server_endpoint(socket_manager);
-    let step_factory = start_step_factory();
 
     let ffmpeg_path = config
         .settings
@@ -99,90 +98,62 @@ async fn init(config: MmidsConfig) -> Vec<UnboundedSender<WorkflowRequest>> {
         .expect("Failed to start ffmpeg endpoint");
 
     info!("Starting workflow step factory, and adding known step types to it");
-    let (factory_response_sender, mut factory_response_receiver) = unbounded_channel();
-    let _ = step_factory.send(FactoryRequest::RegisterFunction {
-        step_type: WorkflowStepType(RTMP_RECEIVE.to_string()),
-        creation_fn: RtmpReceiverStep::create_factory_fn(rtmp_endpoint.clone()),
-        response_channel: factory_response_sender.clone(),
-    });
-
-    factory_response_receiver
-        .recv()
-        .await
-        .unwrap()
+    let mut step_factory = WorkflowStepFactory::new();
+    step_factory
+        .register(
+            WorkflowStepType(RTMP_RECEIVE.to_string()),
+            Box::new(RtmpReceiverStepGenerator::new(rtmp_endpoint.clone())),
+        )
         .expect("Failed to register rtmp_receive step");
 
-    let _ = step_factory.send(FactoryRequest::RegisterFunction {
-        step_type: WorkflowStepType(RTMP_WATCH.to_string()),
-        creation_fn: RtmpWatchStep::create_factory_fn(rtmp_endpoint.clone()),
-        response_channel: factory_response_sender.clone(),
-    });
-
-    factory_response_receiver
-        .recv()
-        .await
-        .unwrap()
+    step_factory
+        .register(
+            WorkflowStepType(RTMP_WATCH.to_string()),
+            Box::new(RtmpWatchStepGenerator::new(rtmp_endpoint.clone())),
+        )
         .expect("Failed to register rtmp_watch step");
 
-    let _ = step_factory.send(FactoryRequest::RegisterFunction {
-        step_type: WorkflowStepType(FFMPEG_TRANSCODE.to_string()),
-        creation_fn: FfmpegTranscoder::create_factory_fn(
-            ffmpeg_endpoint.clone(),
-            rtmp_endpoint.clone(),
-        ),
-        response_channel: factory_response_sender.clone(),
-    });
-
-    factory_response_receiver
-        .recv()
-        .await
-        .unwrap()
+    step_factory
+        .register(
+            WorkflowStepType(FFMPEG_TRANSCODE.to_string()),
+            Box::new(FfmpegTranscoderStepGenerator::new(
+                rtmp_endpoint.clone(),
+                ffmpeg_endpoint.clone(),
+            )),
+        )
         .expect("Failed to register ffmpeg_transcode step");
 
-    let _ = step_factory.send(FactoryRequest::RegisterFunction {
-        step_type: WorkflowStepType(FFMPEG_HLS.to_string()),
-        creation_fn: FfmpegHlsStep::create_factory_fn(
-            ffmpeg_endpoint.clone(),
-            rtmp_endpoint.clone(),
-        ),
-        response_channel: factory_response_sender.clone(),
-    });
-
-    factory_response_receiver
-        .recv()
-        .await
-        .unwrap()
+    step_factory
+        .register(
+            WorkflowStepType(FFMPEG_HLS.to_string()),
+            Box::new(FfmpegHlsStepGenerator::new(
+                rtmp_endpoint.clone(),
+                ffmpeg_endpoint.clone(),
+            )),
+        )
         .expect("Failed to register ffmpeg_hls step");
 
-    let _ = step_factory.send(FactoryRequest::RegisterFunction {
-        step_type: WorkflowStepType(FFMPEG_PUSH.to_string()),
-        creation_fn: FfmpegRtmpPushStep::create_factory_fn(
-            ffmpeg_endpoint.clone(),
-            rtmp_endpoint.clone(),
-        ),
-        response_channel: factory_response_sender.clone(),
-    });
-
-    factory_response_receiver
-        .recv()
-        .await
-        .unwrap()
+    step_factory
+        .register(
+            WorkflowStepType(FFMPEG_PUSH.to_string()),
+            Box::new(FfmpegRtmpPushStepGenerator::new(
+                rtmp_endpoint.clone(),
+                ffmpeg_endpoint.clone(),
+            )),
+        )
         .expect("Failed to register ffmpeg_push step");
 
-    let _ = step_factory.send(FactoryRequest::RegisterFunction {
-        step_type: WorkflowStepType(FFMPEG_PULL.to_string()),
-        creation_fn: FfmpegPullStep::create_factory_fn(
-            rtmp_endpoint.clone(),
-            ffmpeg_endpoint.clone(),
-        ),
-        response_channel: factory_response_sender.clone(),
-    });
+    step_factory
+        .register(
+            WorkflowStepType(FFMPEG_PULL.to_string()),
+            Box::new(FfmpegPullStepGenerator::new(
+                rtmp_endpoint.clone(),
+                ffmpeg_endpoint.clone(),
+            )),
+        )
+        .expect("Failed to register ffmpeg_push step");
 
-    factory_response_receiver
-        .recv()
-        .await
-        .unwrap()
-        .expect("Failed to register ffmpeg_pull step");
+    let step_factory = Arc::new(step_factory);
 
     info!("Starting {} workflows", config.workflows.len());
     let mut workflows = Vec::new();

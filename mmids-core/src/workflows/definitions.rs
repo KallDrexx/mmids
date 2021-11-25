@@ -1,9 +1,10 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 
 /// Identifier representing the type of the workflow step being defined
-#[derive(Clone, Hash)]
+#[derive(Clone, Hash, Debug, Eq, PartialEq)]
 pub struct WorkflowStepType(pub String);
 
 /// The definition of a workflow step and any parameters it may be using
@@ -18,6 +19,12 @@ pub struct WorkflowStepDefinition {
 pub struct WorkflowDefinition {
     pub name: String,
     pub steps: Vec<WorkflowStepDefinition>,
+}
+
+impl std::fmt::Display for WorkflowStepType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 impl WorkflowStepDefinition {

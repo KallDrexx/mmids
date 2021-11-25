@@ -17,51 +17,100 @@ const TEST_PORT: u16 = 9999;
 const TEST_APP: &'static str = "some_app";
 const TEST_KEY: &'static str = "test_key";
 
-#[test]
-fn can_create_from_filled_out_workflow_definition() {
+#[tokio::test]
+async fn can_create_from_filled_out_workflow_definition() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (mock_sender, mut mock_receiver) = unbounded_channel();
 
-    let (step, _futures) =
-        RtmpReceiverStep::new(&definition, mock_sender).expect("Error returned creating step");
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
+        .expect("Error returned creating step");
 
-    assert_eq!(step.port, TEST_PORT, "Unexpected port");
-    assert_eq!(step.rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
-    assert_eq!(
-        step.stream_key,
-        StreamKeyRegistration::Exact(TEST_KEY.to_string()),
-        "Unexpected stream key registration"
-    );
+    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
+        Ok(Some(request)) => match request {
+            RtmpEndpointRequest::ListenForWatchers { .. } => {
+                panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::ListenForPublishers {
+                port,
+                rtmp_app,
+                rtmp_stream_key,
+                ..
+            } => {
+                assert_eq!(port, TEST_PORT, "Unexpected port");
+                assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected app");
+                assert_eq!(
+                    rtmp_stream_key,
+                    StreamKeyRegistration::Exact(TEST_KEY.to_string()),
+                    "Unexpected stream key"
+                );
+            }
+        },
+
+        _ => panic!("No RTMP request surfaced"),
+    };
 }
 
-#[test]
-fn asterisk_for_key_sets_key_to_any() {
+#[tokio::test]
+async fn asterisk_for_key_sets_key_to_any() {
     let definition = create_definition(TEST_PORT, TEST_APP, "*");
-    let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (mock_sender, mut mock_receiver) = unbounded_channel();
 
-    let (step, _futures) =
-        RtmpReceiverStep::new(&definition, mock_sender).expect("Error returned creating step}");
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
+        .expect("Error returned creating step}");
 
-    assert_eq!(step.port, TEST_PORT, "Unexpected port");
-    assert_eq!(step.rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
-    assert_eq!(
-        step.stream_key,
-        StreamKeyRegistration::Any,
-        "Unexpected stream key registration"
-    );
+    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
+        Ok(Some(request)) => match request {
+            RtmpEndpointRequest::ListenForWatchers { .. } => {
+                panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::ListenForPublishers {
+                port,
+                rtmp_app,
+                rtmp_stream_key,
+                ..
+            } => {
+                assert_eq!(port, TEST_PORT, "Unexpected port");
+                assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected app");
+                assert_eq!(
+                    rtmp_stream_key,
+                    StreamKeyRegistration::Any,
+                    "Unexpected stream key"
+                );
+            }
+        },
+
+        _ => panic!("No RTMP request surfaced"),
+    };
 }
 
-#[test]
-fn port_is_1935_if_none_provided() {
+#[tokio::test]
+async fn port_is_1935_if_none_provided() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     definition.parameters.remove(PORT_PROPERTY_NAME);
 
-    let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (mock_sender, mut mock_receiver) = unbounded_channel();
 
-    let (step, _futures) = RtmpReceiverStep::new(&definition, mock_sender)
-        .expect("Error returned when creating rtmp receive step");
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
+        .expect("Error returned creating step}");
 
-    assert_eq!(step.port, 1935, "Unexpected port");
+    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
+        Ok(Some(request)) => match request {
+            RtmpEndpointRequest::ListenForWatchers { .. } => {
+                panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::ListenForPublishers { port, .. } => {
+                assert_eq!(port, 1935, "Unexpected port");
+            }
+        },
+
+        _ => panic!("No RTMP request surfaced"),
+    };
 }
 
 #[test]
@@ -71,7 +120,8 @@ fn error_if_no_app_provided() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    RtmpReceiverStep::new(&definition, mock_sender)
+    RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
         .err()
         .unwrap();
 }
@@ -83,45 +133,74 @@ fn error_if_no_stream_key_provided() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    RtmpReceiverStep::new(&definition, mock_sender)
+    RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
         .err()
         .unwrap();
 }
 
-#[test]
-fn rtmp_app_is_trimmed() {
+#[tokio::test]
+async fn rtmp_app_is_trimmed() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     definition.parameters.insert(
         APP_PROPERTY_NAME.to_string(),
         " ".to_string() + TEST_APP + " ",
     );
 
-    let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (mock_sender, mut mock_receiver) = unbounded_channel();
 
-    let (step, _futures) = RtmpReceiverStep::new(&definition, mock_sender)
-        .expect("Error returned when creating rtmp receive step");
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
+        .expect("Error returned creating step}");
 
-    assert_eq!(step.rtmp_app, TEST_APP, "Unexpected rtmp app");
+    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
+        Ok(Some(request)) => match request {
+            RtmpEndpointRequest::ListenForWatchers { .. } => {
+                panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::ListenForPublishers { rtmp_app, .. } => {
+                assert_eq!(rtmp_app, TEST_APP, "Unexpected rtmp app");
+            }
+        },
+
+        _ => panic!("No RTMP request surfaced"),
+    };
 }
 
-#[test]
-fn stream_key_is_trimmed() {
+#[tokio::test]
+async fn stream_key_is_trimmed() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     definition.parameters.insert(
         STREAM_KEY_PROPERTY_NAME.to_string(),
         " ".to_string() + TEST_KEY + " ",
     );
 
-    let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (mock_sender, mut mock_receiver) = unbounded_channel();
 
-    let (step, _futures) = RtmpReceiverStep::new(&definition, mock_sender)
-        .expect("Error returned when creating rtmp receive step");
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
+        .expect("Error returned creating step}");
 
-    assert_eq!(
-        step.stream_key,
-        StreamKeyRegistration::Exact(TEST_KEY.to_string()),
-        "Unexpected stream key registration"
-    );
+    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
+        Ok(Some(request)) => match request {
+            RtmpEndpointRequest::ListenForWatchers { .. } => {
+                panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::ListenForPublishers {
+                rtmp_stream_key, ..
+            } => {
+                assert_eq!(
+                    rtmp_stream_key,
+                    StreamKeyRegistration::Exact(TEST_KEY.to_string()),
+                    "Unexpected stream key registration"
+                );
+            }
+        },
+
+        _ => panic!("No RTMP request surfaced"),
+    };
 }
 
 #[test]
@@ -134,7 +213,8 @@ fn new_step_is_in_created_status() {
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
 
-    let (step, _futures) = RtmpReceiverStep::new(&definition, mock_sender)
+    let (step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+        .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
     let status = step.get_status();
@@ -146,7 +226,8 @@ fn new_registers_for_publishing() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStep::new(&definition, sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(sender)
+        .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
     let message = receiver
@@ -160,6 +241,8 @@ fn new_registers_for_publishing() {
             rtmp_stream_key,
             stream_id,
             message_channel: _,
+            ip_restrictions: _,
+            use_tls: _,
         } => {
             assert_eq!(port, TEST_PORT, "Unexpected port");
             assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
@@ -540,14 +623,15 @@ async fn media_input_does_not_get_passed_through() {
 }
 
 fn create_initialized_step<'a>() -> (
-    RtmpReceiverStep,
+    Box<dyn WorkflowStep>,
     Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
     UnboundedSender<RtmpEndpointPublisherMessage>,
 ) {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
 
-    let (step, init_results) = RtmpReceiverStep::new(&definition, sender)
+    let (step, init_results) = RtmpReceiverStepGenerator::new(sender)
+        .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
     let message = receiver
@@ -566,7 +650,7 @@ fn create_initialized_step<'a>() -> (
 }
 
 async fn create_ready_step<'a>() -> (
-    RtmpReceiverStep,
+    Box<dyn WorkflowStep>,
     Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
     UnboundedSender<RtmpEndpointPublisherMessage>,
 ) {

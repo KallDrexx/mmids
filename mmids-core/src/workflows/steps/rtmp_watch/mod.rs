@@ -22,12 +22,12 @@ use crate::endpoints::rtmp_server::{
 use crate::net::{IpAddress, IpAddressParseError};
 use crate::utils::hash_map_to_stream_metadata;
 use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::factory::StepGenerator;
 use crate::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
-use futures::future::BoxFuture;
 use futures::FutureExt;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
@@ -42,7 +42,12 @@ pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
 pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
 pub const RTMPS_FLAG: &'static str = "rtmps";
 
-pub struct RtmpWatchStep {
+/// Generates new rtmp watch workflow step instances based on a given step definition.
+pub struct RtmpWatchStepGenerator {
+    rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
+}
+
+struct RtmpWatchStep {
     definition: WorkflowStepDefinition,
     port: u16,
     rtmp_app: String,
@@ -93,25 +98,16 @@ enum StepStartupError {
     BothDenyAndAllowIpRestrictionsSpecified,
 }
 
-impl RtmpWatchStep {
-    pub fn create_factory_fn(
-        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync> {
-        Box::new(move |definition| {
-            match RtmpWatchStep::new(definition, rtmp_endpoint_sender.clone()) {
-                Ok((step, futures)) => Ok((Box::new(step), futures)),
-                Err(e) => Err(e),
-            }
-        })
+impl RtmpWatchStepGenerator {
+    pub fn new(rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>) -> Self {
+        RtmpWatchStepGenerator {
+            rtmp_endpoint_sender,
+        }
     }
+}
 
-    pub fn new<'a>(
-        definition: &WorkflowStepDefinition,
-        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
-    ) -> Result<
-        (Self, Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>),
-        Box<dyn std::error::Error + Sync + Send>,
-    > {
+impl StepGenerator for RtmpWatchStepGenerator {
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let use_rtmps = match definition.parameters.get(RTMPS_FLAG) {
             Some(_) => true,
             None => false,
@@ -155,9 +151,11 @@ impl RtmpWatchStep {
         let allowed_ips = IpAddress::parse_comma_delimited_list(
             definition.parameters.get(IP_ALLOW_PROPERTY_NAME),
         )?;
+
         let denied_ips = IpAddress::parse_comma_delimited_list(
             definition.parameters.get(IP_DENY_PROPERTY_NAME),
         )?;
+
         let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
             (true, true) => {
                 return Err(Box::new(
@@ -176,7 +174,7 @@ impl RtmpWatchStep {
             status: StepStatus::Created,
             port,
             rtmp_app: app.to_string(),
-            rtmp_endpoint_sender,
+            rtmp_endpoint_sender: self.rtmp_endpoint_sender.clone(),
             media_channel: media_sender,
             stream_key,
             stream_id_to_name_map: HashMap::new(),
@@ -196,11 +194,13 @@ impl RtmpWatchStep {
             });
 
         Ok((
-            step,
+            Box::new(step),
             vec![wait_for_endpoint_notification(notification_receiver).boxed()],
         ))
     }
+}
 
+impl RtmpWatchStep {
     fn handle_endpoint_notification(&mut self, notification: RtmpEndpointWatcherNotification) {
         match notification {
             RtmpEndpointWatcherNotification::WatcherRegistrationFailed => {
@@ -402,6 +402,7 @@ impl WorkflowStep for RtmpWatchStep {
                     outputs
                         .futures
                         .push(wait_for_endpoint_notification(receiver).boxed());
+
                     self.handle_endpoint_notification(notification);
                 }
             }

@@ -26,11 +26,12 @@ pub async fn main() {
 
     info!("Test");
 
-    let socket_manager_sender = start_socket_manager();
+    let socket_manager_sender = start_socket_manager(None);
     let (response_sender, mut response_receiver) = unbounded_channel();
     let message = TcpSocketRequest::OpenPort {
         port: 8888,
         response_channel: response_sender,
+        use_tls: false,
     };
 
     debug!("Opening port 8888");
@@ -74,6 +75,7 @@ pub async fn main() {
                         connection_id,
                         outgoing_bytes,
                         incoming_bytes,
+                        socket_address: _,
                     } => {
                         info!("New connection {:?}", connection_id);
 

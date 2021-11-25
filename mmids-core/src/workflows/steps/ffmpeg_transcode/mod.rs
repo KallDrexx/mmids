@@ -21,9 +21,9 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::utils::stream_metadata_to_hash_map;
 use crate::workflows::definitions::WorkflowStepDefinition;
+use crate::workflows::steps::factory::StepGenerator;
 use crate::workflows::steps::{
-    CreateFactoryFnResult, StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
-    StepStatus, WorkflowStep,
+    StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
@@ -41,7 +41,13 @@ const H264_PRESET_NAME: &'static str = "h264_preset";
 const SIZE_NAME: &'static str = "size";
 const BITRATE_NAME: &'static str = "kbps";
 
-pub struct FfmpegTranscoder {
+/// Generates new ffmpeg transcoding step instances based on specified step definitions.
+pub struct FfmpegTranscoderStepGenerator {
+    rtmp_server_endpoint: UnboundedSender<RtmpEndpointRequest>,
+    ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+}
+
+struct FfmpegTranscoder {
     definition: WorkflowStepDefinition,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
     rtmp_server_endpoint: UnboundedSender<RtmpEndpointRequest>,
@@ -133,21 +139,20 @@ enum StepStartupError {
     InvalidBitrateSpecified(String),
 }
 
-impl FfmpegTranscoder {
-    pub fn create_factory_fn(
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
-        rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    ) -> CreateFactoryFnResult {
-        Box::new(move |definition| {
-            FfmpegTranscoder::new(definition, ffmpeg_endpoint.clone(), rtmp_endpoint.clone())
-        })
-    }
-
+impl FfmpegTranscoderStepGenerator {
     pub fn new(
-        definition: &WorkflowStepDefinition,
-        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    ) -> StepCreationResult {
+        ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    ) -> Self {
+        FfmpegTranscoderStepGenerator {
+            rtmp_server_endpoint: rtmp_endpoint,
+            ffmpeg_endpoint,
+        }
+    }
+}
+
+impl StepGenerator for FfmpegTranscoderStepGenerator {
+    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let vcodec = match definition.parameters.get(VIDEO_CODEC_NAME) {
             Some(value) => match value.to_lowercase().trim() {
                 "copy" => VideoTranscodeParams::Copy,
@@ -269,8 +274,8 @@ impl FfmpegTranscoder {
             definition: definition.clone(),
             active_streams: HashMap::new(),
             audio_codec_params: acodec,
-            rtmp_server_endpoint: rtmp_endpoint.clone(),
-            ffmpeg_endpoint: ffmpeg_endpoint.clone(),
+            rtmp_server_endpoint: self.rtmp_server_endpoint.clone(),
+            ffmpeg_endpoint: self.ffmpeg_endpoint.clone(),
             video_scale_params: size,
             video_codec_params: vcodec,
             bitrate,
@@ -278,13 +283,15 @@ impl FfmpegTranscoder {
         };
 
         let futures = vec![
-            notify_when_ffmpeg_endpoint_is_gone(ffmpeg_endpoint).boxed(),
-            notify_when_rtmp_endpoint_is_gone(rtmp_endpoint).boxed(),
+            notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed(),
+            notify_when_rtmp_endpoint_is_gone(self.rtmp_server_endpoint.clone()).boxed(),
         ];
 
         Ok((Box::new(step), futures))
     }
+}
 
+impl FfmpegTranscoder {
     fn get_source_rtmp_app(&self) -> String {
         format!("ffmpeg-transcoder-original-{}", self.definition.get_id())
     }
