@@ -135,7 +135,7 @@ impl<'a> Actor<'a> {
                 }
 
                 FutureResult::StepFutureResolved { step_id, result } => {
-                    self.execute_steps(step_id, Some(result));
+                    self.execute_steps(step_id, Some(result), false);
                 }
             }
         }
@@ -185,8 +185,12 @@ impl<'a> Actor<'a> {
         &mut self,
         initial_step_id: u64,
         future_result: Option<Box<dyn StepFutureResult>>,
+        preserve_current_step_inputs: bool,
     ) {
-        self.step_inputs.clear();
+        if !preserve_current_step_inputs {
+            self.step_inputs.clear();
+        }
+
         self.step_outputs.clear();
 
         if let Some(future_result) = future_result {
@@ -203,74 +207,47 @@ impl<'a> Actor<'a> {
 
         if let Some(start_index) = start_index {
             for x in start_index..self.active_steps.len() {
-                let span = span!(
-                    Level::INFO,
-                    "Active Step Execution",
-                    step_id = self.active_steps[x]
-                );
-                let _enter = span.enter();
-
-                let step = match self.steps_by_definition_id.get_mut(&self.active_steps[x]) {
-                    Some(x) => x,
-                    None => {
-                        error!(
-                            "Step id {} is marked as active but no definition exists",
-                            self.active_steps[x]
-                        );
-                        return;
-                    }
-                };
-
-                step.execute(&mut self.step_inputs, &mut self.step_outputs);
-
-                for future in self.step_outputs.futures.drain(..) {
-                    self.futures
-                        .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
-                }
-
-                self.update_stream_details(self.active_steps[x]);
-                self.update_media_cache_from_outputs(self.active_steps[x]);
-                self.step_inputs.clear();
-                self.step_inputs
-                    .media
-                    .extend(self.step_outputs.media.drain(..));
-
-                self.step_outputs.clear();
+                self.execute_step(self.active_steps[x]);
             }
         } else {
-            let span = span!(
-                Level::INFO,
-                "Pending Step Execution",
-                step_id = initial_step_id
-            );
-            let _enter = span.enter();
-
-            // We are trying to execute a workflow step that is not yet active, most likely due to
-            // a resolved future specifically for it.
-            let step = match self.steps_by_definition_id.get_mut(&initial_step_id) {
-                Some(x) => x,
-                None => {
-                    error!(
-                        "Step id {} got a resolved future but we do not have a definition for it",
-                        initial_step_id
-                    );
-
-                    return;
-                }
-            };
-
-            step.execute(&mut self.step_inputs, &mut self.step_outputs);
-
-            for future in self.step_outputs.futures.drain(..) {
-                self.futures
-                    .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
-            }
-
-            self.update_stream_details(initial_step_id);
-            self.update_media_cache_from_outputs(initial_step_id);
+            self.execute_step(initial_step_id);
         }
 
         self.check_if_all_pending_steps_are_active();
+    }
+
+    fn execute_step(&mut self, step_id: u64) {
+        let span = span!(Level::INFO, "Step Execution", step_id = step_id);
+        let _enter = span.enter();
+
+        let step = match self.steps_by_definition_id.get_mut(&step_id) {
+            Some(x) => x,
+            None => {
+                let is_active = self.active_steps.contains(&step_id);
+                error!(
+                    "Attempted to execute step id {} but we it has no definition (is active: {})",
+                    step_id, is_active
+                );
+
+                return;
+            }
+        };
+
+        step.execute(&mut self.step_inputs, &mut self.step_outputs);
+
+        for future in self.step_outputs.futures.drain(..) {
+            self.futures
+                .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
+        }
+
+        self.update_stream_details(step_id);
+        self.update_media_cache_from_outputs(step_id);
+        self.step_inputs.clear();
+        self.step_inputs
+            .media
+            .extend(self.step_outputs.media.drain(..));
+
+        self.step_outputs.clear();
     }
 
     fn check_if_all_pending_steps_are_active(&mut self) {
@@ -303,17 +280,78 @@ impl<'a> Actor<'a> {
         }
 
         if self.pending_steps.len() > 0 && !any_pending {
-            // Since all created steps are fully active, we can now make them all active
-            std::mem::swap(&mut self.pending_steps, &mut self.active_steps);
+            // Since we have pending steps and all are now ready to become active, we need to
+            // swap all active steps for pending steps to make them active.
 
-            // remove any steps that were in the active list that were removed
-            for id in &self.pending_steps {
-                if !self.active_steps.contains(id) {
-                    self.steps_by_definition_id.remove(id);
-                    self.cached_step_media.remove(id);
-                    info!(step_id = id, "Removing now unused step id {}", id);
+            // Note: there's a possibility that a pending swap can trigger a new set
+            // of sequence headers to fall through.  An example of this happening is if
+            // a transcoding step is placed in between an existing playback step.  This
+            // will probably cause playback issues unless the client supports changing
+            // decoding parameters mid-stream, which isn't certain.  We either need to
+            // leave this up to mmids operators to realize, or need to come up with a
+            // solution to remove the footgun (such as disconnecting playback clients
+            // upon a new sequence header being seen).  Unsure if that's the best
+            // approach though.
+            for index in (0..self.active_steps.len()).rev() {
+                let step_id = self.active_steps[index];
+                if !self.pending_steps.contains(&step_id) {
+                    // Since this step is currently active but not pending, the swap will make this
+                    // step go away for good.  Therefore, we need to clean up its definition and
+                    // raise disconnection notices for any streams originating from this step, so
+                    // that latter steps that will survive will know not to expect more media
+                    // from these streams.
+                    info!(step_id = step_id, "Removing now unused step id {}", step_id);
+                    self.steps_by_definition_id.remove(&step_id);
+                    if let Some(cache) = self.cached_step_media.remove(&step_id) {
+                        for key in cache.keys() {
+                            if let Some(stream) = self.active_streams.get(key) {
+                                if stream.originating_step_id == step_id {
+                                    for x in (index + 1)..self.active_steps.len() {
+                                        self.step_outputs.clear();
+                                        self.step_inputs.clear();
+                                        self.step_inputs.media.push(MediaNotification {
+                                            stream_id: key.clone(),
+                                            content: MediaNotificationContent::StreamDisconnected,
+                                        });
+
+                                        self.execute_step(self.active_steps[x]);
+                                    }
+
+                                    self.active_streams.remove(key);
+                                }
+                            }
+                        }
+                    }
                 }
             }
+
+            // Since some pending steps may not have been around previously, they would not have
+            // gotten stream started notifications and missing sequence headers.  So we need to
+            // find its parent step's cache and replay any required media notifications
+            for index in 1..self.pending_steps.len() {
+                let current_step_id = self.pending_steps[index];
+                let previous_step_id = self.pending_steps[index - 1];
+                if !self.active_steps.contains(&current_step_id) {
+                    // This is a new step
+                    if let Some(cache) = self.cached_step_media.get(&previous_step_id) {
+                        let notifications = cache
+                            .values()
+                            .flatten()
+                            .map(|x| x.clone())
+                            .collect::<Vec<_>>();
+
+                        self.step_inputs.clear();
+                        self.step_inputs.media.extend(notifications);
+                        self.execute_steps(current_step_id, None, true);
+
+                        // TODO: This is probably going to cause duplicate stream started notifications.
+                        // Not sure a way around that and we probably need to remove those warnings.
+                    }
+                }
+            }
+
+            std::mem::swap(&mut self.pending_steps, &mut self.active_steps);
+            self.pending_steps.clear();
 
             info!("All pending steps moved to active");
         }
