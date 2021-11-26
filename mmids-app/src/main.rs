@@ -2,7 +2,9 @@ use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::endpoints::ffmpeg::start_ffmpeg_endpoint;
 use mmids_core::endpoints::rtmp_server::start_rtmp_server_endpoint;
 use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
-use mmids_core::workflows::definitions::WorkflowStepType;
+use mmids_core::workflows::definitions::{
+    WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType,
+};
 use mmids_core::workflows::steps::factory::WorkflowStepFactory;
 use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStepGenerator;
 use mmids_core::workflows::steps::ffmpeg_pull::FfmpegPullStepGenerator;
@@ -12,6 +14,7 @@ use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
 use mmids_core::workflows::{start_workflow, WorkflowRequest};
 use native_tls::Identity;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,7 +22,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
-use tracing::info;
+use tracing::{info, warn};
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
@@ -162,6 +165,8 @@ async fn init(config: MmidsConfig) -> Vec<UnboundedSender<WorkflowRequest>> {
         workflows.push(start_workflow(workflow.clone(), step_factory.clone()));
     }
 
+    workflows.push(get_test_workflow(step_factory).await);
+
     workflows
 }
 
@@ -185,4 +190,55 @@ async fn load_tls_options(cert_path: String, password: String) -> TlsOptions {
     TlsOptions {
         certificate: identity,
     }
+}
+
+async fn get_test_workflow(
+    step_factory: Arc<WorkflowStepFactory>,
+) -> UnboundedSender<WorkflowRequest> {
+    warn!("Adding hard coded test workflow with post-creation steps");
+    let mut receive_step = WorkflowStepDefinition {
+        step_type: WorkflowStepType(RTMP_RECEIVE.to_string()),
+        parameters: HashMap::new(),
+    };
+
+    receive_step
+        .parameters
+        .insert("rtmp_app".to_string(), "test1".to_string());
+    receive_step
+        .parameters
+        .insert("stream_key".to_string(), "*".to_string());
+
+    let mut watch_step = WorkflowStepDefinition {
+        step_type: WorkflowStepType(RTMP_WATCH.to_string()),
+        parameters: HashMap::new(),
+    };
+
+    watch_step
+        .parameters
+        .insert("rtmp_app".to_string(), "test_watch".to_string());
+    watch_step
+        .parameters
+        .insert("stream_key".to_string(), "*".to_string());
+
+    let mut definition = WorkflowDefinition {
+        name: "test_flow".to_string(),
+        steps: vec![receive_step, watch_step],
+    };
+
+    let workflow = start_workflow(definition.clone(), step_factory);
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    warn!("Sending updates to test_flow workflow");
+
+    definition.steps[0]
+        .parameters
+        .insert("rtmp_app".to_string(), "test2".to_string());
+    definition.steps[1]
+        .parameters
+        .insert("rtmp_app".to_string(), "test2".to_string());
+
+    let _ = workflow.send(WorkflowRequest::UpdateDefinition {
+        new_definition: definition.clone(),
+    });
+    workflow
 }

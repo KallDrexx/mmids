@@ -14,7 +14,13 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, span, warn, Level};
 
 /// Requests that can be made to an actively running workflow
-pub enum WorkflowRequest {}
+pub enum WorkflowRequest {
+    /// Requests the workflow update with a new definition. The workflow will take shape to look
+    /// exactly as the specified definition has.  Any existing steps that aren't specified will
+    /// be removed, any new steps will be created, and any steps that stay will reflect the order
+    /// specified.
+    UpdateDefinition { new_definition: WorkflowDefinition },
+}
 
 /// Starts the execution of a workflow with the specified definition
 pub fn start(
@@ -96,9 +102,11 @@ impl<'a> Actor<'a> {
                     break;
                 }
 
-                FutureResult::WorkflowRequestReceived(_request, receiver) => {
+                FutureResult::WorkflowRequestReceived(request, receiver) => {
                     self.futures
                         .push(wait_for_workflow_request(receiver).boxed());
+
+                    self.handle_workflow_request(request);
                 }
 
                 FutureResult::StepFutureResolved { step_id, result } => {
@@ -108,6 +116,15 @@ impl<'a> Actor<'a> {
         }
 
         info!("Workflow closing");
+    }
+
+    fn handle_workflow_request(&mut self, request: WorkflowRequest) {
+        match request {
+            WorkflowRequest::UpdateDefinition { new_definition } => {
+                info!("Workflow requested to have its definition updated");
+                self.apply_new_definition(new_definition);
+            }
+        }
     }
 
     fn apply_new_definition(&mut self, definition: WorkflowDefinition) {
@@ -320,6 +337,13 @@ impl<'a> Actor<'a> {
 
                         // TODO: This is probably going to cause duplicate stream started notifications.
                         // Not sure a way around that and we probably need to remove those warnings.
+
+                        // TODO: The current code only handles notifications raised by parents of
+                        // new steps.  There's the possibility that a change of order of existing
+                        // steps could cause steps to be tracking streams that come in after the step,
+                        // or not know about steps that were created in steps that used to be after but
+                        // is now before.  It also means it may have outdated sequence headers if
+                        // a transcoding step was removed.
                     }
                 }
             }
