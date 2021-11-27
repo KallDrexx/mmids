@@ -1,4 +1,4 @@
-use crate::workflows::definitions::WorkflowDefinition;
+use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -20,6 +20,21 @@ pub enum WorkflowRequest {
     /// be removed, any new steps will be created, and any steps that stay will reflect the order
     /// specified.
     UpdateDefinition { new_definition: WorkflowDefinition },
+
+    /// Requests the workflow to return a snapshot of its current state
+    GetState {
+        response_channel: UnboundedSender<Option<WorkflowState>>,
+    },
+}
+
+pub struct WorkflowState {
+    pub active_steps: Vec<WorkflowStepState>,
+    pub pending_steps: Vec<WorkflowStepState>,
+}
+
+pub struct WorkflowStepState {
+    pub definition: WorkflowStepDefinition,
+    pub status: StepStatus,
 }
 
 /// Starts the execution of a workflow with the specified definition
@@ -61,6 +76,7 @@ struct Actor<'a> {
     cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
     active_streams: HashMap<StreamId, StreamDetails>,
     step_factory: Arc<WorkflowStepFactory>,
+    step_definitions: HashMap<u64, WorkflowStepDefinition>,
 }
 
 impl<'a> Actor<'a> {
@@ -86,6 +102,7 @@ impl<'a> Actor<'a> {
             cached_step_media: HashMap::new(),
             active_streams: HashMap::new(),
             step_factory,
+            step_definitions: HashMap::new(),
         }
     }
 
@@ -124,6 +141,46 @@ impl<'a> Actor<'a> {
                 info!("Workflow requested to have its definition updated");
                 self.apply_new_definition(new_definition);
             }
+
+            WorkflowRequest::GetState { response_channel } => {
+                info!("Workflow state requested by external caller");
+                let mut state = WorkflowState {
+                    pending_steps: Vec::new(),
+                    active_steps: Vec::new(),
+                };
+
+                for id in &self.pending_steps {
+                    if let Some(definition) = self.step_definitions.get(&id) {
+                        if let Some(step) = self.steps_by_definition_id.get(&id) {
+                            state.pending_steps.push(WorkflowStepState {
+                                definition: definition.clone(),
+                                status: step.get_status().clone(),
+                            });
+                        } else {
+                            error!(step_id = %id, "No step was found with an id of {}", id);
+                        }
+                    } else {
+                        error!(step_id = %id, "No definition was found for step id {}", id);
+                    }
+                }
+
+                for id in &self.active_steps {
+                    if let Some(definition) = self.step_definitions.get(&id) {
+                        if let Some(step) = self.steps_by_definition_id.get(&id) {
+                            state.active_steps.push(WorkflowStepState {
+                                definition: definition.clone(),
+                                status: step.get_status().clone(),
+                            });
+                        } else {
+                            error!(step_id = %id, "No step was found with an id of {}", id);
+                        }
+                    } else {
+                        error!(step_id = %id, "No definition was found for step id {}", id);
+                    }
+                }
+
+                let _ = response_channel.send(Some(state));
+            }
         }
     }
 
@@ -136,6 +193,8 @@ impl<'a> Actor<'a> {
         for step_definition in definition.steps {
             let id = step_definition.get_id();
             let step_type = step_definition.step_type.clone();
+            self.step_definitions
+                .insert(step_definition.get_id(), step_definition.clone());
             self.pending_steps.push(id);
 
             if !self.steps_by_definition_id.contains_key(&id) {
@@ -292,6 +351,7 @@ impl<'a> Actor<'a> {
                     // that latter steps that will survive will know not to expect more media
                     // from these streams.
                     info!(step_id = step_id, "Removing now unused step id {}", step_id);
+                    self.step_definitions.remove(&step_id);
                     self.steps_by_definition_id.remove(&step_id);
                     if let Some(cache) = self.cached_step_media.remove(&step_id) {
                         for key in cache.keys() {

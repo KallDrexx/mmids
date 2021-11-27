@@ -3,6 +3,7 @@
 //! workflows, and stop a managed workflow.
 
 use crate::workflows::definitions::WorkflowDefinition;
+use crate::workflows::runner::WorkflowState;
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::{start_workflow, WorkflowRequest};
 use futures::future::BoxFuture;
@@ -20,6 +21,21 @@ pub enum WorkflowManagerRequest {
 
     /// Stops the specified workflow, if it is running
     StopWorkflow { name: String },
+
+    /// Requests information about all workflows currently running
+    GetRunningWorkflows {
+        response_channel: UnboundedSender<Vec<GetWorkflowResponse>>,
+    },
+
+    /// Requests details about a specific workflow
+    GetWorkflowDetails {
+        name: String,
+        response_channel: UnboundedSender<Option<WorkflowState>>,
+    },
+}
+
+pub struct GetWorkflowResponse {
+    pub name: String,
 }
 
 pub fn start_workflow_manager(
@@ -124,6 +140,31 @@ impl<'a> Actor<'a> {
                 // the workflow request channel will be gone and it'll shut itself down.
                 self.workflows.remove(&name);
             }
+
+            WorkflowManagerRequest::GetRunningWorkflows { response_channel } => {
+                let mut response = self
+                    .workflows
+                    .keys()
+                    .map(|x| GetWorkflowResponse { name: x.clone() })
+                    .collect::<Vec<_>>();
+
+                response.sort_by(|a, b| b.name.cmp(&a.name));
+
+                let _ = response_channel.send(response);
+            }
+
+            WorkflowManagerRequest::GetWorkflowDetails {
+                name,
+                response_channel,
+            } => match self.workflows.get(&name) {
+                None => {
+                    let _ = response_channel.send(None);
+                }
+
+                Some(sender) => {
+                    let _ = sender.send(WorkflowRequest::GetState { response_channel });
+                }
+            },
         }
     }
 }
