@@ -13,7 +13,7 @@ pub trait StepGenerator {
 /// instances to use for specific workflow step types.  Consumers can then request the factory
 /// to generate workflow steps based on the passed in step definition.
 pub struct WorkflowStepFactory {
-    generators: HashMap<WorkflowStepType, Box<dyn StepGenerator>>,
+    generators: HashMap<WorkflowStepType, Box<dyn StepGenerator + Sync + Send>>,
 }
 
 /// Errors that can occur when an attempting to register a generator fails
@@ -44,7 +44,7 @@ impl WorkflowStepFactory {
     pub fn register(
         &mut self,
         step_type: WorkflowStepType,
-        generator: Box<dyn StepGenerator>,
+        generator: Box<dyn StepGenerator + Sync + Send>,
     ) -> Result<(), FactoryRegistrationError> {
         if self.generators.contains_key(&step_type) {
             return Err(FactoryRegistrationError::DuplicateName(step_type));

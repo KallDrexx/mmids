@@ -4,6 +4,7 @@
 //! were defined.
 
 pub mod definitions;
+pub mod manager;
 mod runner;
 pub mod steps;
 
