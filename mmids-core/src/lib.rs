@@ -5,6 +5,7 @@ extern crate pest_derive;
 pub mod codecs;
 pub mod config;
 pub mod endpoints;
+pub mod http_api;
 pub mod net;
 mod utils;
 pub mod workflows;
