@@ -62,7 +62,7 @@ async fn execute_request(
 
     let started_at = Instant::now();
 
-    match execute_handler(&request, manager).await {
+    match find_and_execute_handler(&request, manager).await {
         Ok(response) => {
             let elapsed = started_at.elapsed();
             info!(
@@ -85,12 +85,19 @@ async fn execute_request(
     }
 }
 
-async fn execute_handler(
+async fn find_and_execute_handler(
     request: &Request<Body>,
     manager: UnboundedSender<WorkflowManagerRequest>,
 ) -> Result<Response<Body>, hyper::Error> {
+    let path_parts = request
+        .uri()
+        .path()
+        .split('/')
+        .filter(|x| x.trim() != "")
+        .collect::<Vec<_>>();
+
     if request.method() == Method::GET {
-        if request.uri().path() == "/workflows" {
+        if path_parts.len() == 1 && path_parts[0] == "workflows" {
             return Ok(list_workflows::execute(manager).await);
         }
     }
