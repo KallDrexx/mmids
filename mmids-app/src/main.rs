@@ -1,6 +1,10 @@
+mod http_handlers;
+
+use hyper::Method;
 use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::endpoints::ffmpeg::{start_ffmpeg_endpoint, FfmpegEndpointRequest};
 use mmids_core::endpoints::rtmp_server::{start_rtmp_server_endpoint, RtmpEndpointRequest};
+use mmids_core::http_api::routing::{PathPart, Route, RoutingTable};
 use mmids_core::http_api::HttpApiShutdownSignal;
 use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
 use mmids_core::workflows::definitions::WorkflowStepType;
@@ -237,6 +241,27 @@ fn start_http_api(
         }
     };
 
+    let mut routes = RoutingTable::new();
+    routes
+        .register(Route {
+            method: Method::GET,
+            path: vec![PathPart::Exact {
+                value: "workflows".to_string(),
+            }],
+            handler: Box::new(mmids_core::http_api::handlers::ListWorkflowsHandler),
+        })
+        .expect("Failed to register list workflows route");
+
+    routes
+        .register(Route {
+            method: Method::GET,
+            path: vec![PathPart::Exact {
+                value: "version".to_string(),
+            }],
+            handler: Box::new(http_handlers::VersionHandler),
+        })
+        .expect("Failed to register version route");
+
     let addr = ([127, 0, 0, 1], port).into();
-    Some(mmids_core::http_api::start_http_api(addr, manager))
+    Some(mmids_core::http_api::start_http_api(addr, routes, manager))
 }
