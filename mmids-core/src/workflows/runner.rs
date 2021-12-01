@@ -11,6 +11,7 @@ use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, span, warn, Level};
 
 /// Requests that can be made to an actively running workflow
@@ -23,7 +24,7 @@ pub enum WorkflowRequest {
 
     /// Requests the workflow to return a snapshot of its current state
     GetState {
-        response_channel: UnboundedSender<Option<WorkflowState>>,
+        response_channel: Sender<Option<WorkflowState>>,
     },
 }
 

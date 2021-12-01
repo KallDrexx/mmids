@@ -255,6 +255,21 @@ fn start_http_api(
     routes
         .register(Route {
             method: Method::GET,
+            path: vec![
+                PathPart::Exact {
+                    value: "workflows".to_string(),
+                },
+                PathPart::Parameter {
+                    name: "workflow".to_string(),
+                },
+            ],
+            handler: Box::new(mmids_core::http_api::handlers::GetWorkflowDetailsHandler),
+        })
+        .expect("Failed to register get workflow details route");
+
+    routes
+        .register(Route {
+            method: Method::GET,
             path: vec![PathPart::Exact {
                 value: "version".to_string(),
             }],

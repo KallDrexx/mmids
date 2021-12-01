@@ -12,6 +12,7 @@ use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot::Sender;
 use tracing::{info, instrument, warn};
 
 /// Operations consumers can request the workflow manager to perform
@@ -24,13 +25,13 @@ pub enum WorkflowManagerRequest {
 
     /// Requests information about all workflows currently running
     GetRunningWorkflows {
-        response_channel: UnboundedSender<Vec<GetWorkflowResponse>>,
+        response_channel: Sender<Vec<GetWorkflowResponse>>,
     },
 
     /// Requests details about a specific workflow
     GetWorkflowDetails {
         name: String,
-        response_channel: UnboundedSender<Option<WorkflowState>>,
+        response_channel: Sender<Option<WorkflowState>>,
     },
 }
 

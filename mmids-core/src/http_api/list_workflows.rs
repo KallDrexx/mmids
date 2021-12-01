@@ -5,7 +5,8 @@ use hyper::{Body, Error, Request, Response, StatusCode};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot::channel;
 use tokio::time::timeout;
 use tracing::error;
 
@@ -24,7 +25,7 @@ impl RouteHandler for ListWorkflowsHandler {
         _path_parameters: HashMap<String, String>,
         manager: UnboundedSender<WorkflowManagerRequest>,
     ) -> Result<Response<Body>, Error> {
-        let (response_sender, mut response_receiver) = unbounded_channel();
+        let (response_sender, response_receiver) = channel();
         let message = WorkflowManagerRequest::GetRunningWorkflows {
             response_channel: response_sender,
         };
@@ -40,10 +41,10 @@ impl RouteHandler for ListWorkflowsHandler {
             }
         };
 
-        let response = match timeout(Duration::from_secs(10), response_receiver.recv()).await {
-            Ok(Some(response)) => response,
+        let response = match timeout(Duration::from_secs(10), response_receiver).await {
+            Ok(Ok(response)) => response,
 
-            Ok(None) => {
+            Ok(Err(_)) => {
                 error!("Workflow manager is no longer operational");
                 let mut response = Response::default();
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;

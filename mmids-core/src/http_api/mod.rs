@@ -1,7 +1,9 @@
+mod get_workflow_details;
 mod list_workflows;
 pub mod routing;
 
 pub mod handlers {
+    pub use super::get_workflow_details::GetWorkflowDetailsHandler;
     pub use super::list_workflows::ListWorkflowsHandler;
 }
 

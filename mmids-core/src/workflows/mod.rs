@@ -19,6 +19,8 @@ use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
 
+pub use runner::{WorkflowState, WorkflowStepState};
+
 /// Notification about media coming across a specific stream
 #[derive(Clone)]
 pub struct MediaNotification {
