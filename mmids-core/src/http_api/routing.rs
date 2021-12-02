@@ -21,9 +21,14 @@ pub enum PathPart {
     Parameter { name: String },
 }
 
-/// Represents code that will be executed for a given path.
+/// Represents code that will be executed for a given route.
+///
+/// Note: this trait uses the `async_trait` crate
 #[async_trait]
 pub trait RouteHandler {
+    /// Executes the handler for the specified HTTP request and pre-parsed path parameters.
+    ///
+    /// Note that implementors can use `async_trait` to clean up the signature.
     async fn execute(
         &self,
         request: &mut Request<Body>,

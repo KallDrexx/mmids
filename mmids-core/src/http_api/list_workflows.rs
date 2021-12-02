@@ -10,10 +10,12 @@ use tokio::sync::oneshot::channel;
 use tokio::time::timeout;
 use tracing::error;
 
+/// HTTP handler which provides a list of workflows that are actively running
 pub struct ListWorkflowsHandler;
 
+/// Defines what data the API will return for each running workflow
 #[derive(Serialize)]
-struct Workflow {
+pub struct WorkflowListItemResponse {
     name: String,
 }
 
@@ -63,7 +65,7 @@ impl RouteHandler for ListWorkflowsHandler {
 
         let response = response
             .into_iter()
-            .map(|x| Workflow { name: x.name })
+            .map(|x| WorkflowListItemResponse { name: x.name })
             .collect::<Vec<_>>();
         let json = match serde_json::to_string_pretty(&response) {
             Ok(json) => json,

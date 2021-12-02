@@ -248,7 +248,9 @@ fn start_http_api(
             path: vec![PathPart::Exact {
                 value: "workflows".to_string(),
             }],
-            handler: Box::new(mmids_core::http_api::handlers::ListWorkflowsHandler),
+            handler: Box::new(
+                mmids_core::http_api::handlers::list_workflow_details::ListWorkflowsHandler,
+            ),
         })
         .expect("Failed to register list workflows route");
 
@@ -263,7 +265,9 @@ fn start_http_api(
                     name: "workflow".to_string(),
                 },
             ],
-            handler: Box::new(mmids_core::http_api::handlers::GetWorkflowDetailsHandler),
+            handler: Box::new(
+                mmids_core::http_api::handlers::get_workflow_details::GetWorkflowDetailsHandler,
+            ),
         })
         .expect("Failed to register get workflow details route");
 

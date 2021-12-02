@@ -18,14 +18,16 @@ use tracing::error;
 /// will always be returned in json format.
 pub struct GetWorkflowDetailsHandler;
 
+/// The API's response for the state of the requested workflow
 #[derive(Serialize)]
-struct WorkflowStateResponse {
+pub struct WorkflowStateResponse {
     active_steps: Vec<WorkflowStepStateResponse>,
     pending_steps: Vec<WorkflowStepStateResponse>,
 }
 
+/// API's response for the details of an individual workflow step
 #[derive(Serialize)]
-struct WorkflowStepStateResponse {
+pub struct WorkflowStepStateResponse {
     step_type: String,
     parameters: HashMap<String, String>,
     status: String,
@@ -75,7 +77,7 @@ impl RouteHandler for GetWorkflowDetailsHandler {
             }
         };
 
-        let mut response = if let Some(details) = details {
+        let response = if let Some(details) = details {
             let details = WorkflowStateResponse::from(details);
             let json = match serde_json::to_string_pretty(&details) {
                 Ok(json) => json,
@@ -88,16 +90,20 @@ impl RouteHandler for GetWorkflowDetailsHandler {
                 }
             };
 
-            Response::new(Body::from(json))
-        } else {
-            Response::new(Body::from("[]"))
-        };
+            let mut response = Response::new(Body::from(json));
+            let headers = response.headers_mut();
+            headers.insert(
+                hyper::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
 
-        let headers = response.headers_mut();
-        headers.insert(
-            hyper::http::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        );
+            response
+        } else {
+            let mut response = Response::new(Body::from("Workflow not found"));
+            *response.status_mut() = StatusCode::NOT_FOUND;
+
+            response
+        };
 
         Ok(response)
     }

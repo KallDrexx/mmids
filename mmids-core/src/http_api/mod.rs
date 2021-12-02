@@ -1,10 +1,23 @@
+//! Handles interfacing with mmids via an http based interface.  Routes are defined by consumers,
+//! which define the code that should execute when that route gets hit.
+
 mod get_workflow_details;
 mod list_workflows;
 pub mod routing;
 
+/// Contains pre-defined implementations of the `RouteHandler` traits for various functionality
 pub mod handlers {
-    pub use super::get_workflow_details::GetWorkflowDetailsHandler;
-    pub use super::list_workflows::ListWorkflowsHandler;
+    /// Contains the handler for getting details about a running workflow
+    pub mod get_workflow_details {
+        pub use super::super::get_workflow_details::{
+            GetWorkflowDetailsHandler, WorkflowStateResponse, WorkflowStepStateResponse,
+        };
+    }
+
+    /// Contains the handler for getting a list of workflows
+    pub mod list_workflow_details {
+        pub use super::super::list_workflows::{ListWorkflowsHandler, WorkflowListItemResponse};
+    }
 }
 
 use crate::http_api::routing::RoutingTable;
