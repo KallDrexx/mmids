@@ -1,3 +1,5 @@
+//! Contains the handler for getting details about a running workflow
+
 use crate::http_api::routing::RouteHandler;
 use crate::workflows::manager::WorkflowManagerRequest;
 use crate::workflows::steps::StepStatus;

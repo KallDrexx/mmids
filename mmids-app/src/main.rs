@@ -249,7 +249,7 @@ fn start_http_api(
             path: vec![PathPart::Exact {
                 value: "workflows".to_string(),
             }],
-            handler: Box::new(handlers::list_workflow_details::ListWorkflowsHandler::new(
+            handler: Box::new(handlers::list_workflows::ListWorkflowsHandler::new(
                 manager.clone(),
             )),
         })

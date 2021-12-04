@@ -1,3 +1,5 @@
+//! Contains the handler for getting a list of workflows
+
 use crate::http_api::routing::RouteHandler;
 use crate::workflows::manager::WorkflowManagerRequest;
 use async_trait::async_trait;
