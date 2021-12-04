@@ -274,10 +274,25 @@ fn start_http_api(
 
     routes
         .register(Route {
+            method: Method::DELETE,
+            path: vec![
+                PathPart::Exact {
+                    value: "workflows".to_string(),
+                },
+                PathPart::Parameter {
+                    name: "workflow".to_string(),
+                },
+            ],
+            handler: Box::new(handlers::stop_workflow::StopWorkflowHandler::new(
+                manager.clone(),
+            )),
+        })
+        .expect("Failed to register stop workflow route");
+
+    routes
+        .register(Route {
             method: Method::GET,
-            path: vec![PathPart::Exact {
-                value: "version".to_string(),
-            }],
+            path: Vec::new(),
             handler: Box::new(http_handlers::VersionHandler),
         })
         .expect("Failed to register version route");

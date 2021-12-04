@@ -73,7 +73,7 @@ impl<'a> Actor<'a> {
         }
     }
 
-    #[instrument(name = "Workflow Manager Execution", skip(self))]
+    #[instrument(name = "Workflow Manager Execution", skip(self, request_receiver))]
     async fn run(mut self, request_receiver: UnboundedReceiver<WorkflowManagerRequest>) {
         self.futures
             .push(wait_for_request(request_receiver).boxed());

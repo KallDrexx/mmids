@@ -2,3 +2,4 @@
 
 pub mod get_workflow_details;
 pub mod list_workflows;
+pub mod stop_workflow;
