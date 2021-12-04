@@ -291,6 +291,18 @@ fn start_http_api(
 
     routes
         .register(Route {
+            method: Method::PUT,
+            path: vec![PathPart::Exact {
+                value: "workflows".to_string(),
+            }],
+            handler: Box::new(handlers::start_workflow::StartWorkflowHandler::new(
+                manager.clone(),
+            )),
+        })
+        .expect("Failed to register start workflow route");
+
+    routes
+        .register(Route {
             method: Method::GET,
             path: Vec::new(),
             handler: Box::new(http_handlers::VersionHandler),
