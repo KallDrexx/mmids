@@ -11,12 +11,20 @@ use tokio::time::timeout;
 use tracing::error;
 
 /// HTTP handler which provides a list of workflows that are actively running
-pub struct ListWorkflowsHandler;
+pub struct ListWorkflowsHandler {
+    manager: UnboundedSender<WorkflowManagerRequest>,
+}
 
 /// Defines what data the API will return for each running workflow
 #[derive(Serialize)]
 pub struct WorkflowListItemResponse {
     name: String,
+}
+
+impl ListWorkflowsHandler {
+    pub fn new(manager: UnboundedSender<WorkflowManagerRequest>) -> Self {
+        ListWorkflowsHandler { manager }
+    }
 }
 
 #[async_trait]
@@ -25,14 +33,13 @@ impl RouteHandler for ListWorkflowsHandler {
         &self,
         _request: &mut Request<Body>,
         _path_parameters: HashMap<String, String>,
-        manager: UnboundedSender<WorkflowManagerRequest>,
     ) -> Result<Response<Body>, Error> {
         let (response_sender, response_receiver) = channel();
         let message = WorkflowManagerRequest::GetRunningWorkflows {
             response_channel: response_sender,
         };
 
-        match manager.send(message) {
+        match self.manager.send(message) {
             Ok(_) => (),
             Err(_) => {
                 error!("Workflow manager is no longer operational");

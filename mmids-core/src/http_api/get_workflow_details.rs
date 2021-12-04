@@ -16,7 +16,9 @@ use tracing::error;
 /// Handles HTTP requests to get details for a specific workflow.  It requires a single path
 /// parameter with the name `workflow` containing the name of the workflow to query for.  Response
 /// will always be returned in json format.
-pub struct GetWorkflowDetailsHandler;
+pub struct GetWorkflowDetailsHandler {
+    manager: UnboundedSender<WorkflowManagerRequest>,
+}
 
 /// The API's response for the state of the requested workflow
 #[derive(Serialize)]
@@ -33,13 +35,18 @@ pub struct WorkflowStepStateResponse {
     status: String,
 }
 
+impl GetWorkflowDetailsHandler {
+    pub fn new(manager: UnboundedSender<WorkflowManagerRequest>) -> Self {
+        GetWorkflowDetailsHandler { manager }
+    }
+}
+
 #[async_trait]
 impl RouteHandler for GetWorkflowDetailsHandler {
     async fn execute(
         &self,
         _request: &mut Request<Body>,
         path_parameters: HashMap<String, String>,
-        manager: UnboundedSender<WorkflowManagerRequest>,
     ) -> Result<Response<Body>, Error> {
         let workflow_name = match path_parameters.get("workflow") {
             Some(value) => value.to_string(),
@@ -53,10 +60,12 @@ impl RouteHandler for GetWorkflowDetailsHandler {
         };
 
         let (sender, receiver) = channel();
-        let _ = manager.send(WorkflowManagerRequest::GetWorkflowDetails {
-            name: workflow_name,
-            response_channel: sender,
-        });
+        let _ = self
+            .manager
+            .send(WorkflowManagerRequest::GetWorkflowDetails {
+                name: workflow_name,
+                response_channel: sender,
+            });
 
         let details = match timeout(Duration::from_secs(1), receiver).await {
             Ok(Ok(details)) => details,

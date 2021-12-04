@@ -1,11 +1,9 @@
 //! Provides mechanisms to define routes for the Mmids HTTP apis, and what code should be executed
 //! for each route.
 
-use crate::workflows::manager::WorkflowManagerRequest;
 use async_trait::async_trait;
 use hyper::{Body, Method, Request, Response};
 use std::collections::HashMap;
-use tokio::sync::mpsc::UnboundedSender;
 
 /// Defines how a single fragment of the URL path should be read as.  Each part is the whole value
 /// between a `/` and either another `/` or the end of the string.  Query parameters are not
@@ -33,7 +31,6 @@ pub trait RouteHandler {
         &self,
         request: &mut Request<Body>,
         path_parameters: HashMap<String, String>,
-        manager: UnboundedSender<WorkflowManagerRequest>,
     ) -> Result<Response<Body>, hyper::Error>;
 }
 

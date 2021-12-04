@@ -21,14 +21,12 @@ pub mod handlers {
 }
 
 use crate::http_api::routing::RoutingTable;
-use crate::workflows::manager::WorkflowManagerRequest;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::{channel, Receiver, Sender};
 use tracing::{error, info, instrument};
 use uuid::Uuid;
@@ -38,21 +36,14 @@ pub struct HttpApiShutdownSignal {}
 pub fn start_http_api(
     bind_address: SocketAddr,
     routes: RoutingTable,
-    manager: UnboundedSender<WorkflowManagerRequest>,
 ) -> Sender<HttpApiShutdownSignal> {
     let routes = Arc::new(routes);
     let service = make_service_fn(move |socket: &AddrStream| {
         let remote_address = socket.remote_addr();
-        let manager_clone = manager.clone();
         let routes_clone = routes.clone();
         async move {
             Ok::<_, hyper::Error>(service_fn(move |request: Request<Body>| {
-                execute_request(
-                    request,
-                    remote_address,
-                    manager_clone.clone(),
-                    routes_clone.clone(),
-                )
+                execute_request(request, remote_address, routes_clone.clone())
             }))
         }
     });
@@ -73,7 +64,7 @@ async fn graceful_shutdown(shutdown_signal: Receiver<HttpApiShutdownSignal>) {
 }
 
 #[instrument(
-    skip(request, client_address, manager, routes),
+    skip(request, client_address, routes),
     fields(
         http_method = %request.method(),
         http_uri = %request.uri(),
@@ -84,7 +75,6 @@ async fn graceful_shutdown(shutdown_signal: Receiver<HttpApiShutdownSignal>) {
 async fn execute_request(
     mut request: Request<Body>,
     client_address: SocketAddr,
-    manager: UnboundedSender<WorkflowManagerRequest>,
     routes: Arc<RoutingTable>,
 ) -> Result<Response<Body>, hyper::Error> {
     info!(
@@ -106,11 +96,7 @@ async fn execute_request(
     match routes.get_route(request.method(), &parts) {
         Some(route) => {
             let parameters = route.get_parameters(&parts);
-            match route
-                .handler
-                .execute(&mut request, parameters, manager)
-                .await
-            {
+            match route.handler.execute(&mut request, parameters).await {
                 Ok(response) => {
                     let elapsed = started_at.elapsed();
                     info!(
