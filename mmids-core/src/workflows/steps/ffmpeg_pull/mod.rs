@@ -10,7 +10,8 @@ use crate::endpoints::ffmpeg::{
     TargetParams, VideoTranscodeParams,
 };
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
+    IpRestriction, RegistrationType, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
+    StreamKeyRegistration,
 };
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::factory::StepGenerator;
@@ -38,6 +39,7 @@ pub struct FfmpegPullStepGenerator {
 struct FfmpegPullStep {
     definition: WorkflowStepDefinition,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     status: StepStatus,
     rtmp_app: String,
     pull_location: String,
@@ -99,6 +101,7 @@ impl StepGenerator for FfmpegPullStepGenerator {
             status: StepStatus::Created,
             rtmp_app: format!("ffmpeg-pull-{}", definition.get_id()),
             ffmpeg_endpoint: self.ffmpeg_endpoint.clone(),
+            rtmp_endpoint: self.rtmp_endpoint.clone(),
             pull_location: location,
             stream_name: stream_name.clone(),
             ffmpeg_id: None,
@@ -365,15 +368,25 @@ impl WorkflowStep for FfmpegPullStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         for result in inputs.notifications.drain(..) {
             if let Ok(result) = result.downcast::<FutureResult>() {
                 self.handle_resolved_future(*result, outputs);
             }
         }
+    }
+
+    fn shutdown(&mut self) {
+        self.status = StepStatus::Shutdown;
+        self.stop_ffmpeg();
+
+        let _ = self
+            .rtmp_endpoint
+            .send(RtmpEndpointRequest::RemoveRegistration {
+                registration_type: RegistrationType::Publisher,
+                port: 1935,
+                rtmp_app: self.rtmp_app.clone(),
+                rtmp_stream_key: StreamKeyRegistration::Exact(self.stream_name.clone()),
+            });
     }
 }
 

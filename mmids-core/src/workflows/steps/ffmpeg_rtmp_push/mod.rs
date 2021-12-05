@@ -107,10 +107,6 @@ impl WorkflowStep for FfmpegRtmpPushStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         if self.stream_reader.status == StepStatus::Error {
             error!("External stream reader is in error status, so putting the step in in error status as well.");
 
@@ -138,6 +134,11 @@ impl WorkflowStep for FfmpegRtmpPushStep {
         for media in inputs.media.drain(..) {
             self.stream_reader.handle_media(media, outputs);
         }
+    }
+
+    fn shutdown(&mut self) {
+        self.stream_reader.stop_all_streams();
+        self.status = StepStatus::Shutdown;
     }
 }
 

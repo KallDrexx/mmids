@@ -46,6 +46,10 @@ async fn can_create_from_filled_out_workflow_definition() {
                     "Unexpected stream key"
                 );
             }
+
+            RtmpEndpointRequest::RemoveRegistration { .. } => {
+                panic!("Expected publish registration, instead got removal request");
+            }
         },
 
         _ => panic!("No RTMP request surfaced"),
@@ -65,6 +69,10 @@ async fn asterisk_for_key_sets_key_to_any() {
         Ok(Some(request)) => match request {
             RtmpEndpointRequest::ListenForWatchers { .. } => {
                 panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::RemoveRegistration { .. } => {
+                panic!("Expected publish registration, instead got removal request");
             }
 
             RtmpEndpointRequest::ListenForPublishers {
@@ -102,6 +110,10 @@ async fn port_is_1935_if_none_provided() {
         Ok(Some(request)) => match request {
             RtmpEndpointRequest::ListenForWatchers { .. } => {
                 panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::RemoveRegistration { .. } => {
+                panic!("Expected publish registration, instead got removal request");
             }
 
             RtmpEndpointRequest::ListenForPublishers { port, .. } => {
@@ -159,6 +171,10 @@ async fn rtmp_app_is_trimmed() {
                 panic!("Expected publish registration, instead got watch registration")
             }
 
+            RtmpEndpointRequest::RemoveRegistration { .. } => {
+                panic!("Expected publish registration, instead got removal request");
+            }
+
             RtmpEndpointRequest::ListenForPublishers { rtmp_app, .. } => {
                 assert_eq!(rtmp_app, TEST_APP, "Unexpected rtmp app");
             }
@@ -186,6 +202,10 @@ async fn stream_key_is_trimmed() {
         Ok(Some(request)) => match request {
             RtmpEndpointRequest::ListenForWatchers { .. } => {
                 panic!("Expected publish registration, instead got watch registration")
+            }
+
+            RtmpEndpointRequest::RemoveRegistration { .. } => {
+                panic!("Expected publish registration, instead got removal request");
             }
 
             RtmpEndpointRequest::ListenForPublishers {

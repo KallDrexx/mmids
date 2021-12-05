@@ -16,8 +16,8 @@ use crate::endpoints::ffmpeg::{
     H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
 };
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
-    RtmpEndpointWatcherNotification, StreamKeyRegistration,
+    IpRestriction, RegistrationType, RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage,
+    RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration,
 };
 use crate::utils::stream_metadata_to_hash_map;
 use crate::workflows::definitions::WorkflowStepDefinition;
@@ -589,7 +589,23 @@ impl FfmpegTranscoder {
                 FfmpegStatus::Inactive => (),
             }
 
-            // TODO: Add support for manually unregistering from rtmp endpoints
+            let _ = self
+                .rtmp_server_endpoint
+                .send(RtmpEndpointRequest::RemoveRegistration {
+                    registration_type: RegistrationType::Watcher,
+                    port: 1935,
+                    rtmp_app: self.get_source_rtmp_app(),
+                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                });
+
+            let _ = self
+                .rtmp_server_endpoint
+                .send(RtmpEndpointRequest::RemoveRegistration {
+                    registration_type: RegistrationType::Publisher,
+                    port: 1935,
+                    rtmp_app: self.get_result_rtmp_app(),
+                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                });
 
             return true;
         }
@@ -815,6 +831,15 @@ impl WorkflowStep for FfmpegTranscoder {
         for media in inputs.media.drain(..) {
             self.handle_media(media, outputs);
         }
+    }
+
+    fn shutdown(&mut self) {
+        let stream_ids = self.active_streams.drain().map(|x| x.0).collect::<Vec<_>>();
+        for stream_id in stream_ids {
+            self.stop_stream(&stream_id);
+        }
+
+        self.status = StepStatus::Shutdown;
     }
 }
 

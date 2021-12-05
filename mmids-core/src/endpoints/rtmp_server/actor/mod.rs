@@ -5,7 +5,9 @@ use super::{
     RtmpEndpointMediaData, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
 };
 use crate::endpoints::rtmp_server::actor::connection_handler::ConnectionResponse;
-use crate::endpoints::rtmp_server::{IpRestriction, RtmpEndpointWatcherNotification};
+use crate::endpoints::rtmp_server::{
+    IpRestriction, RegistrationType, RtmpEndpointWatcherNotification,
+};
 use crate::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use crate::net::ConnectionId;
 use crate::StreamId;
@@ -237,6 +239,31 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     ip_restrictions,
                     use_tls,
                 );
+            }
+
+            RtmpEndpointRequest::RemoveRegistration {
+                registration_type,
+                port,
+                rtmp_app,
+                rtmp_stream_key,
+            } => {
+                info!(
+                    port = %port,
+                    rtmp_app = %rtmp_app,
+                    stream_key = ?rtmp_stream_key,
+                    registration_type = ?registration_type,
+                    "{:?} Registration removal requested for port {}, app {}, and stream key {:?}",
+                    registration_type, port, rtmp_app, rtmp_stream_key
+                );
+
+                match registration_type {
+                    RegistrationType::Publisher => {
+                        self.remove_publish_registration(port, rtmp_app, rtmp_stream_key)
+                    }
+                    RegistrationType::Watcher => {
+                        self.remove_watcher_registration(port, rtmp_app, rtmp_stream_key)
+                    }
+                }
             }
         }
     }
@@ -644,7 +671,9 @@ impl<'a> RtmpServerEndpointActor<'a> {
             None => return,
         };
 
-        app_map.publisher_registrants.remove(&stream_key);
+        if let None = app_map.publisher_registrants.remove(&stream_key) {
+            return;
+        }
 
         // Remove all publishers tied to this registrant
         let mut keys_to_remove = Vec::new();
@@ -689,7 +718,9 @@ impl<'a> RtmpServerEndpointActor<'a> {
             None => return,
         };
 
-        app_map.watcher_registrants.remove(&stream_key);
+        if let None = app_map.watcher_registrants.remove(&stream_key) {
+            return;
+        }
 
         // Remove all watchers tied to this registrant
         let mut keys_to_remove = Vec::new();

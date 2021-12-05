@@ -1,7 +1,7 @@
 use super::external_stream_handler::{ExternalStreamHandler, StreamHandlerFutureWrapper};
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RtmpEndpointMediaMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
-    StreamKeyRegistration,
+    IpRestriction, RegistrationType, RtmpEndpointMediaMessage, RtmpEndpointRequest,
+    RtmpEndpointWatcherNotification, StreamKeyRegistration,
 };
 use crate::workflows::steps::external_stream_handler::{
     ExternalStreamHandlerGenerator, ResolvedFutureStatus,
@@ -261,6 +261,15 @@ impl ExternalStreamReader {
     fn stop_stream(&mut self, stream_id: &StreamId) -> bool {
         if let Some(mut stream) = self.active_streams.remove(stream_id) {
             stream.external_stream_handler.stop_stream();
+
+            let _ = self
+                .rtmp_server_endpoint
+                .send(RtmpEndpointRequest::RemoveRegistration {
+                    registration_type: RegistrationType::Watcher,
+                    port: 1935,
+                    rtmp_app: self.watcher_app_name.clone(),
+                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                });
 
             return true;
         }

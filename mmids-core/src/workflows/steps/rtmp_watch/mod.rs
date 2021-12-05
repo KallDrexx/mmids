@@ -16,8 +16,8 @@
 mod tests;
 
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointRequest,
-    RtmpEndpointWatcherNotification, StreamKeyRegistration,
+    IpRestriction, RegistrationType, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
+    RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration,
 };
 use crate::net::{IpAddress, IpAddressParseError};
 use crate::utils::hash_map_to_stream_metadata;
@@ -411,6 +411,18 @@ impl WorkflowStep for RtmpWatchStep {
         for media in inputs.media.drain(..) {
             self.handle_media(media, outputs);
         }
+    }
+
+    fn shutdown(&mut self) {
+        self.status = StepStatus::Shutdown;
+        let _ = self
+            .rtmp_endpoint_sender
+            .send(RtmpEndpointRequest::RemoveRegistration {
+                registration_type: RegistrationType::Watcher,
+                port: self.port,
+                rtmp_app: self.rtmp_app.clone(),
+                rtmp_stream_key: self.stream_key.clone(),
+            });
     }
 }
 

@@ -53,6 +53,10 @@ async fn can_create_from_filled_out_workflow_definition() {
                 "Expected watch registration request, but publish registration request was found"
             )
         }
+
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected watch registration, instead got removal request");
+        }
     }
 }
 
@@ -90,6 +94,10 @@ async fn asterisk_for_key_sets_key_to_any() {
                 "Expected watch registration request, but publish registration request was found"
             )
         }
+
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected watch registration, instead got removal request");
+        }
     }
 }
 
@@ -117,6 +125,10 @@ async fn port_is_1935_if_none_provided() {
             panic!(
                 "Expected watch registration request, but publish registration request was found"
             )
+        }
+
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected watch registration, instead got removal request");
         }
     }
 }
@@ -175,6 +187,10 @@ async fn rtmp_app_is_trimmed() {
                 "Expected watch registration request, but publish registration request was found"
             )
         }
+
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected watch registration, instead got removal request");
+        }
     }
 }
 
@@ -211,6 +227,10 @@ async fn stream_key_is_trimmed() {
             panic!(
                 "Expected watch registration request, but publish registration request was found"
             )
+        }
+
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected watch registration, instead got removal request");
         }
     }
 }

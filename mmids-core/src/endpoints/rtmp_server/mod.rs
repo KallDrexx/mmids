@@ -67,6 +67,13 @@ pub enum IpRestriction {
     Deny(Vec<IpAddress>),
 }
 
+/// Type of registration the request is related to
+#[derive(Debug)]
+pub enum RegistrationType {
+    Publisher,
+    Watcher,
+}
+
 /// Operations the rtmp server endpoint is being requested to make
 #[derive(Debug)]
 pub enum RtmpEndpointRequest {
@@ -121,6 +128,21 @@ pub enum RtmpEndpointRequest {
 
         /// If true, this port should be on a TLS socket (i.e. RTMPS)
         use_tls: bool,
+    },
+
+    /// Requests the specified registration should be removed
+    RemoveRegistration {
+        /// The type of registration that is being removed
+        registration_type: RegistrationType,
+
+        /// Port the removed registrant was listening on
+        port: u16,
+
+        /// The RTMP application name that the registrant was listening on
+        rtmp_app: String,
+
+        /// The stream key the registrant had registered for
+        rtmp_stream_key: StreamKeyRegistration,
     },
 }
 

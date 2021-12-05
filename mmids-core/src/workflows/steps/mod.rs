@@ -44,6 +44,10 @@ pub enum StepStatus {
     /// The step has encountered an unrecoverable error and can no longer handle media or
     /// notifications.  It will likely have to be recreated.
     Error,
+
+    /// The step has been shut down and is not expected to be invoked anymore. If it's wanted to be
+    /// used it will have to be recreated
+    Shutdown,
 }
 
 /// Inputs to be passed in for execution of a workflow step.
@@ -94,9 +98,27 @@ impl<'a> StepOutputs<'a> {
 
 /// Represents a workflow step that can be executed
 pub trait WorkflowStep {
+    /// Returns a reference to the status of the current workflow step
     fn get_status(&self) -> &StepStatus;
+
+    /// Returns a reference to the definition this workflow step was created with
     fn get_definition(&self) -> &WorkflowStepDefinition;
+
+    /// Executes the workflow step with the specified media and future resolution inputs.  Any outputs
+    /// that are generated as a result of this execution will be placed in the `outputs` parameter,
+    /// to allow vectors to be re-used.
+    ///
+    /// It is expected that `execute()` will not be called if the step is in an Error or Torn Down
+    /// state.
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs);
+
+    /// Notifies the step that it is no longer needed and that all streams its managing should be
+    /// closed.  All endpoints the step has interacted with should be proactively notified that it
+    /// is being removed, as it can not be guaranteed that all channels will be automatically
+    /// closed.
+    ///
+    /// After this is called it is expected that the workflow step is in a `TornDown` state.
+    fn shutdown(&mut self);
 }
 
 #[cfg(test)]

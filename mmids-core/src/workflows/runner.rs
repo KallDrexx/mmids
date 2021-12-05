@@ -314,8 +314,13 @@ impl<'a> Actor<'a> {
             }
         };
 
-        step.execute(&mut self.step_inputs, &mut self.step_outputs);
+        let status = step.get_status();
+        if status != &StepStatus::Shutdown && status != &StepStatus::Error {
+            step.execute(&mut self.step_inputs, &mut self.step_outputs);
+        }
 
+        // Even if we didn't call execute, run through the logic below to make sure we are in a
+        // clean state if we do fall through to the next step.
         for future in self.step_outputs.futures.drain(..) {
             self.futures
                 .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
@@ -332,7 +337,7 @@ impl<'a> Actor<'a> {
     }
 
     fn check_if_all_pending_steps_are_active(&mut self, swap_if_pending_is_empty: bool) {
-        let mut all_are_active = false;
+        let mut all_are_active = true;
         for id in &self.pending_steps {
             let step = match self.steps_by_definition_id.get(id) {
                 Some(x) => Some(x),
@@ -350,7 +355,10 @@ impl<'a> Actor<'a> {
                 match step.get_status() {
                     StepStatus::Created => all_are_active = false,
                     StepStatus::Active => (),
-                    StepStatus::Error => return, // TODO: Set workflow in error state
+
+                    // TODO: Set workflow in error state for these two
+                    StepStatus::Error => return,
+                    StepStatus::Shutdown => return,
                 }
             } else {
                 // the step is still waiting to be instantiated by the factory
@@ -387,7 +395,12 @@ impl<'a> Actor<'a> {
                     // from these streams.
                     info!(step_id = step_id, "Removing now unused step id {}", step_id);
                     self.step_definitions.remove(&step_id);
-                    self.steps_by_definition_id.remove(&step_id);
+                    if let Some(mut step) = self.steps_by_definition_id.remove(&step_id) {
+                        let span = span!(Level::INFO, "Step Shutdown", step_id = %step_id);
+                        let _enter = span.enter();
+                        step.shutdown();
+                    }
+
                     if let Some(cache) = self.cached_step_media.remove(&step_id) {
                         for key in cache.keys() {
                             if let Some(stream) = self.active_streams.get(key) {

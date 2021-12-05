@@ -7,7 +7,8 @@
 mod tests;
 
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
+    IpRestriction, RegistrationType, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
+    StreamKeyRegistration,
 };
 use crate::net::{ConnectionId, IpAddress, IpAddressParseError};
 use crate::workflows::definitions::WorkflowStepDefinition;
@@ -317,10 +318,6 @@ impl WorkflowStep for RtmpReceiverStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         for future_result in inputs.notifications.drain(..) {
             let future_result = match future_result.downcast::<RtmpReceiveFutureResult>() {
                 Ok(result) => *result,
@@ -349,6 +346,18 @@ impl WorkflowStep for RtmpReceiverStep {
                 }
             }
         }
+    }
+
+    fn shutdown(&mut self) {
+        self.status = StepStatus::Shutdown;
+        let _ = self
+            .rtmp_endpoint_sender
+            .send(RtmpEndpointRequest::RemoveRegistration {
+                registration_type: RegistrationType::Publisher,
+                port: self.port,
+                rtmp_app: self.rtmp_app.clone(),
+                rtmp_stream_key: self.stream_key.clone(),
+            });
     }
 }
 
