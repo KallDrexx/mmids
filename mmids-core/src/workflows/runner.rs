@@ -33,6 +33,9 @@ pub enum WorkflowRequestOperation {
     GetState {
         response_channel: Sender<Option<WorkflowState>>,
     },
+
+    /// Requests the workflow stop operating
+    StopWorkflow,
 }
 
 pub struct WorkflowState {
@@ -131,7 +134,12 @@ impl<'a> Actor<'a> {
                     self.futures
                         .push(wait_for_workflow_request(receiver).boxed());
 
-                    self.handle_workflow_request(request);
+                    let mut stop_workflow = false;
+                    self.handle_workflow_request(request, &mut stop_workflow);
+
+                    if stop_workflow {
+                        break;
+                    }
                 }
 
                 FutureResult::StepFutureResolved { step_id, result } => {
@@ -143,8 +151,8 @@ impl<'a> Actor<'a> {
         info!("Workflow closing");
     }
 
-    #[instrument(skip(self, request), fields(request_id = %request.request_id))]
-    fn handle_workflow_request(&mut self, request: WorkflowRequest) {
+    #[instrument(skip(self, request, stop_workflow), fields(request_id = %request.request_id))]
+    fn handle_workflow_request(&mut self, request: WorkflowRequest, stop_workflow: &mut bool) {
         match request.operation {
             WorkflowRequestOperation::UpdateDefinition { new_definition } => {
                 info!("Workflow requested to have its definition updated");
@@ -189,6 +197,13 @@ impl<'a> Actor<'a> {
                 }
 
                 let _ = response_channel.send(Some(state));
+            }
+
+            WorkflowRequestOperation::StopWorkflow => {
+                info!("Closing workflow as requested");
+                *stop_workflow = true;
+
+                // TOOD: tear down active and pending steps
             }
         }
     }

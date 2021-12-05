@@ -150,9 +150,12 @@ impl<'a> Actor<'a> {
                     "Stopping workflow '{}'", name,
                 );
 
-                // Removing the workflow from the hashmap should be enough, as all consumers of
-                // the workflow request channel will be gone and it'll shut itself down.
-                self.workflows.remove(&name);
+                if let Some(sender) = self.workflows.remove(&name) {
+                    let _ = sender.send(WorkflowRequest {
+                        request_id: request.request_id,
+                        operation: WorkflowRequestOperation::StopWorkflow,
+                    });
+                }
             }
 
             WorkflowManagerRequestOperation::GetRunningWorkflows { response_channel } => {
