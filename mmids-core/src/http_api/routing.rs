@@ -31,6 +31,7 @@ pub trait RouteHandler {
         &self,
         request: &mut Request<Body>,
         path_parameters: HashMap<String, String>,
+        request_id: String,
     ) -> Result<Response<Body>, hyper::Error>;
 }
 

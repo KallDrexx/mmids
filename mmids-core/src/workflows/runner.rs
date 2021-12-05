@@ -14,8 +14,15 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, span, warn, Level};
 
-/// Requests that can be made to an actively running workflow
-pub enum WorkflowRequest {
+/// A request to the workflow to perform an action
+pub struct WorkflowRequest {
+    /// An identifier that can be used to correlate this request with its
+    pub request_id: String,
+    pub operation: WorkflowRequestOperation,
+}
+
+/// Operations that can be made to an actively running workflow
+pub enum WorkflowRequestOperation {
     /// Requests the workflow update with a new definition. The workflow will take shape to look
     /// exactly as the specified definition has.  Any existing steps that aren't specified will
     /// be removed, any new steps will be created, and any steps that stay will reflect the order
@@ -136,14 +143,15 @@ impl<'a> Actor<'a> {
         info!("Workflow closing");
     }
 
+    #[instrument(skip(self, request), fields(request_id = %request.request_id))]
     fn handle_workflow_request(&mut self, request: WorkflowRequest) {
-        match request {
-            WorkflowRequest::UpdateDefinition { new_definition } => {
+        match request.operation {
+            WorkflowRequestOperation::UpdateDefinition { new_definition } => {
                 info!("Workflow requested to have its definition updated");
                 self.apply_new_definition(new_definition);
             }
 
-            WorkflowRequest::GetState { response_channel } => {
+            WorkflowRequestOperation::GetState { response_channel } => {
                 info!("Workflow state requested by external caller");
                 let mut state = WorkflowState {
                     pending_steps: Vec::new(),

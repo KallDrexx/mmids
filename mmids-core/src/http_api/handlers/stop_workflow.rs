@@ -1,7 +1,7 @@
 //! Handler that allows a workflow to be stopped
 
 use crate::http_api::routing::RouteHandler;
-use crate::workflows::manager::WorkflowManagerRequest;
+use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use async_trait::async_trait;
 use hyper::{Body, Error, Request, Response, StatusCode};
 use std::collections::HashMap;
@@ -27,6 +27,7 @@ impl RouteHandler for StopWorkflowHandler {
         &self,
         _request: &mut Request<Body>,
         path_parameters: HashMap<String, String>,
+        request_id: String,
     ) -> Result<Response<Body>, Error> {
         let workflow_name = match path_parameters.get("workflow") {
             Some(value) => value.to_string(),
@@ -39,8 +40,11 @@ impl RouteHandler for StopWorkflowHandler {
             }
         };
 
-        match self.manager.send(WorkflowManagerRequest::StopWorkflow {
-            name: workflow_name,
+        match self.manager.send(WorkflowManagerRequest {
+            request_id,
+            operation: WorkflowManagerRequestOperation::StopWorkflow {
+                name: workflow_name,
+            },
         }) {
             Ok(_) => (),
             Err(_) => {

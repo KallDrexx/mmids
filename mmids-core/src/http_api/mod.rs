@@ -5,6 +5,7 @@ pub mod handlers;
 pub mod routing;
 
 use crate::http_api::routing::RoutingTable;
+use hyper::header::HeaderName;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
@@ -27,7 +28,12 @@ pub fn start_http_api(
         let routes_clone = routes.clone();
         async move {
             Ok::<_, hyper::Error>(service_fn(move |request: Request<Body>| {
-                execute_request(request, remote_address, routes_clone.clone())
+                execute_request(
+                    request,
+                    remote_address,
+                    routes_clone.clone(),
+                    Uuid::new_v4().to_string(),
+                )
             }))
         }
     });
@@ -53,13 +59,13 @@ async fn graceful_shutdown(shutdown_signal: Receiver<HttpApiShutdownSignal>) {
         http_method = %request.method(),
         http_uri = %request.uri(),
         client_ip = %client_address.ip(),
-        request_id = %Uuid::new_v4(),
     )
 )]
 async fn execute_request(
     mut request: Request<Body>,
     client_address: SocketAddr,
     routes: Arc<RoutingTable>,
+    request_id: String,
 ) -> Result<Response<Body>, hyper::Error> {
     info!(
         "Incoming HTTP request for {} {} from {}",
@@ -80,12 +86,22 @@ async fn execute_request(
     match routes.get_route(request.method(), &parts) {
         Some(route) => {
             let parameters = route.get_parameters(&parts);
-            match route.handler.execute(&mut request, parameters).await {
-                Ok(response) => {
+            match route
+                .handler
+                .execute(&mut request, parameters, request_id.clone())
+                .await
+            {
+                Ok(mut response) => {
                     let elapsed = started_at.elapsed();
                     info!(
                         duration = %elapsed.as_millis(),
                         "Request returning status code {} in {} ms", response.status(), elapsed.as_millis()
+                    );
+
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        HeaderName::from_lowercase(b"x-request-id").unwrap(),
+                        request_id.parse().unwrap(),
                     );
 
                     Ok(response)

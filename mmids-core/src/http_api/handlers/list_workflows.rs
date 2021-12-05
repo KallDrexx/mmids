@@ -1,7 +1,7 @@
 //! Contains the handler for getting a list of workflows
 
 use crate::http_api::routing::RouteHandler;
-use crate::workflows::manager::WorkflowManagerRequest;
+use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use async_trait::async_trait;
 use hyper::{Body, Error, Request, Response, StatusCode};
 use serde::Serialize;
@@ -35,10 +35,14 @@ impl RouteHandler for ListWorkflowsHandler {
         &self,
         _request: &mut Request<Body>,
         _path_parameters: HashMap<String, String>,
+        request_id: String,
     ) -> Result<Response<Body>, Error> {
         let (response_sender, response_receiver) = channel();
-        let message = WorkflowManagerRequest::GetRunningWorkflows {
-            response_channel: response_sender,
+        let message = WorkflowManagerRequest {
+            request_id,
+            operation: WorkflowManagerRequestOperation::GetRunningWorkflows {
+                response_channel: response_sender,
+            },
         };
 
         match self.manager.send(message) {

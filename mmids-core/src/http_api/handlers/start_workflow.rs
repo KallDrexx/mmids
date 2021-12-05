@@ -2,7 +2,7 @@
 
 use crate::http_api::routing::RouteHandler;
 use crate::workflows::definitions::WorkflowDefinition;
-use crate::workflows::manager::WorkflowManagerRequest;
+use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use async_trait::async_trait;
 use bytes::Bytes;
 use hyper::http::HeaderValue;
@@ -51,6 +51,7 @@ impl RouteHandler for StartWorkflowHandler {
         &self,
         request: &mut Request<Body>,
         _path_parameters: HashMap<String, String>,
+        request_id: String,
     ) -> Result<Response<Body>, Error> {
         let body = hyper::body::to_bytes(request.body_mut()).await?;
         let content_type = match request.headers().get(hyper::http::header::CONTENT_TYPE) {
@@ -80,8 +81,11 @@ impl RouteHandler for StartWorkflowHandler {
             }
         };
 
-        let result = self.manager.send(WorkflowManagerRequest::UpsertWorkflow {
-            definition: workflow,
+        let result = self.manager.send(WorkflowManagerRequest {
+            request_id,
+            operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                definition: workflow,
+            },
         });
 
         match result {

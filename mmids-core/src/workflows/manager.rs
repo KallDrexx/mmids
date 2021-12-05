@@ -3,7 +3,7 @@
 //! workflows, and stop a managed workflow.
 
 use crate::workflows::definitions::WorkflowDefinition;
-use crate::workflows::runner::WorkflowState;
+use crate::workflows::runner::{WorkflowRequestOperation, WorkflowState};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::{start_workflow, WorkflowRequest};
 use futures::future::BoxFuture;
@@ -15,8 +15,17 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{info, instrument, warn};
 
+/// Requests an action be taken by the workflow manager
+pub struct WorkflowManagerRequest {
+    /// An identifier that can identify this request. Mostly used for correlations
+    pub request_id: String,
+
+    /// The specific operation being requested of the workflow manager
+    pub operation: WorkflowManagerRequestOperation,
+}
+
 /// Operations consumers can request the workflow manager to perform
-pub enum WorkflowManagerRequest {
+pub enum WorkflowManagerRequestOperation {
     /// Starts or updates a specified workflow based on the passed in definition
     UpsertWorkflow { definition: WorkflowDefinition },
 
@@ -105,17 +114,21 @@ impl<'a> Actor<'a> {
         info!("Workflow manager closing")
     }
 
+    #[instrument(skip(self, request), fields(request_id = %request.request_id))]
     fn handle_request(&mut self, request: WorkflowManagerRequest) {
-        match request {
-            WorkflowManagerRequest::UpsertWorkflow { definition } => {
+        match request.operation {
+            WorkflowManagerRequestOperation::UpsertWorkflow { definition } => {
                 if let Some(sender) = self.workflows.get_mut(&definition.name) {
                     info!(
                         workflow_name = %definition.name,
                         "Updating existing workflow '{}' with new definition", definition.name,
                     );
 
-                    let _ = sender.send(WorkflowRequest::UpdateDefinition {
-                        new_definition: definition,
+                    let _ = sender.send(WorkflowRequest {
+                        request_id: request.request_id,
+                        operation: WorkflowRequestOperation::UpdateDefinition {
+                            new_definition: definition,
+                        },
                     });
                 } else {
                     info!(
@@ -131,7 +144,7 @@ impl<'a> Actor<'a> {
                 }
             }
 
-            WorkflowManagerRequest::StopWorkflow { name } => {
+            WorkflowManagerRequestOperation::StopWorkflow { name } => {
                 info!(
                     workflow_name = %name,
                     "Stopping workflow '{}'", name,
@@ -142,7 +155,7 @@ impl<'a> Actor<'a> {
                 self.workflows.remove(&name);
             }
 
-            WorkflowManagerRequest::GetRunningWorkflows { response_channel } => {
+            WorkflowManagerRequestOperation::GetRunningWorkflows { response_channel } => {
                 let mut response = self
                     .workflows
                     .keys()
@@ -154,7 +167,7 @@ impl<'a> Actor<'a> {
                 let _ = response_channel.send(response);
             }
 
-            WorkflowManagerRequest::GetWorkflowDetails {
+            WorkflowManagerRequestOperation::GetWorkflowDetails {
                 name,
                 response_channel,
             } => match self.workflows.get(&name) {
@@ -163,7 +176,10 @@ impl<'a> Actor<'a> {
                 }
 
                 Some(sender) => {
-                    let _ = sender.send(WorkflowRequest::GetState { response_channel });
+                    let _ = sender.send(WorkflowRequest {
+                        request_id: request.request_id,
+                        operation: WorkflowRequestOperation::GetState { response_channel },
+                    });
                 }
             },
         }

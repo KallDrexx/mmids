@@ -1,7 +1,7 @@
 //! Contains the handler for getting details about a running workflow
 
 use crate::http_api::routing::RouteHandler;
-use crate::workflows::manager::WorkflowManagerRequest;
+use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use crate::workflows::steps::StepStatus;
 use crate::workflows::{WorkflowState, WorkflowStepState};
 use async_trait::async_trait;
@@ -49,6 +49,7 @@ impl RouteHandler for GetWorkflowDetailsHandler {
         &self,
         _request: &mut Request<Body>,
         path_parameters: HashMap<String, String>,
+        request_id: String,
     ) -> Result<Response<Body>, Error> {
         let workflow_name = match path_parameters.get("workflow") {
             Some(value) => value.to_string(),
@@ -62,12 +63,13 @@ impl RouteHandler for GetWorkflowDetailsHandler {
         };
 
         let (sender, receiver) = channel();
-        let _ = self
-            .manager
-            .send(WorkflowManagerRequest::GetWorkflowDetails {
+        let _ = self.manager.send(WorkflowManagerRequest {
+            request_id,
+            operation: WorkflowManagerRequestOperation::GetWorkflowDetails {
                 name: workflow_name,
                 response_channel: sender,
-            });
+            },
+        });
 
         let details = match timeout(Duration::from_secs(1), receiver).await {
             Ok(Ok(details)) => details,

@@ -9,7 +9,9 @@ use mmids_core::http_api::routing::{PathPart, Route, RoutingTable};
 use mmids_core::http_api::HttpApiShutdownSignal;
 use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
 use mmids_core::workflows::definitions::WorkflowStepType;
-use mmids_core::workflows::manager::{start_workflow_manager, WorkflowManagerRequest};
+use mmids_core::workflows::manager::{
+    start_workflow_manager, WorkflowManagerRequest, WorkflowManagerRequestOperation,
+};
 use mmids_core::workflows::steps::factory::WorkflowStepFactory;
 use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStepGenerator;
 use mmids_core::workflows::steps::ffmpeg_pull::FfmpegPullStepGenerator;
@@ -216,8 +218,11 @@ fn start_workflows(
     info!("Starting workflow manager");
     let manager = start_workflow_manager(step_factory);
     for (_, workflow) in &config.workflows {
-        let _ = manager.send(WorkflowManagerRequest::UpsertWorkflow {
-            definition: workflow.clone(),
+        let _ = manager.send(WorkflowManagerRequest {
+            request_id: "mmids-app-startup".to_string(),
+            operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                definition: workflow.clone(),
+            },
         });
     }
 
