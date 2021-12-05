@@ -190,12 +190,14 @@ impl<'a> Actor<'a> {
             "Applying a new workflow definition with {} steps",
             definition.steps.len()
         );
+
         self.pending_steps.clear();
         for step_definition in definition.steps {
             let id = step_definition.get_id();
             let step_type = step_definition.step_type.clone();
             self.step_definitions
                 .insert(step_definition.get_id(), step_definition.clone());
+
             self.pending_steps.push(id);
 
             if !self.steps_by_definition_id.contains_key(&id) {
@@ -230,6 +232,8 @@ impl<'a> Actor<'a> {
                 info!("Step type '{}' created", step_type);
             }
         }
+
+        self.check_if_all_pending_steps_are_active(true);
     }
 
     fn execute_steps(
@@ -266,7 +270,7 @@ impl<'a> Actor<'a> {
         }
 
         if perform_pending_check {
-            self.check_if_all_pending_steps_are_active();
+            self.check_if_all_pending_steps_are_active(false);
         }
     }
 
@@ -304,8 +308,8 @@ impl<'a> Actor<'a> {
         self.step_outputs.clear();
     }
 
-    fn check_if_all_pending_steps_are_active(&mut self) {
-        let mut any_pending = false;
+    fn check_if_all_pending_steps_are_active(&mut self, swap_if_pending_is_empty: bool) {
+        let mut all_are_active = false;
         for id in &self.pending_steps {
             let step = match self.steps_by_definition_id.get(id) {
                 Some(x) => Some(x),
@@ -321,18 +325,25 @@ impl<'a> Actor<'a> {
 
             if let Some(step) = step {
                 match step.get_status() {
-                    StepStatus::Created => any_pending = true,
+                    StepStatus::Created => all_are_active = false,
                     StepStatus::Active => (),
                     StepStatus::Error => return, // TODO: Set workflow in error state
                 }
             } else {
-                any_pending = true // the step is still waiting to be instantiated by the factory
+                // the step is still waiting to be instantiated by the factory
             }
         }
 
-        if self.pending_steps.len() > 0 && !any_pending {
+        if (self.pending_steps.len() > 0 && all_are_active)
+            || (self.pending_steps.len() == 0 && swap_if_pending_is_empty)
+        {
             // Since we have pending steps and all are now ready to become active, we need to
             // swap all active steps for pending steps to make them active.
+
+            // In the case of `swap_if_pending_is_empty`, this is usually the case if the user
+            // updates this workflow with a definition that contains no workflow steps, then that
+            // means the user specifically wants this workflow empty.  So we need to tear down all
+            // active steps.
 
             // Note: there's a possibility that a pending swap can trigger a new set
             // of sequence headers to fall through.  An example of this happening is if
