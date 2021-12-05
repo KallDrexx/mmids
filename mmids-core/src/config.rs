@@ -1,5 +1,5 @@
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType};
-use pest::iterators::Pair;
+use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -21,11 +21,37 @@ pub enum ConfigParseError {
 
     #[error("Duplicate workflow name: '{name}'")]
     DuplicateWorkflowName { name: String },
+
+    #[error("Invalid node name '{name}' on line {line}")]
+    InvalidNodeName { name: String, line: usize },
+
+    #[error("Arguments are not allowed on a settings node, but some were found on line {line}")]
+    ArgumentsSpecifiedOnSettingNode { line: usize },
+
+    #[error("More than 1 argument was provided for the setting on line {line}")]
+    TooManySettingArguments { line: usize },
+
+    #[error("The argument provided for the setting on line {line} is invalid. Equal signs are not allowed")]
+    InvalidSettingArgumentFormat { line: usize },
+
+    #[error("Workflows should only have a single argument (it's name) but the workflow on line {line} had multiple")]
+    TooManyWorkflowArguments { line: usize },
+
+    #[error("The workflow on line {line} did not have a name specified")]
+    NoNameOnWorkflow { line: usize },
+
+    #[error("Invalid workflow name of {name} on line {line}")]
+    InvalidWorkflowName { line: usize, name: String },
 }
 
 #[derive(Parser)]
 #[grammar = "config.pest"]
 struct RawConfigParser;
+
+struct ChildNode {
+    name: String,
+    arguments: HashMap<String, Option<String>>,
+}
 
 /// Parses configuration from a text block.
 pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
@@ -38,192 +64,221 @@ pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
     for pair in pairs {
         let rule = pair.as_rule();
         match &rule {
-            Rule::setting_block => handle_setting_block(&mut config, pair)?,
-            Rule::workflow_block => handle_workflow_block(&mut config, pair)?,
-            _ => (),
+            Rule::node_block => handle_node_block(&mut config, pair)?,
+            Rule::EOI => (),
+            x => {
+                return Err(ConfigParseError::UnexpectedRule {
+                    rule: x.clone(),
+                    section: "root".to_string(),
+                })
+            }
         }
     }
 
     Ok(config)
 }
 
-fn handle_setting_block(
-    config: &mut MmidsConfig,
-    pair: Pair<Rule>,
-) -> Result<(), ConfigParseError> {
-    let mut current_setting_name = None;
-    for pair in pair.into_inner() {
-        match pair.as_rule() {
-            Rule::setting_name => {
-                if let Some(name) = current_setting_name {
-                    // previous setting had no value, was a flag
-                    config.settings.insert(name, None);
-                    current_setting_name = None;
-                }
+fn handle_node_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(), ConfigParseError> {
+    let mut rules = pair.into_inner();
+    let name_node = rules.next().unwrap(); // grammar requires a node name
+    let name = name_node.as_str().trim();
 
-                if pair.as_str().trim() != "" {
-                    // TODO: figure out why grammar is treating an empty line as a name/value pair
-                    current_setting_name = Some(pair.as_str().to_string());
-                }
-            }
-
-            Rule::setting_value => {
-                let raw_value = pair.as_str().to_string();
-                let mut quoted_value = None;
-                for pair in pair.into_inner() {
-                    match pair.as_rule() {
-                        Rule::quoted_string_value => quoted_value = Some(pair.as_str().to_string()),
-                        _ => (),
-                    }
-                }
-
-                if let Some(name) = current_setting_name {
-                    let value = if let Some(value) = quoted_value {
-                        value
-                    } else {
-                        raw_value
-                    };
-                    if value.trim() == "" {
-                        config.settings.insert(name, None);
-                    } else {
-                        config.settings.insert(name, Some(value));
-                    }
-
-                    current_setting_name = None;
-                }
-            }
-
-            _ => {
-                return Err(ConfigParseError::UnexpectedRule {
-                    rule: pair.as_rule(),
-                    section: "setting_block".to_string(),
-                })
-            }
+    match name.to_lowercase().as_str() {
+        "settings" => read_settings(config, rules)?,
+        "workflow" => read_workflow(config, rules, name_node.as_span().start_pos().line_col().0)?,
+        _ => {
+            return Err(ConfigParseError::InvalidNodeName {
+                name: name.to_string(),
+                line: name_node.as_span().start_pos().line_col().0,
+            })
         }
-    }
-
-    if let Some(name) = current_setting_name {
-        config.settings.insert(name.to_string(), None);
     }
 
     Ok(())
 }
 
-fn handle_workflow_block(
-    config: &mut MmidsConfig,
-    pair: Pair<Rule>,
-) -> Result<(), ConfigParseError> {
-    let mut workflow = WorkflowDefinition {
-        name: "".to_string(),
-        steps: Vec::new(),
-    };
-
-    let mut current_step = None;
-
-    for pair in pair.into_inner() {
+fn read_settings(config: &mut MmidsConfig, pairs: Pairs<Rule>) -> Result<(), ConfigParseError> {
+    for pair in pairs {
         match pair.as_rule() {
-            Rule::workflow_name => workflow.name = pair.as_str().to_string(),
-            Rule::step_type => {
-                if let Some(step) = current_step {
-                    workflow.steps.push(step);
+            Rule::child_node => {
+                let child_node = read_child_node(pair.clone())?;
+                if child_node.arguments.len() > 1 {
+                    return Err(ConfigParseError::TooManySettingArguments {
+                        line: pair.as_span().start_pos().line_col().0,
+                    });
                 }
 
-                current_step = Some(WorkflowStepDefinition {
-                    step_type: WorkflowStepType(pair.as_str().to_string()),
-                    parameters: HashMap::new(),
-                });
-            }
-
-            Rule::arguments => {
-                let arguments = pair
-                    .into_inner()
-                    .filter(|p| p.as_rule() == Rule::argument)
-                    .map(|p| p.into_inner())
-                    .flatten();
-
-                for argument in arguments {
-                    match argument.as_rule() {
-                        Rule::key_value_pair => {
-                            let mut key = "".to_string();
-                            let mut value = "".to_string();
-                            for inner in argument.into_inner() {
-                                match inner.as_rule() {
-                                    Rule::key => key = inner.as_str().to_string(),
-                                    Rule::value => {
-                                        value = inner.as_str().to_string();
-                                        for inner in inner.into_inner() {
-                                            match inner.as_rule() {
-                                                Rule::quoted_string_value => {
-                                                    value = inner.as_str().to_string()
-                                                }
-                                                x => {
-                                                    return Err(ConfigParseError::UnexpectedRule {
-                                                        rule: x,
-                                                        section: "key value pair value".to_string(),
-                                                    })
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    x => {
-                                        return Err(ConfigParseError::UnexpectedRule {
-                                            rule: x,
-                                            section: "key value pair".to_string(),
-                                        })
-                                    }
-                                }
-                            }
-
-                            current_step.as_mut().unwrap().parameters.insert(key, value);
-                        }
-
-                        Rule::quoted_string_value => {
-                            current_step
-                                .as_mut()
-                                .unwrap()
-                                .parameters
-                                .insert(argument.as_str().to_string(), "".to_string());
-                        }
-
-                        Rule::argument_flag => {
-                            current_step
-                                .as_mut()
-                                .unwrap()
-                                .parameters
-                                .insert(argument.as_str().to_string(), "".to_string());
-                        }
-
-                        x => {
-                            return Err(ConfigParseError::UnexpectedRule {
-                                rule: x,
-                                section: "argument".to_string(),
-                            })
-                        }
+                if let Some(key) = child_node.arguments.keys().nth(0) {
+                    if let Some(Some(_value)) = child_node.arguments.get(key) {
+                        return Err(ConfigParseError::InvalidSettingArgumentFormat {
+                            line: pair.as_span().start_pos().line_col().0,
+                        });
                     }
+
+                    config.settings.insert(child_node.name, Some(key.clone()));
+                } else {
+                    config.settings.insert(child_node.name, None);
                 }
             }
 
-            x => {
+            Rule::argument => {
+                return Err(ConfigParseError::ArgumentsSpecifiedOnSettingNode {
+                    line: pair.as_span().start_pos().line_col().0,
+                })
+            }
+
+            rule => {
                 return Err(ConfigParseError::UnexpectedRule {
-                    rule: x,
-                    section: "workflow block".to_string(),
+                    rule,
+                    section: "settings".to_string(),
                 })
             }
         }
     }
 
-    if let Some(step) = current_step {
-        workflow.steps.push(step);
+    Ok(())
+}
+
+fn read_workflow(
+    config: &mut MmidsConfig,
+    pairs: Pairs<Rule>,
+    starting_line: usize,
+) -> Result<(), ConfigParseError> {
+    let mut steps = Vec::new();
+    let mut workflow_name = None;
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::child_node => {
+                let child_node = read_child_node(pair)?;
+                steps.push(WorkflowStepDefinition {
+                    step_type: WorkflowStepType(child_node.name),
+                    parameters: child_node.arguments,
+                });
+            }
+
+            Rule::argument => {
+                if workflow_name.is_some() {
+                    return Err(ConfigParseError::TooManyWorkflowArguments {
+                        line: pair.as_span().start_pos().line_col().0,
+                    });
+                }
+
+                let (key, value) = read_argument(pair.clone())?;
+                if value.is_some() {
+                    return Err(ConfigParseError::InvalidWorkflowName {
+                        name: pair.as_str().to_string(),
+                        line: pair.as_span().start_pos().line_col().0,
+                    });
+                }
+
+                workflow_name = Some(key);
+            }
+
+            rule => {
+                return Err(ConfigParseError::UnexpectedRule {
+                    rule,
+                    section: "workflow".to_string(),
+                })
+            }
+        }
     }
 
-    if let Some(prev_workflow) = config.workflows.insert(workflow.name.clone(), workflow) {
-        return Err(ConfigParseError::DuplicateWorkflowName {
-            name: prev_workflow.name,
+    if let Some(name) = workflow_name {
+        if config.workflows.contains_key(&name) {
+            return Err(ConfigParseError::DuplicateWorkflowName { name });
+        }
+
+        config
+            .workflows
+            .insert(name.to_string(), WorkflowDefinition { name, steps });
+    } else {
+        return Err(ConfigParseError::NoNameOnWorkflow {
+            line: starting_line,
         });
     }
 
     Ok(())
+}
+
+fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), ConfigParseError> {
+    let result;
+    // Each argument should have a single child rule based on grammar
+    let argument = pair.into_inner().nth(0).unwrap();
+    match argument.as_rule() {
+        Rule::argument_flag => {
+            result = (argument.as_str().to_string(), None);
+        }
+
+        Rule::quoted_string_value => {
+            result = (argument.as_str().to_string(), None);
+        }
+
+        Rule::key_value_pair => {
+            let mut key = "".to_string();
+            let mut value = "".to_string();
+            for inner in argument.into_inner() {
+                match inner.as_rule() {
+                    Rule::key => key = inner.as_str().to_string(),
+                    Rule::value => {
+                        // If this is a quotes string value, we need to unquote it, otherwise
+                        // use the value as-is
+                        value = inner
+                            .clone()
+                            .into_inner()
+                            .filter(|p| p.as_rule() == Rule::quoted_string_value)
+                            .map(|p| p.as_str().to_string())
+                            .nth(0)
+                            .unwrap_or(inner.as_str().to_string());
+                    }
+
+                    rule => {
+                        return Err(ConfigParseError::UnexpectedRule {
+                            rule,
+                            section: "argument".to_string(),
+                        })
+                    }
+                }
+            }
+
+            result = (key, Some(value));
+        }
+
+        _ => {
+            return Err(ConfigParseError::UnexpectedRule {
+                rule: argument.as_rule(),
+                section: "child_node argument".to_string(),
+            })
+        }
+    }
+
+    Ok(result)
+}
+
+fn read_child_node(child_node: Pair<Rule>) -> Result<ChildNode, ConfigParseError> {
+    let mut pairs = child_node.into_inner();
+    let name_node = pairs.next().unwrap(); // Grammar requires a node name first
+    let mut parsed_node = ChildNode {
+        name: name_node.as_str().to_string(),
+        arguments: HashMap::new(),
+    };
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::argument => {
+                let (key, value) = read_argument(pair)?;
+                parsed_node.arguments.insert(key, value);
+            }
+
+            rule => {
+                return Err(ConfigParseError::UnexpectedRule {
+                    rule,
+                    section: "child_node".to_string(),
+                })
+            }
+        }
+    }
+
+    Ok(parsed_node)
 }
 
 #[cfg(test)]
@@ -298,17 +353,17 @@ workflow name {
         assert_eq!(step1.parameters.len(), 3, "Unexpected number of parameters");
         assert_eq!(
             step1.parameters.get("port"),
-            Some(&"1935".to_string()),
+            Some(&Some("1935".to_string())),
             "Unexpected step 1 port value"
         );
         assert_eq!(
             step1.parameters.get("app"),
-            Some(&"receive".to_string()),
+            Some(&Some("receive".to_string())),
             "Unexpected step 1 app value"
         );
         assert_eq!(
             step1.parameters.get("stream_key"),
-            Some(&"*".to_string()),
+            Some(&Some("*".to_string())),
             "Unexpected step 1 stream_key value"
         );
 
@@ -321,22 +376,22 @@ workflow name {
         assert_eq!(step2.parameters.len(), 4, "Unexpected number of parameters");
         assert_eq!(
             step2.parameters.get("path"),
-            Some(&"c:\\temp\\test.m3u8".to_string()),
+            Some(&Some("c:\\temp\\test.m3u8".to_string())),
             "Unexpected step 2 path value"
         );
         assert_eq!(
             step2.parameters.get("segment_size"),
-            Some(&"3".to_string()),
+            Some(&Some("3".to_string())),
             "Unexpected step 2 segment_size value"
         );
         assert_eq!(
             step2.parameters.get("size"),
-            Some(&"640x480".to_string()),
+            Some(&Some("640x480".to_string())),
             "Unexpected step 2 size value"
         );
         assert_eq!(
             step2.parameters.get("flag"),
-            Some(&"".to_string()),
+            Some(&None),
             "Unexpected step 2 flag value"
         );
     }

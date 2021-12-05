@@ -154,10 +154,10 @@ impl FfmpegTranscoderStepGenerator {
 impl StepGenerator for FfmpegTranscoderStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let vcodec = match definition.parameters.get(VIDEO_CODEC_NAME) {
-            Some(value) => match value.to_lowercase().trim() {
+            Some(Some(value)) => match value.to_lowercase().trim() {
                 "copy" => VideoTranscodeParams::Copy,
                 "h264" => match definition.parameters.get(H264_PRESET_NAME) {
-                    Some(value) => match value.to_lowercase().trim() {
+                    Some(Some(value)) => match value.to_lowercase().trim() {
                         "ultrafast" => VideoTranscodeParams::H264 {
                             preset: H264Preset::UltraFast,
                         },
@@ -191,7 +191,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                             )))
                         }
                     },
-                    None => VideoTranscodeParams::H264 {
+                    _ => VideoTranscodeParams::H264 {
                         preset: H264Preset::VeryFast,
                     },
                 },
@@ -202,7 +202,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                 }
             },
 
-            None => {
+            _ => {
                 return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified(
                     "".to_string(),
                 )))
@@ -210,7 +210,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
         };
 
         let acodec = match definition.parameters.get(AUDIO_CODEC_NAME) {
-            Some(value) => match value.to_lowercase().trim() {
+            Some(Some(value)) => match value.to_lowercase().trim() {
                 "copy" => AudioTranscodeParams::Copy,
                 "aac" => AudioTranscodeParams::Aac,
                 x => {
@@ -220,7 +220,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                 }
             },
 
-            None => {
+            _ => {
                 return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified(
                     "".to_string(),
                 )))
@@ -228,7 +228,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
         };
 
         let size = match definition.parameters.get(SIZE_NAME) {
-            Some(value) => {
+            Some(Some(value)) => {
                 let mut dimensions = Vec::new();
                 for part in value.split('x') {
                     match part.parse::<u16>() {
@@ -253,11 +253,11 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                 })
             }
 
-            None => None,
+            _ => None,
         };
 
         let bitrate = match definition.parameters.get(BITRATE_NAME) {
-            Some(value) => {
+            Some(Some(value)) => {
                 if let Ok(num) = value.parse() {
                     Some(num)
                 } else {
@@ -267,7 +267,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                 }
             }
 
-            None => None,
+            _ => None,
         };
 
         let step = FfmpegTranscoder {

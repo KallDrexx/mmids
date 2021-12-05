@@ -87,13 +87,13 @@ impl FfmpegPullStepGenerator {
 impl StepGenerator for FfmpegPullStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let location = match definition.parameters.get(LOCATION) {
-            Some(value) => value.clone(),
-            None => return Err(Box::new(StepStartupError::NoLocationSpecified)),
+            Some(Some(value)) => value.clone(),
+            _ => return Err(Box::new(StepStartupError::NoLocationSpecified)),
         };
 
         let stream_name = match definition.parameters.get(STREAM_NAME) {
-            Some(value) => value.clone(),
-            None => return Err(Box::new(StepStartupError::NoStreamNameSpecified)),
+            Some(Some(value)) => value.clone(),
+            _ => return Err(Box::new(StepStartupError::NoStreamNameSpecified)),
         };
 
         let step = FfmpegPullStep {

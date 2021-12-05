@@ -103,7 +103,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
         };
 
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
-            Some(value) => match value.parse::<u16>() {
+            Some(Some(value)) => match value.parse::<u16>() {
                 Ok(num) => num,
                 Err(_) => {
                     return Err(Box::new(StepStartupError::InvalidPortSpecified(
@@ -112,7 +112,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
                 }
             },
 
-            None => {
+            _ => {
                 if use_rtmps {
                     443
                 } else {
@@ -122,21 +122,25 @@ impl StepGenerator for RtmpReceiverStepGenerator {
         };
 
         let app = match definition.parameters.get(APP_PROPERTY_NAME) {
-            Some(x) => x.trim(),
-            None => return Err(Box::new(StepStartupError::NoRtmpAppSpecified)),
+            Some(Some(x)) => x.trim(),
+            _ => return Err(Box::new(StepStartupError::NoRtmpAppSpecified)),
         };
 
         let stream_key = match definition.parameters.get(STREAM_KEY_PROPERTY_NAME) {
-            Some(x) => x.trim(),
-            None => return Err(Box::new(StepStartupError::NoStreamKeySpecified)),
+            Some(Some(x)) => x.trim(),
+            _ => return Err(Box::new(StepStartupError::NoStreamKeySpecified)),
         };
 
-        let allowed_ips = IpAddress::parse_comma_delimited_list(
-            definition.parameters.get(IP_ALLOW_PROPERTY_NAME),
-        )?;
-        let denied_ips = IpAddress::parse_comma_delimited_list(
-            definition.parameters.get(IP_DENY_PROPERTY_NAME),
-        )?;
+        let allowed_ips = match definition.parameters.get(IP_ALLOW_PROPERTY_NAME) {
+            Some(Some(value)) => IpAddress::parse_comma_delimited_list(Some(value))?,
+            _ => Vec::new(),
+        };
+
+        let denied_ips = match definition.parameters.get(IP_DENY_PROPERTY_NAME) {
+            Some(Some(value)) => IpAddress::parse_comma_delimited_list(Some(value))?,
+            _ => Vec::new(),
+        };
+
         let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
             (true, true) => {
                 return Err(Box::new(

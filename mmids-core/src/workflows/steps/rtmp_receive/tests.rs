@@ -156,7 +156,7 @@ async fn rtmp_app_is_trimmed() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     definition.parameters.insert(
         APP_PROPERTY_NAME.to_string(),
-        " ".to_string() + TEST_APP + " ",
+        Some(" ".to_string() + TEST_APP + " "),
     );
 
     let (mock_sender, mut mock_receiver) = unbounded_channel();
@@ -189,7 +189,7 @@ async fn stream_key_is_trimmed() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     definition.parameters.insert(
         STREAM_KEY_PROPERTY_NAME.to_string(),
-        " ".to_string() + TEST_KEY + " ",
+        Some(" ".to_string() + TEST_KEY + " "),
     );
 
     let (mock_sender, mut mock_receiver) = unbounded_channel();
@@ -228,7 +228,7 @@ fn new_step_is_in_created_status() {
     let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     definition.parameters.insert(
         STREAM_KEY_PROPERTY_NAME.to_string(),
-        " ".to_string() + TEST_KEY + " ",
+        Some(" ".to_string() + TEST_KEY + " "),
     );
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
@@ -694,13 +694,13 @@ fn create_definition(port: u16, app: &str, key: &str) -> WorkflowStepDefinition 
 
     definition
         .parameters
-        .insert(PORT_PROPERTY_NAME.to_string(), port.to_string());
+        .insert(PORT_PROPERTY_NAME.to_string(), Some(port.to_string()));
     definition
         .parameters
-        .insert(APP_PROPERTY_NAME.to_string(), app.to_string());
+        .insert(APP_PROPERTY_NAME.to_string(), Some(app.to_string()));
     definition
         .parameters
-        .insert(STREAM_KEY_PROPERTY_NAME.to_string(), key.to_string());
+        .insert(STREAM_KEY_PROPERTY_NAME.to_string(), Some(key.to_string()));
 
     definition
 }

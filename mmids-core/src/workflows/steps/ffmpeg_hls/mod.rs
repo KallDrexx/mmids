@@ -79,12 +79,12 @@ impl FfmpegHlsStepGenerator {
 impl StepGenerator for FfmpegHlsStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let path = match definition.parameters.get(PATH) {
-            Some(value) => value,
-            None => return Err(Box::new(StepStartupError::NoPathProvided)),
+            Some(Some(value)) => value,
+            _ => return Err(Box::new(StepStartupError::NoPathProvided)),
         };
 
         let duration = match definition.parameters.get(SEGMENT_DURATION) {
-            Some(value) => match value.parse() {
+            Some(Some(value)) => match value.parse() {
                 Ok(num) => num,
                 Err(_) => {
                     return Err(Box::new(StepStartupError::InvalidSegmentLength(
@@ -93,11 +93,11 @@ impl StepGenerator for FfmpegHlsStepGenerator {
                 }
             },
 
-            None => 2,
+            _ => 2,
         };
 
         let count = match definition.parameters.get(SEGMENT_COUNT) {
-            Some(value) => match value.parse::<u16>() {
+            Some(Some(value)) => match value.parse::<u16>() {
                 Ok(num) => num,
                 Err(_) => {
                     return Err(Box::new(StepStartupError::InvalidSegmentCount(
@@ -106,7 +106,7 @@ impl StepGenerator for FfmpegHlsStepGenerator {
                 }
             },
 
-            None => 0,
+            _ => 0,
         };
 
         let param_generator = ParamGenerator {

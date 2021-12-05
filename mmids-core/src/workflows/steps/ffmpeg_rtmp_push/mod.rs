@@ -67,8 +67,8 @@ impl FfmpegRtmpPushStepGenerator {
 impl StepGenerator for FfmpegRtmpPushStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let target = match definition.parameters.get(TARGET) {
-            Some(value) => value,
-            None => return Err(Box::new(StepStartupError::NoTargetProvided)),
+            Some(Some(value)) => value,
+            _ => return Err(Box::new(StepStartupError::NoTargetProvided)),
         };
 
         let param_generator = ParamGenerator {

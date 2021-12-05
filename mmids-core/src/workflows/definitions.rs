@@ -11,7 +11,7 @@ pub struct WorkflowStepType(pub String);
 #[derive(Clone)]
 pub struct WorkflowStepDefinition {
     pub step_type: WorkflowStepType,
-    pub parameters: HashMap<String, String>,
+    pub parameters: HashMap<String, Option<String>>,
 }
 
 /// The definition of a workflow and the steps (in order) it contains
@@ -63,16 +63,24 @@ mod tests {
             parameters: HashMap::new(),
         };
 
-        step1.parameters.insert("a".to_string(), "b".to_string());
-        step1.parameters.insert("c".to_string(), "d".to_string());
+        step1
+            .parameters
+            .insert("a".to_string(), Some("b".to_string()));
+        step1
+            .parameters
+            .insert("c".to_string(), Some("d".to_string()));
 
         let mut step2 = WorkflowStepDefinition {
             step_type: WorkflowStepType("test".to_string()),
             parameters: HashMap::new(),
         };
 
-        step2.parameters.insert("c".to_string(), "d".to_string());
-        step2.parameters.insert("a".to_string(), "b".to_string());
+        step2
+            .parameters
+            .insert("c".to_string(), Some("d".to_string()));
+        step2
+            .parameters
+            .insert("a".to_string(), Some("b".to_string()));
 
         assert_eq!(step1.get_id(), step2.get_id());
     }
@@ -84,16 +92,24 @@ mod tests {
             parameters: HashMap::new(),
         };
 
-        step1.parameters.insert("a".to_string(), "b".to_string());
-        step1.parameters.insert("c".to_string(), "d".to_string());
+        step1
+            .parameters
+            .insert("a".to_string(), Some("b".to_string()));
+        step1
+            .parameters
+            .insert("c".to_string(), Some("d".to_string()));
 
         let mut step2 = WorkflowStepDefinition {
             step_type: WorkflowStepType("test2".to_string()),
             parameters: HashMap::new(),
         };
 
-        step2.parameters.insert("c".to_string(), "d".to_string());
-        step2.parameters.insert("a".to_string(), "b".to_string());
+        step2
+            .parameters
+            .insert("c".to_string(), Some("d".to_string()));
+        step2
+            .parameters
+            .insert("a".to_string(), Some("b".to_string()));
 
         assert_ne!(step1.get_id(), step2.get_id());
     }
@@ -105,16 +121,24 @@ mod tests {
             parameters: HashMap::new(),
         };
 
-        step1.parameters.insert("a".to_string(), "b".to_string());
-        step1.parameters.insert("c".to_string(), "d".to_string());
+        step1
+            .parameters
+            .insert("a".to_string(), Some("b".to_string()));
+        step1
+            .parameters
+            .insert("c".to_string(), Some("d".to_string()));
 
         let mut step2 = WorkflowStepDefinition {
             step_type: WorkflowStepType("test2".to_string()),
             parameters: HashMap::new(),
         };
 
-        step2.parameters.insert("c".to_string(), "d".to_string());
-        step2.parameters.insert("a".to_string(), "f".to_string());
+        step2
+            .parameters
+            .insert("c".to_string(), Some("d".to_string()));
+        step2
+            .parameters
+            .insert("a".to_string(), Some("f".to_string()));
 
         assert_ne!(step1.get_id(), step2.get_id());
     }

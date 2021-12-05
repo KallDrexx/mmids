@@ -33,7 +33,7 @@ pub struct WorkflowStateResponse {
 #[derive(Serialize)]
 pub struct WorkflowStepStateResponse {
     step_type: String,
-    parameters: HashMap<String, String>,
+    parameters: HashMap<String, Option<String>>,
     status: String,
 }
 
