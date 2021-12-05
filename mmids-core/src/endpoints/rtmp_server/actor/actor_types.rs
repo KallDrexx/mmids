@@ -31,7 +31,6 @@ pub enum FutureResult {
         port: u16,
         app: String,
         stream_key: StreamKeyRegistration,
-        id: PublisherRegistrantId,
     },
 
     ConnectionHandlerRequestReceived {
@@ -65,15 +64,7 @@ pub enum FutureResult {
     SocketManagerClosed,
 }
 
-/// Value which can identify a specific publisher registrant.  This prevents a race condition
-/// where 2 futures cause a registrant to be removed but in between a registrant gets added for
-/// the same app/stream key combination.  With the identifier we can make sure we don't accidentally
-/// close the newly added publisher registrant.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PublisherRegistrantId(pub String);
-
 pub struct PublishingRegistrant {
-    pub id: PublisherRegistrantId,
     pub response_channel: UnboundedSender<RtmpEndpointPublisherMessage>,
     pub stream_id: Option<StreamId>,
     pub ip_restrictions: IpRestriction,

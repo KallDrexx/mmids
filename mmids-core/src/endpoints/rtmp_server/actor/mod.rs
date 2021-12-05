@@ -53,30 +53,8 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     port,
                     app,
                     stream_key,
-                    id,
                 } => {
-                    let port_map = match self.ports.get_mut(&port) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                    let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                    {
-                        let registrant = match app_map.publisher_registrants.get_mut(&stream_key) {
-                            Some(x) => x,
-                            None => continue,
-                        };
-
-                        if registrant.id != id {
-                            continue;
-                        }
-                    }
-
-                    app_map.publisher_registrants.remove(&stream_key);
+                    self.remove_publish_registration(port, app, stream_key);
                 }
 
                 FutureResult::WatcherRegistrantGone {
@@ -84,17 +62,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     app,
                     stream_key,
                 } => {
-                    let port_map = match self.ports.get_mut(&port) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                    let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                    app_map.watcher_registrants.remove(&stream_key);
+                    self.remove_watcher_registration(port, app, stream_key);
                 }
 
                 FutureResult::SocketResponseReceived {
@@ -388,11 +356,9 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     return;
                 }
 
-                let id = PublisherRegistrantId(Uuid::new_v4().to_string());
                 app_map.publisher_registrants.insert(
                     stream_key.clone(),
                     PublishingRegistrant {
-                        id: id.clone(),
                         response_channel: channel.clone(),
                         stream_id,
                         ip_restrictions,
@@ -405,7 +371,6 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         port,
                         rtmp_app,
                         stream_key,
-                        id,
                     )
                     .boxed(),
                 );
@@ -660,6 +625,96 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     &stream_key,
                 );
             }
+        }
+    }
+
+    fn remove_publish_registration(
+        &mut self,
+        port: u16,
+        app: String,
+        stream_key: StreamKeyRegistration,
+    ) {
+        let port_map = match self.ports.get_mut(&port) {
+            Some(x) => x,
+            None => return,
+        };
+
+        let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
+            Some(x) => x,
+            None => return,
+        };
+
+        app_map.publisher_registrants.remove(&stream_key);
+
+        // Remove all publishers tied to this registrant
+        let mut keys_to_remove = Vec::new();
+        if let StreamKeyRegistration::Exact(key) = stream_key {
+            keys_to_remove.push(key);
+        } else {
+            keys_to_remove.extend(app_map.active_stream_keys.keys().map(|x| x.clone()));
+        }
+
+        for key in keys_to_remove {
+            if let Some(connection) = app_map.active_stream_keys.get_mut(&key) {
+                if let Some(id) = &connection.publisher {
+                    if let Some(connection) = port_map.connections.get(id) {
+                        let _ = connection
+                            .response_channel
+                            .send(ConnectionResponse::Disconnect);
+                    }
+                }
+
+                connection.publisher = None;
+            }
+        }
+
+        if app_map.publisher_registrants.is_empty() && app_map.watcher_registrants.is_empty() {
+            port_map.rtmp_applications.remove(&app);
+        }
+    }
+
+    fn remove_watcher_registration(
+        &mut self,
+        port: u16,
+        app: String,
+        stream_key: StreamKeyRegistration,
+    ) {
+        let port_map = match self.ports.get_mut(&port) {
+            Some(x) => x,
+            None => return,
+        };
+
+        let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
+            Some(x) => x,
+            None => return,
+        };
+
+        app_map.watcher_registrants.remove(&stream_key);
+
+        // Remove all watchers tied to this registrant
+        let mut keys_to_remove = Vec::new();
+        if let StreamKeyRegistration::Exact(key) = stream_key {
+            keys_to_remove.push(key);
+        } else {
+            keys_to_remove.extend(app_map.active_stream_keys.keys().map(|x| x.clone()));
+        }
+
+        for key in keys_to_remove {
+            if let Some(connection) = app_map.active_stream_keys.get_mut(&key) {
+                for id in connection.watchers.keys() {
+                    if let Some(connection) = port_map.connections.get(id) {
+                        let _ = connection
+                            .response_channel
+                            .send(ConnectionResponse::Disconnect);
+                    }
+                }
+
+                connection.watchers.clear();
+            }
+        }
+
+        if app_map.watcher_registrants.is_empty() && app_map.publisher_registrants.is_empty() {
+            port_map.rtmp_applications.remove(&app);
         }
     }
 }
@@ -1051,7 +1106,6 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
 }
 
 mod internal_futures {
-    use super::actor_types::PublisherRegistrantId;
     use super::{
         FutureResult, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
     };
@@ -1094,7 +1148,6 @@ mod internal_futures {
         port: u16,
         app_name: String,
         stream_key: StreamKeyRegistration,
-        id: PublisherRegistrantId,
     ) -> FutureResult {
         sender.closed().await;
 
@@ -1102,7 +1155,6 @@ mod internal_futures {
             port,
             app: app_name,
             stream_key,
-            id,
         }
     }
 

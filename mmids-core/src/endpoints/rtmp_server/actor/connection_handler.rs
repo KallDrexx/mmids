@@ -59,6 +59,8 @@ pub enum ConnectionResponse {
     WatchRequestAccepted {
         channel: UnboundedReceiver<RtmpEndpointMediaData>,
     },
+
+    Disconnect,
 }
 
 #[derive(Debug, PartialEq)]
@@ -219,7 +221,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         info!("Rtmp server handler closing");
     }
 
-    #[instrument(skip(self, bytes), fields(connection_id = ?self.id))]
     fn handle_bytes(&mut self, bytes: Bytes) -> Result<(), ()> {
         match &self.state {
             ConnectionState::Handshaking => {
@@ -301,7 +302,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         Ok(())
     }
 
-    #[instrument(skip(self, results), fields(connection_id = ?self.id))]
     fn handle_rtmp_results(&mut self, results: Vec<ServerSessionResult>) {
         for result in results {
             match result {
@@ -383,7 +383,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_play_stream_requested(
         &mut self,
         app_name: String,
@@ -427,7 +426,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(skip(self, data), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_audio_data_received(
         &mut self,
         app_name: String,
@@ -480,7 +478,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(skip(self, data), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_video_data_received(
         &mut self,
         app_name: String,
@@ -534,7 +531,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_stream_metadata_changed(
         &mut self,
         app_name: String,
@@ -579,7 +575,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_publish_stream_requested(
         &mut self,
         request_id: u32,
@@ -637,7 +632,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         };
     }
 
-    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_rtmp_event_connection_requested(&mut self, request_id: u32, app_name: String) {
         info!(
             "Connection requesting connection to rtmp app '{}'",
@@ -656,7 +650,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         };
     }
 
-    #[instrument(skip(self, response), fields(connection_id = ?self.id))]
     fn handle_endpoint_response(&mut self, response: ConnectionResponse) {
         match response {
             ConnectionResponse::RequestRejected => {
@@ -675,10 +668,14 @@ impl<'a> RtmpServerConnectionHandler<'a> {
             ConnectionResponse::WatchRequestAccepted { channel } => {
                 self.handle_endpoint_watch_request_accepted(channel);
             }
+
+            ConnectionResponse::Disconnect => {
+                info!("Disconnect requested");
+                self.force_disconnect = true;
+            }
         }
     }
 
-    #[instrument(skip(self), fields(connection_id = ?self.id))]
     fn handle_endpoint_watch_request_accepted(
         &mut self,
         media_channel: UnboundedReceiver<RtmpEndpointMediaData>,
