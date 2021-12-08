@@ -211,7 +211,7 @@ impl ExternalStreamReader {
 
     pub fn prepare_stream(&mut self, stream_id: StreamId, outputs: &mut StepOutputs) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
-            let output_is_active = match &stream.rtmp_output_status {
+            let (output_is_active, output_media_channel) = match &stream.rtmp_output_status {
                 WatchRegistrationStatus::Inactive => {
                     let (media_sender, media_receiver) = unbounded_channel();
                     let (watch_sender, watch_receiver) = unbounded_channel();
@@ -234,14 +234,28 @@ impl ExternalStreamReader {
                         media_channel: media_sender,
                     };
 
-                    false
+                    (false, None)
                 }
 
-                WatchRegistrationStatus::Pending { media_channel: _ } => false,
-                WatchRegistrationStatus::Active { media_channel: _ } => true,
+                WatchRegistrationStatus::Pending { media_channel: _ } => (false, None),
+                WatchRegistrationStatus::Active { media_channel } => (true, Some(media_channel)),
             };
 
             if output_is_active {
+                // If the output is active, we need to send any pending media out.  Most likely this
+                // will contain sequence headers, and thus we need to get them up to the rtmp endpoint
+                // so clients don't miss them
+                if let Some(media_channel) = output_media_channel {
+                    for media in stream.pending_media.drain(..) {
+                        if let Some(media_data) = media.to_rtmp_media_data() {
+                            let _ = media_channel.send(RtmpEndpointMediaMessage {
+                                stream_key: stream.id.0.clone(),
+                                data: media_data,
+                            });
+                        }
+                    }
+                }
+
                 stream.external_stream_handler.prepare_stream(
                     &stream_id,
                     &stream.stream_name,
