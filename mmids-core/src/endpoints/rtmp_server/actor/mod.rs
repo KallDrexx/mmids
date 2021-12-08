@@ -884,12 +884,9 @@ fn handle_connection_request_watch(
         });
     }
 
-    active_stream_key.watchers.insert(
-        connection_id,
-        WatcherDetails {
-            media_sender,
-        },
-    );
+    active_stream_key
+        .watchers
+        .insert(connection_id, WatcherDetails { media_sender });
 
     let _ = connection
         .response_channel

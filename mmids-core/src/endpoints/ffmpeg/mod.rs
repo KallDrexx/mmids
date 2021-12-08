@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::fs::File;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use tracing::{error, info, instrument};
@@ -245,7 +246,7 @@ impl<'a> Actor<'a> {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, id), fields(ffmpeg_id = ?id))]
     fn check_status(&mut self, id: Uuid) {
         let mut has_exited = false;
         if let Some(process) = self.processes.get_mut(&id) {
@@ -311,7 +312,13 @@ impl<'a> Actor<'a> {
 
                 let log_file_name = format!("{}.log", id.to_string());
                 let log_path = self.log_path.as_path().join(log_file_name.as_str());
-                let log_file = match File::create(&log_path).await {
+                let log_file_result = OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(log_path)
+                    .await;
+
+                let mut log_file = match log_file_result {
                     Ok(x) => x,
                     Err(e) => {
                         error!("Failed to create ffmpeg log file '{}'", log_file_name);
@@ -327,6 +334,13 @@ impl<'a> Actor<'a> {
                         return;
                     }
                 };
+
+                // Add a separator so we have a clear boundary when appending to an existing log file.
+                // We will append if we re-use the same ffmpeg id multiple times.  This is usually done
+                // to keep the logs from a restarting ffmpeg instance together.
+                let _ = log_file
+                    .write(b"\n\n------------------New Execution----------------\n\n")
+                    .await;
 
                 let handle = match self.start_ffmpeg(&id, &params, log_file) {
                     Ok(x) => x,
@@ -447,7 +461,7 @@ impl<'a> Actor<'a> {
         args.push("-nostats".to_string());
 
         info!(
-            id = ?id,
+            ffmpeg_id = ?id,
             "Starting ffmpeg for id {} with the following arguments: {:?}",
             id, args
         );

@@ -80,8 +80,8 @@ enum PublishRegistrationStatus {
 #[derive(Debug)]
 enum FfmpegStatus {
     Inactive,
-    Pending { id: Uuid },
-    Active { id: Uuid },
+    Pending,
+    Active,
 }
 
 struct ActiveStream {
@@ -91,6 +91,7 @@ struct ActiveStream {
     rtmp_output_status: WatchRegistrationStatus,
     rtmp_input_status: PublishRegistrationStatus,
     ffmpeg_status: FfmpegStatus,
+    ffmpeg_id: Uuid,
 }
 
 enum FutureResult {
@@ -430,6 +431,7 @@ impl FfmpegTranscoder {
                     rtmp_output_status: WatchRegistrationStatus::Inactive,
                     rtmp_input_status: PublishRegistrationStatus::Inactive,
                     ffmpeg_status: FfmpegStatus::Inactive,
+                    ffmpeg_id: Uuid::new_v4(),
                 };
 
                 self.active_streams.insert(media.stream_id.clone(), stream);
@@ -565,12 +567,11 @@ impl FfmpegTranscoder {
                             },
                         };
 
-                        let id = Uuid::new_v4();
                         let (sender, receiver) = unbounded_channel();
                         let _ = self
                             .ffmpeg_endpoint
                             .send(FfmpegEndpointRequest::StartFfmpeg {
-                                id: id.clone(),
+                                id: stream.ffmpeg_id.clone(),
                                 params: parameters,
                                 notification_channel: sender,
                             });
@@ -578,7 +579,7 @@ impl FfmpegTranscoder {
                         outputs.futures.push(
                             wait_for_ffmpeg_notification(stream.id.clone(), receiver).boxed(),
                         );
-                        stream.ffmpeg_status = FfmpegStatus::Pending { id };
+                        stream.ffmpeg_status = FfmpegStatus::Pending;
                     }
                 }
 
@@ -590,16 +591,16 @@ impl FfmpegTranscoder {
     fn stop_stream(&mut self, stream_id: &StreamId) -> bool {
         if let Some(stream) = self.active_streams.remove(stream_id) {
             match &stream.ffmpeg_status {
-                FfmpegStatus::Pending { id } => {
+                FfmpegStatus::Pending => {
                     let _ = self
                         .ffmpeg_endpoint
-                        .send(FfmpegEndpointRequest::StopFfmpeg { id: id.clone() });
+                        .send(FfmpegEndpointRequest::StopFfmpeg { id: stream.ffmpeg_id.clone() });
                 }
 
-                FfmpegStatus::Active { id } => {
+                FfmpegStatus::Active => {
                     let _ = self
                         .ffmpeg_endpoint
-                        .send(FfmpegEndpointRequest::StopFfmpeg { id: id.clone() });
+                        .send(FfmpegEndpointRequest::StopFfmpeg { id: stream.ffmpeg_id.clone() });
                 }
 
                 FfmpegStatus::Inactive => (),
@@ -777,15 +778,15 @@ impl FfmpegTranscoder {
             match notification {
                 FfmpegEndpointNotification::FfmpegStarted => {
                     let new_status = match &stream.ffmpeg_status {
-                        FfmpegStatus::Pending { id } => {
+                        FfmpegStatus::Pending => {
                             info!(
                                 stream_id = ?stream.id,
-                                ffmpeg_id = ?id,
+                                ffmpeg_id = ?stream.ffmpeg_id,
                                 "Received notification that ffmpeg became active for stream id \
-                                    {:?} with ffmpeg id {}", stream.id, id
+                                    {:?} with ffmpeg id {}", stream.id, stream.ffmpeg_id
                             );
 
-                            Some(FfmpegStatus::Active { id: id.clone() })
+                            Some(FfmpegStatus::Active)
                         }
 
                         status => {

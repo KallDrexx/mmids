@@ -16,6 +16,7 @@ pub struct FfmpegHandler {
     status: FfmpegHandlerStatus,
     param_generator: Arc<Box<dyn FfmpegParameterGenerator + Sync + Send>>,
     stream_id: StreamId,
+    ffmpeg_id: Uuid,
 }
 
 pub struct FfmpegHandlerGenerator {
@@ -30,8 +31,8 @@ pub trait FfmpegParameterGenerator {
 #[derive(Debug)]
 enum FfmpegHandlerStatus {
     Inactive,
-    Pending { id: Uuid },
-    Active { id: Uuid },
+    Pending,
+    Active,
 }
 
 enum FutureResult {
@@ -63,22 +64,23 @@ impl ExternalStreamHandlerGenerator for FfmpegHandlerGenerator {
             param_generator: self.param_generator.clone(),
             stream_id,
             status: FfmpegHandlerStatus::Inactive,
+            ffmpeg_id: Uuid::new_v4(),
         })
     }
 }
 
 impl FfmpegHandler {
-    #[instrument(skip(self, notification), fields(stream_id = ?self.stream_id))]
+    #[instrument(skip(self, notification), fields(stream_id = ?self.stream_id, ffmpeg_id = ?self.ffmpeg_id))]
     fn handle_ffmpeg_notification(&mut self, notification: FfmpegEndpointNotification) {
         match notification {
             FfmpegEndpointNotification::FfmpegStarted => match &self.status {
-                FfmpegHandlerStatus::Pending { id } => {
+                FfmpegHandlerStatus::Pending => {
                     info!(
-                            ffmpeg_id = ?id,
-                            "Received notification that ffmpeg became active for stream id {:?} and ffmpeg id {}",
-                            self.stream_id, id);
+                        "Received notification that ffmpeg became active for stream id {:?} and ffmpeg id {}",
+                        self.stream_id, self.ffmpeg_id
+                    );
 
-                    self.status = FfmpegHandlerStatus::Active { id: id.clone() };
+                    self.status = FfmpegHandlerStatus::Active;
                 }
 
                 status => {
@@ -95,6 +97,7 @@ impl FfmpegHandler {
                     "Received ffmpeg stopped notification for stream {:?}",
                     self.stream_id
                 );
+
                 self.status = FfmpegHandlerStatus::Inactive;
             }
 
@@ -103,6 +106,7 @@ impl FfmpegHandler {
                     "Ffmpeg failed to start for stream {:?}: {:?}",
                     self.stream_id, cause
                 );
+
                 self.status = FfmpegHandlerStatus::Inactive;
             }
         }
@@ -119,12 +123,11 @@ impl ExternalStreamHandler for FfmpegHandler {
         match &self.status {
             FfmpegHandlerStatus::Inactive => {
                 let parameters = self.param_generator.form_parameters(stream_id, stream_name);
-                let id = Uuid::new_v4();
                 let (sender, receiver) = unbounded_channel();
                 let _ = self
                     .ffmpeg_endpoint
                     .send(FfmpegEndpointRequest::StartFfmpeg {
-                        id: id.clone(),
+                        id: self.ffmpeg_id.clone(),
                         params: parameters,
                         notification_channel: sender,
                     });
@@ -133,7 +136,7 @@ impl ExternalStreamHandler for FfmpegHandler {
                     .futures
                     .push(wait_for_ffmpeg_notification(stream_id.clone(), receiver).boxed());
 
-                self.status = FfmpegHandlerStatus::Pending { id };
+                self.status = FfmpegHandlerStatus::Pending;
             }
 
             _ => (),
@@ -142,16 +145,20 @@ impl ExternalStreamHandler for FfmpegHandler {
 
     fn stop_stream(&mut self) {
         match &self.status {
-            FfmpegHandlerStatus::Pending { id } => {
+            FfmpegHandlerStatus::Pending => {
                 let _ = self
                     .ffmpeg_endpoint
-                    .send(FfmpegEndpointRequest::StopFfmpeg { id: id.clone() });
+                    .send(FfmpegEndpointRequest::StopFfmpeg {
+                        id: self.ffmpeg_id.clone(),
+                    });
             }
 
-            FfmpegHandlerStatus::Active { id } => {
+            FfmpegHandlerStatus::Active => {
                 let _ = self
                     .ffmpeg_endpoint
-                    .send(FfmpegEndpointRequest::StopFfmpeg { id: id.clone() });
+                    .send(FfmpegEndpointRequest::StopFfmpeg {
+                        id: self.ffmpeg_id.clone(),
+                    });
             }
 
             FfmpegHandlerStatus::Inactive => (),
