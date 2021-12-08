@@ -34,10 +34,12 @@ struct FfmpegHlsStep {
     definition: WorkflowStepDefinition,
     status: StepStatus,
     stream_reader: ExternalStreamReader,
+    path: String,
 }
 
 enum FutureResult {
     FfmpegEndpointGone,
+    HlsPathCreated(tokio::io::Result<()>),
 }
 
 impl StepFutureResult for FutureResult {}
@@ -127,11 +129,13 @@ impl StepGenerator for FfmpegHlsStepGenerator {
 
         let step = FfmpegHlsStep {
             definition: definition.clone(),
-            status: StepStatus::Active,
+            status: StepStatus::Created,
             stream_reader: reader,
+            path: path.clone(),
         };
 
         futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());
+        futures.push(notify_when_path_created(path.clone()).boxed());
 
         Ok((Box::new(step), futures))
     }
@@ -166,6 +170,19 @@ impl WorkflowStep for FfmpegHlsStep {
                         error!("Ffmpeg endpoint has disappeared.  Closing all streams");
                         self.stream_reader.stop_all_streams();
                     }
+
+                    FutureResult::HlsPathCreated(result) => match result {
+                        Ok(()) => {
+                            self.status = StepStatus::Active;
+                        }
+
+                        Err(error) => {
+                            error!("Could not create HLS path: '{}': {:?}", self.path, error);
+                            self.status = StepStatus::Error;
+
+                            return;
+                        }
+                    },
                 },
             };
         }
@@ -209,4 +226,9 @@ async fn notify_when_ffmpeg_endpoint_is_gone(
     endpoint.closed().await;
 
     Box::new(FutureResult::FfmpegEndpointGone)
+}
+
+async fn notify_when_path_created(path: String) -> Box<dyn StepFutureResult> {
+    let result = tokio::fs::create_dir_all(&path).await;
+    Box::new(FutureResult::HlsPathCreated(result))
 }

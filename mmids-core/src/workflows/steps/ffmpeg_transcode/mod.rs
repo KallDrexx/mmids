@@ -594,13 +594,17 @@ impl FfmpegTranscoder {
                 FfmpegStatus::Pending => {
                     let _ = self
                         .ffmpeg_endpoint
-                        .send(FfmpegEndpointRequest::StopFfmpeg { id: stream.ffmpeg_id.clone() });
+                        .send(FfmpegEndpointRequest::StopFfmpeg {
+                            id: stream.ffmpeg_id.clone(),
+                        });
                 }
 
                 FfmpegStatus::Active => {
                     let _ = self
                         .ffmpeg_endpoint
-                        .send(FfmpegEndpointRequest::StopFfmpeg { id: stream.ffmpeg_id.clone() });
+                        .send(FfmpegEndpointRequest::StopFfmpeg {
+                            id: stream.ffmpeg_id.clone(),
+                        });
                 }
 
                 FfmpegStatus::Inactive => (),
