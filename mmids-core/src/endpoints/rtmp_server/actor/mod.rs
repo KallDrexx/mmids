@@ -125,68 +125,76 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         .boxed(),
                     );
 
-                    let port_map = match self.ports.get_mut(&port) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                    let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                    let key_details = app_map
-                        .active_stream_keys
-                        .entry(stream_key.clone())
-                        .or_insert(StreamKeyConnections {
-                            watchers: HashMap::new(),
-                            publisher: None,
-                            latest_video_sequence_header: None,
-                            latest_audio_sequence_header: None,
-                        });
-
-                    match &data {
-                        RtmpEndpointMediaData::NewVideoData {
-                            data,
-                            codec,
-                            is_sequence_header,
-                            ..
-                        } => {
-                            if *is_sequence_header {
-                                key_details.latest_video_sequence_header =
-                                    Some(VideoSequenceHeader {
-                                        codec: codec.clone(),
-                                        data: data.clone(),
-                                    });
-                            }
-                        }
-
-                        RtmpEndpointMediaData::NewAudioData {
-                            data,
-                            codec,
-                            is_sequence_header,
-                            ..
-                        } => {
-                            if *is_sequence_header {
-                                key_details.latest_audio_sequence_header =
-                                    Some(AudioSequenceHeader {
-                                        codec: codec.clone(),
-                                        data: data.clone(),
-                                    });
-                            }
-                        }
-
-                        _ => (),
-                    }
-
-                    for (_, watcher_details) in &key_details.watchers {
-                        let _ = watcher_details.media_sender.send(data.clone());
-                    }
+                    self.handle_watcher_media_received(port, app, stream_key, data);
                 }
             }
         }
 
         info!("Rtmp server endpoint closing");
+    }
+
+    fn handle_watcher_media_received(
+        &mut self,
+        port: u16,
+        app: String,
+        stream_key: String,
+        data: RtmpEndpointMediaData,
+    ) {
+        let port_map = match self.ports.get_mut(&port) {
+            Some(x) => x,
+            None => return,
+        };
+
+        let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
+            Some(x) => x,
+            None => return,
+        };
+
+        let key_details = app_map
+            .active_stream_keys
+            .entry(stream_key.clone())
+            .or_insert(StreamKeyConnections {
+                watchers: HashMap::new(),
+                publisher: None,
+                latest_video_sequence_header: None,
+                latest_audio_sequence_header: None,
+            });
+
+        match &data {
+            RtmpEndpointMediaData::NewVideoData {
+                data,
+                codec,
+                is_sequence_header,
+                ..
+            } => {
+                if *is_sequence_header {
+                    key_details.latest_video_sequence_header = Some(VideoSequenceHeader {
+                        codec: codec.clone(),
+                        data: data.clone(),
+                    });
+                }
+            }
+
+            RtmpEndpointMediaData::NewAudioData {
+                data,
+                codec,
+                is_sequence_header,
+                ..
+            } => {
+                if *is_sequence_header {
+                    key_details.latest_audio_sequence_header = Some(AudioSequenceHeader {
+                        codec: codec.clone(),
+                        data: data.clone(),
+                    });
+                }
+            }
+
+            _ => (),
+        };
+
+        for (_, watcher_details) in &key_details.watchers {
+            let _ = watcher_details.media_sender.send(data.clone());
+        }
     }
 
     fn handle_endpoint_request(
@@ -876,9 +884,12 @@ fn handle_connection_request_watch(
         });
     }
 
-    active_stream_key
-        .watchers
-        .insert(connection_id, WatcherDetails { media_sender });
+    active_stream_key.watchers.insert(
+        connection_id,
+        WatcherDetails {
+            media_sender,
+        },
+    );
 
     let _ = connection
         .response_channel
