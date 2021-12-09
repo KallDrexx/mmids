@@ -203,7 +203,17 @@ impl<'a> Actor<'a> {
                 info!("Closing workflow as requested");
                 *stop_workflow = true;
 
-                // TOOD: tear down active and pending steps
+                for id in &self.active_steps {
+                    if let Some(step) = self.steps_by_definition_id.get_mut(id) {
+                        step.shutdown();
+                    }
+                }
+
+                for id in &self.pending_steps {
+                    if let Some(step) = self.steps_by_definition_id.get_mut(id) {
+                        step.shutdown();
+                    }
+                }
             }
         }
     }
