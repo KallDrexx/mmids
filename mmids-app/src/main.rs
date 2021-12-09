@@ -4,6 +4,7 @@ use hyper::Method;
 use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::endpoints::ffmpeg::{start_ffmpeg_endpoint, FfmpegEndpointRequest};
 use mmids_core::endpoints::rtmp_server::{start_rtmp_server_endpoint, RtmpEndpointRequest};
+use mmids_core::event_hub::{start_event_hub, PublishEventRequest, SubscriptionRequest};
 use mmids_core::http_api::handlers;
 use mmids_core::http_api::routing::{PathPart, Route, RoutingTable};
 use mmids_core::http_api::HttpApiShutdownSignal;
@@ -19,6 +20,7 @@ use mmids_core::workflows::steps::ffmpeg_rtmp_push::FfmpegRtmpPushStepGenerator;
 use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoderStepGenerator;
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
+use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
 use native_tls::Identity;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +36,7 @@ const FFMPEG_TRANSCODE: &str = "ffmpeg_transcode";
 const FFMPEG_HLS: &str = "ffmpeg_hls";
 const FFMPEG_PUSH: &str = "ffmpeg_push";
 const FFMPEG_PULL: &str = "ffmpeg_pull";
+const FORWARD_STEP: &str = "forward_to_workflow";
 
 struct Endpoints {
     rtmp: UnboundedSender<RtmpEndpointRequest>,
@@ -48,8 +51,9 @@ pub async fn main() {
     let log_dir = get_log_directory(&config);
     let tls_options = load_tls_options(&config).await;
     let endpoints = start_endpoints(&config, tls_options, log_dir);
-    let step_factory = register_steps(endpoints);
-    let manager = start_workflows(&config, step_factory);
+    let (pub_sender, sub_sender) = start_event_hub();
+    let step_factory = register_steps(endpoints, sub_sender);
+    let manager = start_workflows(&config, step_factory, pub_sender);
     let http_api_shutdown = start_http_api(&config, manager);
 
     tokio::signal::ctrl_c()
@@ -87,7 +91,10 @@ fn get_log_directory(config: &MmidsConfig) -> String {
     log_dir
 }
 
-fn register_steps(endpoints: Endpoints) -> Arc<WorkflowStepFactory> {
+fn register_steps(
+    endpoints: Endpoints,
+    subscription_sender: UnboundedSender<SubscriptionRequest>,
+) -> Arc<WorkflowStepFactory> {
     info!("Starting workflow step factory, and adding known step types to it");
     let mut step_factory = WorkflowStepFactory::new();
     step_factory
@@ -143,6 +150,13 @@ fn register_steps(endpoints: Endpoints) -> Arc<WorkflowStepFactory> {
             )),
         )
         .expect("Failed to register ffmpeg_push step");
+
+    step_factory
+        .register(
+            WorkflowStepType(FORWARD_STEP.to_string()),
+            Box::new(WorkflowForwarderStepGenerator::new(subscription_sender)),
+        )
+        .expect("Failed to register forward_to_workflow step");
 
     Arc::new(step_factory)
 }
@@ -214,9 +228,10 @@ fn start_endpoints(
 fn start_workflows(
     config: &MmidsConfig,
     step_factory: Arc<WorkflowStepFactory>,
+    event_hub_publisher: UnboundedSender<PublishEventRequest>,
 ) -> UnboundedSender<WorkflowManagerRequest> {
     info!("Starting workflow manager");
-    let manager = start_workflow_manager(step_factory);
+    let manager = start_workflow_manager(step_factory, event_hub_publisher);
     for (_, workflow) in &config.workflows {
         let _ = manager.send(WorkflowManagerRequest {
             request_id: "mmids-app-startup".to_string(),

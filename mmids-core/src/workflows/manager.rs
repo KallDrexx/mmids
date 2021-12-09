@@ -2,6 +2,7 @@
 //! used to start new workflows, change the steps of a managed workflow, get status the of managed
 //! workflows, and stop a managed workflow.
 
+use crate::event_hub::{PublishEventRequest, WorkflowStartedOrStoppedEvent};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::runner::{WorkflowRequestOperation, WorkflowState};
 use crate::workflows::steps::factory::WorkflowStepFactory;
@@ -50,9 +51,10 @@ pub struct GetWorkflowResponse {
 
 pub fn start_workflow_manager(
     step_factory: Arc<WorkflowStepFactory>,
+    event_hub_publisher: UnboundedSender<PublishEventRequest>,
 ) -> UnboundedSender<WorkflowManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(step_factory);
+    let actor = Actor::new(step_factory, event_hub_publisher);
     tokio::spawn(actor.run(receiver));
 
     sender
@@ -60,6 +62,7 @@ pub fn start_workflow_manager(
 
 enum FutureResult {
     AllConsumersGone,
+    EventHubGone,
     WorkflowManagerRequestReceived(
         WorkflowManagerRequest,
         UnboundedReceiver<WorkflowManagerRequest>,
@@ -67,18 +70,23 @@ enum FutureResult {
     WorkflowGone(String),
 }
 
-struct Actor<'a> {
-    futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
+struct Actor {
+    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     workflows: HashMap<String, UnboundedSender<WorkflowRequest>>,
     step_factory: Arc<WorkflowStepFactory>,
+    event_hub_publisher: UnboundedSender<PublishEventRequest>,
 }
 
-impl<'a> Actor<'a> {
-    fn new(step_factory: Arc<WorkflowStepFactory>) -> Self {
+impl Actor {
+    fn new(
+        step_factory: Arc<WorkflowStepFactory>,
+        event_hub_publisher: UnboundedSender<PublishEventRequest>,
+    ) -> Self {
         Actor {
             futures: FuturesUnordered::new(),
             workflows: HashMap::new(),
             step_factory,
+            event_hub_publisher,
         }
     }
 
@@ -87,11 +95,19 @@ impl<'a> Actor<'a> {
         self.futures
             .push(wait_for_request(request_receiver).boxed());
 
+        self.futures
+            .push(notify_when_event_hub_is_gone(self.event_hub_publisher.clone()).boxed());
+
         info!("Starting workflow manager");
         while let Some(result) = self.futures.next().await {
             match result {
                 FutureResult::AllConsumersGone => {
                     info!("All consumers gone");
+                    break;
+                }
+
+                FutureResult::EventHubGone => {
+                    warn!("Event hub is gone");
                     break;
                 }
 
@@ -102,9 +118,15 @@ impl<'a> Actor<'a> {
 
                 FutureResult::WorkflowGone(name) => {
                     if let Some(_) = self.workflows.remove(&name) {
+                        let event =
+                            WorkflowStartedOrStoppedEvent::WorkflowEnded { name: name.clone() };
+                        let _ = self
+                            .event_hub_publisher
+                            .send(PublishEventRequest::WorkflowStartedOrStopped(event));
+
                         warn!(
                             workflow_name = %name,
-                            "Workflow '{}' unexpectedly had its request channel disappear", name
+                            "Workflow '{}' had its request channel disappear", name
                         );
                     }
                 }
@@ -140,7 +162,17 @@ impl<'a> Actor<'a> {
                     let sender = start_workflow(definition, self.step_factory.clone());
                     self.futures
                         .push(wait_for_workflow_gone(sender.clone(), name.clone()).boxed());
-                    self.workflows.insert(name, sender);
+
+                    self.workflows.insert(name.clone(), sender.clone());
+
+                    let event = WorkflowStartedOrStoppedEvent::WorkflowStarted {
+                        name: name.clone(),
+                        channel: sender,
+                    };
+
+                    let _ = self
+                        .event_hub_publisher
+                        .send(PublishEventRequest::WorkflowStartedOrStopped(event));
                 }
             }
 
@@ -155,6 +187,12 @@ impl<'a> Actor<'a> {
                         request_id: request.request_id,
                         operation: WorkflowRequestOperation::StopWorkflow,
                     });
+
+                    let event = WorkflowStartedOrStoppedEvent::WorkflowEnded { name: name.clone() };
+
+                    let _ = self
+                        .event_hub_publisher
+                        .send(PublishEventRequest::WorkflowStartedOrStopped(event));
                 }
             }
 
@@ -194,6 +232,13 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<WorkflowManagerRequest
         Some(request) => FutureResult::WorkflowManagerRequestReceived(request, receiver),
         None => FutureResult::AllConsumersGone,
     }
+}
+
+async fn notify_when_event_hub_is_gone(
+    sender: UnboundedSender<PublishEventRequest>,
+) -> FutureResult {
+    sender.closed().await;
+    FutureResult::EventHubGone
 }
 
 async fn wait_for_workflow_gone(

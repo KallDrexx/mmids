@@ -36,6 +36,9 @@ pub enum WorkflowRequestOperation {
 
     /// Requests the workflow stop operating
     StopWorkflow,
+
+    /// Sends a media notification to this stream
+    MediaNotification { media: MediaNotification },
 }
 
 pub struct WorkflowState {
@@ -49,7 +52,7 @@ pub struct WorkflowStepState {
 }
 
 /// Starts the execution of a workflow with the specified definition
-pub fn start(
+pub fn start_workflow(
     definition: WorkflowDefinition,
     step_factory: Arc<WorkflowStepFactory>,
 ) -> UnboundedSender<WorkflowRequest> {
@@ -85,6 +88,7 @@ struct Actor<'a> {
     step_inputs: StepInputs,
     step_outputs: StepOutputs<'a>,
     cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
+    cached_inbound_media: HashMap<StreamId, Vec<MediaNotification>>,
     active_streams: HashMap<StreamId, StreamDetails>,
     step_factory: Arc<WorkflowStepFactory>,
     step_definitions: HashMap<u64, WorkflowStepDefinition>,
@@ -111,6 +115,7 @@ impl<'a> Actor<'a> {
             step_inputs: StepInputs::new(),
             step_outputs: StepOutputs::new(),
             cached_step_media: HashMap::new(),
+            cached_inbound_media: HashMap::new(),
             active_streams: HashMap::new(),
             step_factory,
             step_definitions: HashMap::new(),
@@ -215,6 +220,16 @@ impl<'a> Actor<'a> {
                     }
                 }
             }
+
+            WorkflowRequestOperation::MediaNotification { media } => {
+                self.update_inbound_media_cache(&media);
+                self.step_inputs.clear();
+                self.step_inputs.media.push(media);
+                if let Some(id) = self.active_steps.get(0) {
+                    let id = *id;
+                    self.execute_steps(id, None, true, true);
+                }
+            }
         }
     }
 
@@ -294,6 +309,9 @@ impl<'a> Actor<'a> {
             }
         }
 
+        // If we have a start_index, that means the step we want to execute is an active step.  So
+        // execute that step and all active steps after it. If it's not an active step, then we
+        // only want to execute that one step and none others.
         if let Some(start_index) = start_index {
             for x in start_index..self.active_steps.len() {
                 self.execute_step(self.active_steps[x]);
@@ -437,32 +455,43 @@ impl<'a> Actor<'a> {
             // Since some pending steps may not have been around previously, they would not have
             // gotten stream started notifications and missing sequence headers.  So we need to
             // find its parent step's cache and replay any required media notifications
-            for index in 1..self.pending_steps.len() {
+            for index in 0..self.pending_steps.len() {
                 let current_step_id = self.pending_steps[index];
-                let previous_step_id = self.pending_steps[index - 1];
                 if !self.active_steps.contains(&current_step_id) {
                     // This is a new step
-                    if let Some(cache) = self.cached_step_media.get(&previous_step_id) {
-                        let notifications = cache
+                    let notifications = if index == 0 {
+                        // The first step uses the inbound cache, not step based cache
+                        self.cached_inbound_media
                             .values()
                             .flatten()
                             .map(|x| x.clone())
-                            .collect::<Vec<_>>();
+                            .collect::<Vec<_>>()
+                    } else {
+                        let previous_step_id = self.pending_steps[index - 1];
+                        if let Some(cache) = self.cached_step_media.get(&previous_step_id) {
+                            cache
+                                .values()
+                                .flatten()
+                                .map(|x| x.clone())
+                                .collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        }
+                    };
 
-                        self.step_inputs.clear();
-                        self.step_inputs.media.extend(notifications);
-                        self.execute_steps(current_step_id, None, true, false);
+                    self.step_inputs.clear();
+                    self.step_inputs.media.extend(notifications);
+                    self.execute_steps(current_step_id, None, true, false);
 
-                        // TODO: This is probably going to cause duplicate stream started notifications.
-                        // Not sure a way around that and we probably need to remove those warnings.
+                    // TODO: This is probably going to cause duplicate stream started notifications.
+                    // Not sure a way around that and we probably need to remove those warnings.
 
-                        // TODO: The current code only handles notifications raised by parents of
-                        // new steps.  There's the possibility that a change of order of existing
-                        // steps could cause steps to be tracking streams that come in after the step,
-                        // or not know about steps that were created in steps that used to be after but
-                        // is now before.  It also means it may have outdated sequence headers if
-                        // a transcoding step was removed.
-                    }
+                    // TODO: The current code only handles notifications raised by parents of
+                    // new steps.  There's the possibility that a change of order of existing
+                    // steps could cause steps to be tracking streams that come in after the step,
+                    // or not know about steps that were created in steps that used to be after but
+                    // is now before.  It also means it may have outdated sequence headers if
+                    // a transcoding step was removed.
                 }
             }
 
@@ -501,6 +530,40 @@ impl<'a> Actor<'a> {
                     }
                 }
             }
+        }
+    }
+
+    fn update_inbound_media_cache(&mut self, media: &MediaNotification) {
+        match media.content {
+            MediaNotificationContent::NewIncomingStream { .. } => {
+                let collection = vec![media.clone()];
+                self.cached_inbound_media
+                    .insert(media.stream_id.clone(), collection);
+            }
+
+            MediaNotificationContent::StreamDisconnected => {
+                self.cached_inbound_media.remove(&media.stream_id);
+            }
+
+            MediaNotificationContent::Audio {
+                is_sequence_header: true,
+                ..
+            } => {
+                if let Some(collection) = self.cached_inbound_media.get_mut(&media.stream_id) {
+                    collection.push(media.clone());
+                }
+            }
+
+            MediaNotificationContent::Video {
+                is_sequence_header: true,
+                ..
+            } => {
+                if let Some(collectoin) = self.cached_inbound_media.get_mut(&media.stream_id) {
+                    collectoin.push(media.clone());
+                }
+            }
+
+            _ => (),
         }
     }
 

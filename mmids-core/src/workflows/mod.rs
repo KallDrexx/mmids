@@ -8,7 +8,7 @@ pub mod manager;
 mod runner;
 pub mod steps;
 
-pub use runner::{start as start_workflow, WorkflowRequest};
+pub use runner::{start_workflow, WorkflowRequest, WorkflowRequestOperation};
 
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::rtmp_server::RtmpEndpointMediaData;

@@ -10,6 +10,7 @@ pub mod ffmpeg_rtmp_push;
 pub mod ffmpeg_transcode;
 pub mod rtmp_receive;
 pub mod rtmp_watch;
+pub mod workflow_forwarder;
 
 pub use external_stream_handler::*;
 pub use external_stream_reader::*;
