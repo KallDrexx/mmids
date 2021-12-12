@@ -233,6 +233,22 @@ impl WorkflowStep for WorkflowForwarderStep {
 
     fn shutdown(&mut self) {
         self.status = StepStatus::Shutdown;
+
+        // Send a disconnect signal for any active streams we are tracking, so the target workflow
+        // knows not ot expect more media from them.
+        if let Some(channel) = &self.target_workflow_channel {
+            for (stream_id, _) in &self.required_media {
+                let _ = channel.send(WorkflowRequest {
+                    request_id: "workflow-forwarder-shutdown".to_string(),
+                    operation: WorkflowRequestOperation::MediaNotification {
+                        media: MediaNotification {
+                            stream_id: stream_id.clone(),
+                            content: MediaNotificationContent::StreamDisconnected,
+                        },
+                    },
+                });
+            }
+        }
     }
 }
 
