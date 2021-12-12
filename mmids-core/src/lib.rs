@@ -8,6 +8,7 @@ pub mod endpoints;
 pub mod event_hub;
 pub mod http_api;
 pub mod net;
+pub mod reactors;
 mod utils;
 pub mod workflows;
 

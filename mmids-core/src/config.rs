@@ -1,3 +1,4 @@
+use crate::reactors::ReactorDefinition;
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType};
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -7,6 +8,7 @@ use thiserror::Error;
 /// Configuration for a Mmids system.  Defines the settings and any workflows that should be active.
 pub struct MmidsConfig {
     pub settings: HashMap<String, Option<String>>,
+    pub reactors: HashMap<String, ReactorDefinition>,
     pub workflows: HashMap<String, WorkflowDefinition>,
 }
 
@@ -42,6 +44,26 @@ pub enum ConfigParseError {
 
     #[error("Invalid workflow name of {name} on line {line}")]
     InvalidWorkflowName { line: usize, name: String },
+
+    #[error("The reactor on line {line} did not have a name specified")]
+    NoNameOnReactor { line: usize },
+
+    #[error("Invalid workflow name of '{name}' on line {line}")]
+    InvalidReactorName { line: usize, name: String },
+
+    #[error("The reactor on line {line} had an unknown argument of '{argument}'")]
+    UnknownReactorArgument { line: usize, argument: String },
+
+    #[error(
+        "The reactor parameter's value on line {line} is invalid. Equal signs are not allowed"
+    )]
+    InvalidReactorParameterValueFormat { line: usize },
+
+    #[error("The reactor parameter on line {line} had multiple values. Only 1 is allowed")]
+    TooManyReactorParameterValues { line: usize },
+
+    #[error("Multiple reactors have the name of '{name}'. Each reactor must have a unique name")]
+    DuplicateReactorName { name: String },
 }
 
 #[derive(Parser)]
@@ -57,6 +79,7 @@ struct ChildNode {
 pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
     let mut config = MmidsConfig {
         settings: HashMap::new(),
+        reactors: HashMap::new(),
         workflows: HashMap::new(),
     };
 
@@ -86,6 +109,7 @@ fn handle_node_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(), C
     match name.to_lowercase().as_str() {
         "settings" => read_settings(config, rules)?,
         "workflow" => read_workflow(config, rules, name_node.as_span().start_pos().line_col().0)?,
+        "reactor" => read_reactor(config, rules, name_node.as_span().start_pos().line_col().0)?,
         _ => {
             return Err(ConfigParseError::InvalidNodeName {
                 name: name.to_string(),
@@ -195,6 +219,99 @@ fn read_workflow(
         return Err(ConfigParseError::NoNameOnWorkflow {
             line: starting_line,
         });
+    }
+
+    Ok(())
+}
+
+fn read_reactor(
+    config: &mut MmidsConfig,
+    pairs: Pairs<Rule>,
+    starting_line: usize,
+) -> Result<(), ConfigParseError> {
+    let mut name = None;
+    let mut parameters = HashMap::new();
+    let mut executor_name = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::argument => {
+                let (key, value) = read_argument(pair.clone())?;
+                if name.is_none() {
+                    // Name must come first and only have a key, no pair
+                    if value.is_some() {
+                        return Err(ConfigParseError::InvalidReactorName {
+                            line: pair.as_span().start_pos().line_col().0,
+                            name: pair.as_str().to_string(),
+                        });
+                    }
+
+                    name = Some(key);
+                } else {
+                    // We only allow specific arguments to the reactor node
+                    if key == "executor" {
+                        if let Some(value) = value {
+                            executor_name = Some(value);
+                        }
+                    } else {
+                        return Err(ConfigParseError::UnknownReactorArgument {
+                            line: pair.as_span().start_pos().line_col().0,
+                            argument: key,
+                        });
+                    }
+                }
+            }
+
+            Rule::child_node => {
+                let line_number = pair.as_span().start_pos().line_col().0;
+                let child_node = read_child_node(pair)?;
+                if child_node.arguments.len() > 1 {
+                    return Err(ConfigParseError::TooManyReactorParameterValues {
+                        line: line_number,
+                    });
+                }
+
+                if let Some(key) = child_node.arguments.keys().nth(0) {
+                    if let Some(Some(_)) = child_node.arguments.get(key) {
+                        return Err(ConfigParseError::InvalidReactorParameterValueFormat {
+                            line: line_number,
+                        });
+                    }
+
+                    parameters.insert(child_node.name, Some(key.clone()));
+                } else {
+                    parameters.insert(child_node.name, None);
+                }
+            }
+
+            rule => {
+                return Err(ConfigParseError::UnexpectedRule {
+                    rule,
+                    section: "settings".to_string(),
+                })
+            }
+        }
+    }
+
+    if let Some(name) = name {
+        if config.reactors.contains_key(&name) {
+            return Err(ConfigParseError::DuplicateReactorName { name });
+        }
+
+        config.reactors.insert(
+            name.to_string(),
+            ReactorDefinition {
+                name,
+                parameters,
+                executor: executor_name,
+            },
+        );
+    } else {
+        if name.is_none() {
+            return Err(ConfigParseError::NoNameOnReactor {
+                line: starting_line,
+            });
+        }
     }
 
     Ok(())
@@ -418,6 +535,49 @@ workflow name2 {
         assert!(
             config.workflows.contains_key("name2"),
             "Could not find a workflow named 'name2'"
+        );
+    }
+
+    #[test]
+    fn can_read_single_reactor() {
+        let content = "
+reactor name executor=abc {
+    param1 value
+    param2 value2
+}
+";
+        let config = parse(content).unwrap();
+        assert_eq!(config.reactors.len(), 1, "Unexpected number of reactors");
+        assert!(
+            config.reactors.contains_key("name"),
+            "Reactor in config did not have the expected name"
+        );
+
+        let reactor = &config.reactors["name"];
+        assert_eq!(
+            reactor.name,
+            "name".to_string(),
+            "Unexpected name of reactor"
+        );
+        assert_eq!(
+            reactor.executor,
+            Some("abc".to_string()),
+            "Unexpected executor"
+        );
+        assert_eq!(
+            reactor.parameters.len(),
+            2,
+            "Unexpected number of parameters"
+        );
+        assert_eq!(
+            reactor.parameters.get("param1"),
+            Some(&Some("value".to_string())),
+            "Unexpected param1 value"
+        );
+        assert_eq!(
+            reactor.parameters.get("param2"),
+            Some(&Some("value2".to_string())),
+            "Unexpected param2 value"
         );
     }
 
