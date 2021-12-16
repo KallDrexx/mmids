@@ -57,11 +57,11 @@ impl ReactorExecutorFactory {
 
     pub fn get_generator(
         &self,
-        name: String,
+        name: &str,
     ) -> Result<&Box<dyn ReactorExecutorGenerator>, GenerationError> {
-        match self.generators.get(&name) {
+        match self.generators.get(name) {
             Some(generator) => Ok(generator),
-            None => return Err(GenerationError::NoRegisteredGenerator(name)),
+            None => return Err(GenerationError::NoRegisteredGenerator(name.to_string())),
         }
     }
 }

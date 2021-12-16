@@ -7,6 +7,7 @@
 //! routed to it.
 
 pub mod executors;
+pub mod manager;
 mod reactor;
 
 use std::collections::HashMap;
