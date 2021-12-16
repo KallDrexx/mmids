@@ -1,6 +1,17 @@
+//! Reactors are actors that are used to manage workflows for specific stream names. This is a
+//! pull mechanism for dynamic workflow capabilities in mmids. When a reactor is asked for a
+//! workflow for a stream name, the reactor will reach out to an external service (configured
+//! by a reactor executor) to obtain a workflow definition for the requested stream name. If none
+//! is returned then that normally means the stream name is not allowed. If a valid workflow
+//! definition is returned, the reactor will ensure that the workflow is created so media can be
+//! routed to it.
+
 pub mod executors;
+mod reactor;
 
 use std::collections::HashMap;
+
+pub use reactor::{start_reactor, ReactorRequest};
 
 /// How reactors are defined
 pub struct ReactorDefinition {
