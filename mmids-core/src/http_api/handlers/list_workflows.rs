@@ -3,6 +3,7 @@
 use crate::http_api::routing::RouteHandler;
 use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use async_trait::async_trait;
+use hyper::header::HeaderValue;
 use hyper::{Body, Error, Request, Response, StatusCode};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -91,6 +92,13 @@ impl RouteHandler for ListWorkflowsHandler {
             }
         };
 
-        Ok(Response::new(Body::from(json)))
+        let mut response = Response::new(Body::from(json));
+        let headers = response.headers_mut();
+        headers.insert(
+            hyper::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+
+        Ok(response)
     }
 }

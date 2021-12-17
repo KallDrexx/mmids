@@ -2,7 +2,8 @@ use super::connection_handler::{ConnectionRequest, ConnectionResponse};
 use super::{RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration};
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
+    IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
+    RtmpEndpointWatcherNotification, ValidationResponse,
 };
 
 use crate::net::tcp::TcpSocketResponse;
@@ -62,17 +63,20 @@ pub enum FutureResult {
 
     NoMoreEndpointRequesters,
     SocketManagerClosed,
+    ValidationApprovalResponseReceived(u16, ConnectionId, ValidationResponse),
 }
 
 pub struct PublishingRegistrant {
     pub response_channel: UnboundedSender<RtmpEndpointPublisherMessage>,
     pub stream_id: Option<StreamId>,
     pub ip_restrictions: IpRestriction,
+    pub requires_registrant_approval: bool,
 }
 
 pub struct WatcherRegistrant {
     pub response_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
     pub ip_restrictions: IpRestriction,
+    pub requires_registrant_approval: bool,
 }
 
 pub struct VideoSequenceHeader {
@@ -108,8 +112,8 @@ pub enum PortStatus {
     Open,
 }
 
-pub struct RtmpServerEndpointActor<'a> {
-    pub futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
+pub struct RtmpServerEndpointActor {
+    pub futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     pub ports: HashMap<u16, PortMapping>,
 }
 
@@ -117,16 +121,28 @@ pub enum ListenerRequest {
     Publisher {
         channel: UnboundedSender<RtmpEndpointPublisherMessage>,
         stream_id: Option<StreamId>,
+        requires_registrant_approval: bool,
     },
 
     Watcher {
         notification_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
         media_channel: UnboundedReceiver<RtmpEndpointMediaMessage>,
+        requires_registrant_approval: bool,
     },
 }
 
 pub enum ConnectionState {
     None,
+
+    WaitingForPublishValidation {
+        rtmp_app: String,
+        stream_key: String,
+    },
+
+    WaitingForWatchValidation {
+        rtmp_app: String,
+        stream_key: String,
+    },
 
     Publishing {
         rtmp_app: String,
@@ -143,6 +159,7 @@ pub struct Connection {
     pub response_channel: UnboundedSender<ConnectionResponse>,
     pub state: ConnectionState,
     pub socket_address: SocketAddr,
+    pub received_registrant_approval: bool,
 }
 
 pub struct PortMapping {

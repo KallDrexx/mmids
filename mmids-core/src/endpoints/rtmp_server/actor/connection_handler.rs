@@ -17,13 +17,13 @@ use rml_rtmp::time::RtmpTimestamp;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, error, info, instrument};
 
-pub struct RtmpServerConnectionHandler<'a> {
+pub struct RtmpServerConnectionHandler {
     id: ConnectionId,
     state: ConnectionState,
     handshake: Handshake,
     rtmp_session: Option<ServerSession>,
     outgoing_byte_channel: UnboundedSender<OutboundPacket>,
-    futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
+    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     request_sender: UnboundedSender<ConnectionRequest>,
     force_disconnect: bool,
     published_event_channel: Option<UnboundedSender<RtmpEndpointPublisherMessage>>,
@@ -121,7 +121,7 @@ struct UnwrappedAudio {
     data: Bytes,
 }
 
-impl<'a> RtmpServerConnectionHandler<'a> {
+impl RtmpServerConnectionHandler {
     pub fn new(
         id: ConnectionId,
         outgoing_bytes: UnboundedSender<OutboundPacket>,
@@ -142,7 +142,9 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(name = "Connection Handler Execution", skip(self, response_receiver, incoming_bytes), fields(connection_id = ?self.id))]
+    #[instrument(name = "Connection Handler Execution",
+        skip(self, response_receiver, incoming_bytes),
+        fields(connection_id = ?self.id))]
     pub async fn run_async(
         mut self,
         response_receiver: UnboundedReceiver<ConnectionResponse>,
@@ -730,7 +732,6 @@ impl<'a> RtmpServerConnectionHandler<'a> {
         }
     }
 
-    #[instrument(skip(self, channel), fields(connection_id = ?self.id))]
     fn handle_endpoint_publish_request_accepted(
         &mut self,
         channel: UnboundedSender<RtmpEndpointPublisherMessage>,

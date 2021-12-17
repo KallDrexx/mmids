@@ -225,6 +225,7 @@ impl ExternalStreamReader {
                                 media_channel: media_receiver,
                                 ip_restrictions: IpRestriction::None,
                                 use_tls: false,
+                                requires_registrant_approval: false,
                             });
 
                     outputs.futures.push(
@@ -339,6 +340,11 @@ impl ExternalStreamReader {
 
                 RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key: _ } => (),
                 RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key: _ } => (),
+
+                RtmpEndpointWatcherNotification::WatcherRequiringApproval { .. } => {
+                    error!("Received request for approval but requests should be auto-approved");
+                    self.status = StepStatus::Error;
+                }
             }
         }
 

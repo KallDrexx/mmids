@@ -5,24 +5,30 @@ use super::{
     RtmpEndpointMediaData, RtmpEndpointPublisherMessage, RtmpEndpointRequest, StreamKeyRegistration,
 };
 use crate::endpoints::rtmp_server::actor::connection_handler::ConnectionResponse;
+use crate::endpoints::rtmp_server::actor::internal_futures::wait_for_validation;
 use crate::endpoints::rtmp_server::{
-    IpRestriction, RegistrationType, RtmpEndpointWatcherNotification,
+    IpRestriction, RegistrationType, RtmpEndpointWatcherNotification, ValidationResponse,
 };
 use crate::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use crate::net::ConnectionId;
 use crate::StreamId;
 use actor_types::*;
 use connection_handler::{ConnectionRequest, RtmpServerConnectionHandler};
-use futures::future::FutureExt;
+use futures::future::{BoxFuture, FutureExt};
 use futures::StreamExt;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot::channel;
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
-impl<'a> RtmpServerEndpointActor<'a> {
+impl RtmpServerEndpointActor {
+    #[instrument(
+        name = "RtmpServer Endpoint Execution",
+        skip(self, endpoint_receiver, socket_request_sender)
+    )]
     pub async fn run(
         mut self,
         endpoint_receiver: UnboundedReceiver<RtmpEndpointRequest>,
@@ -48,6 +54,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 FutureResult::EndpointRequestReceived { request, receiver } => {
                     self.futures
                         .push(internal_futures::wait_for_endpoint_request(receiver).boxed());
+
                     self.handle_endpoint_request(request, socket_request_sender.clone());
                 }
 
@@ -127,10 +134,152 @@ impl<'a> RtmpServerEndpointActor<'a> {
 
                     self.handle_watcher_media_received(port, app, stream_key, data);
                 }
+
+                FutureResult::ValidationApprovalResponseReceived(port, connection_id, response) => {
+                    self.handle_validation_response(port, connection_id, response);
+                }
             }
         }
 
         info!("Rtmp server endpoint closing");
+    }
+
+    #[instrument(skip(self))]
+    fn handle_validation_response(
+        &mut self,
+        port: u16,
+        connection_id: ConnectionId,
+        response: ValidationResponse,
+    ) {
+        let port_map = match self.ports.get_mut(&port) {
+            Some(ports) => ports,
+            None => {
+                return;
+            } // Port has been closed prior to this response
+        };
+
+        let connection = match port_map.connections.get_mut(&connection_id) {
+            Some(connection) => connection,
+            None => {
+                return;
+            } // Disconnected before this response came in
+        };
+
+        match response {
+            ValidationResponse::Approve => {
+                match &connection.state {
+                    ConnectionState::None => {
+                        warn!("Unexpected approval for connection in None state");
+                    }
+
+                    ConnectionState::Watching { .. } => {
+                        warn!("Unexpected approval for connection in the Watching state");
+                    }
+
+                    ConnectionState::Publishing { .. } => {
+                        warn!("Unexpected approval for connection in the publishing state");
+                    }
+
+                    ConnectionState::WaitingForPublishValidation {
+                        rtmp_app,
+                        stream_key,
+                    } => {
+                        info!(
+                            rtmp_app = %rtmp_app,
+                            stream_key = %stream_key,
+                            "Request to publish was approved"
+                        );
+
+                        // Redefine as clones due to borrow checker
+                        let rtmp_app = rtmp_app.clone();
+                        let stream_key = stream_key.clone();
+
+                        connection.received_registrant_approval = true;
+                        let future = handle_connection_request_publish(
+                            &connection_id,
+                            port_map,
+                            port,
+                            rtmp_app,
+                            &stream_key,
+                        );
+
+                        if let Some(future) = future {
+                            self.futures.push(future);
+                        }
+                    }
+
+                    ConnectionState::WaitingForWatchValidation {
+                        rtmp_app,
+                        stream_key,
+                    } => {
+                        info!(
+                            rtmp_app = %rtmp_app,
+                            stream_key = %stream_key,
+                            "Request to watch was approved",
+                        );
+
+                        // Redefine with clones due to borrow checker
+                        let rtmp_app = rtmp_app.clone();
+                        let stream_key = stream_key.clone();
+
+                        connection.received_registrant_approval = true;
+                        let future = handle_connection_request_watch(
+                            connection_id,
+                            port_map,
+                            port,
+                            rtmp_app,
+                            &stream_key,
+                        );
+
+                        if let Some(future) = future {
+                            self.futures.push(future);
+                        }
+                    }
+                }
+            }
+
+            ValidationResponse::Reject => {
+                match &connection.state {
+                    ConnectionState::None => {
+                        warn!("Unexpected approval for connection in None state");
+                    }
+
+                    ConnectionState::Watching { .. } => {
+                        warn!("Unexpected approval for connection in the Watching state");
+                    }
+
+                    ConnectionState::Publishing { .. } => {
+                        warn!("Unexpected approval for connection in the publishing state");
+                    }
+
+                    ConnectionState::WaitingForPublishValidation {
+                        rtmp_app,
+                        stream_key,
+                    } => {
+                        info!(
+                            rtmp_app = %rtmp_app,
+                            stream_key = %stream_key,
+                            "Request to publish was rejected"
+                        );
+                    }
+
+                    ConnectionState::WaitingForWatchValidation {
+                        rtmp_app,
+                        stream_key,
+                    } => {
+                        info!(
+                            rtmp_app = %rtmp_app,
+                            stream_key = %stream_key,
+                            "Request to watch was rejected"
+                        );
+                    }
+                }
+
+                let _ = connection
+                    .response_channel
+                    .send(ConnectionResponse::RequestRejected);
+            }
+        }
     }
 
     fn handle_watcher_media_received(
@@ -211,6 +360,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 stream_id,
                 ip_restrictions: ip_restriction,
                 use_tls,
+                requires_registrant_approval,
             } => {
                 self.register_listener(
                     port,
@@ -220,6 +370,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     ListenerRequest::Publisher {
                         channel: message_channel,
                         stream_id,
+                        requires_registrant_approval: requires_registrant_approval,
                     },
                     ip_restriction,
                     use_tls,
@@ -234,6 +385,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 notification_channel,
                 ip_restrictions,
                 use_tls,
+                requires_registrant_approval,
             } => {
                 self.register_listener(
                     port,
@@ -243,6 +395,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     ListenerRequest::Watcher {
                         notification_channel,
                         media_channel,
+                        requires_registrant_approval: requires_registrant_approval,
                     },
                     ip_restrictions,
                     use_tls,
@@ -348,7 +501,11 @@ impl<'a> RtmpServerEndpointActor<'a> {
             });
 
         match listener {
-            ListenerRequest::Publisher { channel, stream_id } => {
+            ListenerRequest::Publisher {
+                channel,
+                stream_id,
+                requires_registrant_approval,
+            } => {
                 let can_be_added = match &stream_key {
                     StreamKeyRegistration::Any => {
                         if !app_map.publisher_registrants.is_empty() {
@@ -397,6 +554,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                         response_channel: channel.clone(),
                         stream_id,
                         ip_restrictions,
+                        requires_registrant_approval,
                     },
                 );
 
@@ -421,6 +579,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
             ListenerRequest::Watcher {
                 media_channel,
                 notification_channel,
+                requires_registrant_approval,
             } => {
                 let can_be_added = match &stream_key {
                     StreamKeyRegistration::Any => {
@@ -469,6 +628,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                     WatcherRegistrant {
                         response_channel: notification_channel.clone(),
                         ip_restrictions,
+                        requires_registrant_approval,
                     },
                 );
 
@@ -585,6 +745,7 @@ impl<'a> RtmpServerEndpointActor<'a> {
                             response_channel: response_sender,
                             state: ConnectionState::None,
                             socket_address,
+                            received_registrant_approval: false,
                         },
                     );
 
@@ -639,26 +800,34 @@ impl<'a> RtmpServerEndpointActor<'a> {
                 rtmp_app,
                 stream_key,
             } => {
-                handle_connection_request_publish(
+                let future = handle_connection_request_publish(
                     &connection_id,
                     port_map,
                     port,
                     rtmp_app,
                     &stream_key,
                 );
+
+                if let Some(future) = future {
+                    self.futures.push(future);
+                }
             }
 
             ConnectionRequest::RequestWatch {
                 rtmp_app,
                 stream_key,
             } => {
-                handle_connection_request_watch(
+                let future = handle_connection_request_watch(
                     connection_id,
                     port_map,
                     port,
                     rtmp_app,
                     &stream_key,
                 );
+
+                if let Some(future) = future {
+                    self.futures.push(future);
+                }
             }
         }
     }
@@ -765,14 +934,14 @@ fn handle_connection_request_watch(
     port: u16,
     rtmp_app: String,
     stream_key: &String,
-) {
+) -> Option<BoxFuture<'static, FutureResult>> {
     let connection = match port_map.connections.get_mut(&connection_id) {
         Some(x) => x,
         None => {
             warn!("Connection handler for connection {:?} sent request to watch on port {}, but that \
                 connection isn't being tracked.", connection_id, port);
 
-            return;
+            return None;
         }
     };
 
@@ -789,7 +958,8 @@ fn handle_connection_request_watch(
             let _ = connection
                 .response_channel
                 .send(ConnectionResponse::RequestRejected);
-            return;
+
+            return None;
         }
     };
 
@@ -815,7 +985,8 @@ fn handle_connection_request_watch(
                     let _ = connection
                         .response_channel
                         .send(ConnectionResponse::RequestRejected);
-                    return;
+
+                    return None;
                 }
             }
         }
@@ -835,7 +1006,33 @@ fn handle_connection_request_watch(
             .response_channel
             .send(ConnectionResponse::RequestRejected);
 
-        return;
+        return None;
+    }
+
+    if registrant.requires_registrant_approval && !connection.received_registrant_approval {
+        info!(
+            "Connection {} requested watching to '{}/{}' but requires approval from the \
+            registrant first",
+            connection_id, rtmp_app, stream_key
+        );
+
+        connection.state = ConnectionState::WaitingForWatchValidation {
+            rtmp_app,
+            stream_key: stream_key.clone(),
+        };
+
+        let (sender, receiver) = channel();
+        let _ = registrant.response_channel.send(
+            RtmpEndpointWatcherNotification::WatcherRequiringApproval {
+                stream_key: stream_key.clone(),
+                connection_id: connection_id.clone(),
+                response_channel: sender,
+            },
+        );
+
+        let future = wait_for_validation(port, connection_id.clone(), receiver).boxed();
+
+        return Some(future);
     }
 
     let active_stream_key = application
@@ -893,6 +1090,8 @@ fn handle_connection_request_watch(
         .send(ConnectionResponse::WatchRequestAccepted {
             channel: media_receiver,
         });
+
+    return None;
 }
 
 #[instrument(skip(port_map))]
@@ -902,14 +1101,14 @@ fn handle_connection_request_publish(
     port: u16,
     rtmp_app: String,
     stream_key: &String,
-) {
+) -> Option<BoxFuture<'static, FutureResult>> {
     let connection = match port_map.connections.get_mut(&connection_id) {
         Some(x) => x,
         None => {
             warn!("Connection handler for connection {:?} sent a request to publish on port {}, but that \
                 connection isn't being tracked.", connection_id, port);
 
-            return;
+            return None;
         }
     };
 
@@ -924,7 +1123,7 @@ fn handle_connection_request_publish(
                 .response_channel
                 .send(ConnectionResponse::RequestRejected);
 
-            return;
+            return None;
         }
     };
 
@@ -950,13 +1149,14 @@ fn handle_connection_request_publish(
                     let _ = connection
                         .response_channel
                         .send(ConnectionResponse::RequestRejected);
-                    return;
+
+                    return None;
                 }
             }
         }
     };
 
-    // app/stream key combination is valid and we have a registrant for itk
+    // app/stream key combination is valid and we have a registrant for it
     let stream_key_connections = application
         .active_stream_keys
         .entry(stream_key.clone())
@@ -978,7 +1178,8 @@ fn handle_connection_request_publish(
         let _ = connection
             .response_channel
             .send(ConnectionResponse::RequestRejected);
-        return;
+
+        return None;
     }
 
     if !is_ip_allowed(&connection.socket_address, &registrant.ip_restrictions) {
@@ -995,7 +1196,33 @@ fn handle_connection_request_publish(
             .response_channel
             .send(ConnectionResponse::RequestRejected);
 
-        return;
+        return None;
+    }
+
+    if registrant.requires_registrant_approval && !connection.received_registrant_approval {
+        info!(
+            "Connection {} requested publishing to '{}/{}' but requires approval from the \
+            registrant first",
+            connection_id, rtmp_app, stream_key
+        );
+
+        connection.state = ConnectionState::WaitingForPublishValidation {
+            rtmp_app,
+            stream_key: stream_key.clone(),
+        };
+
+        let (sender, receiver) = channel();
+        let _ = registrant.response_channel.send(
+            RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+                stream_key: stream_key.clone(),
+                connection_id: connection_id.clone(),
+                response_channel: sender,
+            },
+        );
+
+        let future = wait_for_validation(port, connection_id.clone(), receiver).boxed();
+
+        return Some(future);
     }
 
     // All good to publish
@@ -1024,6 +1251,8 @@ fn handle_connection_request_publish(
             stream_key: stream_key.clone(),
             stream_id,
         });
+
+    return None;
 }
 
 #[instrument(skip(port_map))]
@@ -1071,6 +1300,8 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
     info!("Connection {} disconnected.  Cleaning it up", connection_id);
     match connection.state {
         ConnectionState::None => (),
+        ConnectionState::WaitingForPublishValidation { .. } => (),
+        ConnectionState::WaitingForWatchValidation { .. } => (),
         ConnectionState::Publishing {
             rtmp_app,
             stream_key,
@@ -1150,11 +1381,12 @@ mod internal_futures {
     };
     use crate::endpoints::rtmp_server::actor::connection_handler::ConnectionRequest;
     use crate::endpoints::rtmp_server::{
-        RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
+        RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification, ValidationResponse,
     };
     use crate::net::tcp::TcpSocketResponse;
     use crate::net::ConnectionId;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+    use tokio::sync::oneshot::Receiver;
 
     pub(super) async fn wait_for_endpoint_request(
         mut endpoint_receiver: UnboundedReceiver<RtmpEndpointRequest>,
@@ -1252,6 +1484,23 @@ mod internal_futures {
                 data: message.data,
                 receiver,
             },
+        }
+    }
+
+    pub(super) async fn wait_for_validation(
+        port: u16,
+        connection_id: ConnectionId,
+        receiver: Receiver<ValidationResponse>,
+    ) -> FutureResult {
+        match receiver.await {
+            Ok(response) => {
+                FutureResult::ValidationApprovalResponseReceived(port, connection_id, response)
+            }
+            Err(_) => FutureResult::ValidationApprovalResponseReceived(
+                port,
+                connection_id,
+                ValidationResponse::Reject,
+            ),
         }
     }
 }

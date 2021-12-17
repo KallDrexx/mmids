@@ -21,8 +21,9 @@ const TEST_KEY: &'static str = "test_key";
 async fn can_create_from_filled_out_workflow_definition() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (mock_sender, mut mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step");
 
@@ -60,8 +61,9 @@ async fn can_create_from_filled_out_workflow_definition() {
 async fn asterisk_for_key_sets_key_to_any() {
     let definition = create_definition(TEST_PORT, TEST_APP, "*");
     let (mock_sender, mut mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step}");
 
@@ -101,8 +103,9 @@ async fn port_is_1935_if_none_provided() {
     definition.parameters.remove(PORT_PROPERTY_NAME);
 
     let (mock_sender, mut mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step}");
 
@@ -131,8 +134,9 @@ fn error_if_no_app_provided() {
     definition.parameters.remove(APP_PROPERTY_NAME);
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    RtmpReceiverStepGenerator::new(mock_sender)
+    RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .err()
         .unwrap();
@@ -144,8 +148,9 @@ fn error_if_no_stream_key_provided() {
     definition.parameters.remove(STREAM_KEY_PROPERTY_NAME);
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    RtmpReceiverStepGenerator::new(mock_sender)
+    RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .err()
         .unwrap();
@@ -160,8 +165,9 @@ async fn rtmp_app_is_trimmed() {
     );
 
     let (mock_sender, mut mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step}");
 
@@ -193,8 +199,9 @@ async fn stream_key_is_trimmed() {
     );
 
     let (mock_sender, mut mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step}");
 
@@ -232,8 +239,9 @@ fn new_step_is_in_created_status() {
     );
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (step, _futures) = RtmpReceiverStepGenerator::new(mock_sender)
+    let (step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
@@ -245,8 +253,9 @@ fn new_step_is_in_created_status() {
 fn new_registers_for_publishing() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(sender)
+    let (_step, _futures) = RtmpReceiverStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
@@ -263,6 +272,7 @@ fn new_registers_for_publishing() {
             message_channel: _,
             ip_restrictions: _,
             use_tls: _,
+            requires_registrant_approval: _,
         } => {
             assert_eq!(port, TEST_PORT, "Unexpected port");
             assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
@@ -275,19 +285,6 @@ fn new_registers_for_publishing() {
         }
 
         message => panic!("Unexpected endpoint request received: {:?}", message),
-    };
-}
-
-#[tokio::test]
-async fn init_returns_future_that_is_pending() {
-    let (_step, mut futures, _message_channel) = create_initialized_step();
-
-    assert_eq!(futures.len(), 1, "Unexpected number of futures returned");
-
-    let future = futures.remove(0);
-    match timeout(Duration::from_millis(10), future).await {
-        Ok(_) => panic!("Expected future to be pending, but instead it had a result"),
-        Err(_) => (),
     };
 }
 
@@ -649,8 +646,9 @@ fn create_initialized_step<'a>() -> (
 ) {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (step, init_results) = RtmpReceiverStepGenerator::new(sender)
+    let (step, init_results) = RtmpReceiverStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 

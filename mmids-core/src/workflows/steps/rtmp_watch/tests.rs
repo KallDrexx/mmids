@@ -23,8 +23,9 @@ const TEST_KEY: &'static str = "test_key";
 async fn can_create_from_filled_out_workflow_definition() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpWatchStepGenerator::new(sender)
+    let (_step, _futures) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step");
 
@@ -64,8 +65,9 @@ async fn can_create_from_filled_out_workflow_definition() {
 async fn asterisk_for_key_sets_key_to_any() {
     let definition = create_definition(TEST_PORT, TEST_APP, "*");
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpWatchStepGenerator::new(sender)
+    let (_step, _futures) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step");
 
@@ -107,8 +109,9 @@ async fn port_is_1935_if_none_provided() {
     definition.parameters.remove(PORT_PROPERTY_NAME);
 
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpWatchStepGenerator::new(sender)
+    let (_step, _futures) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step");
 
@@ -139,8 +142,9 @@ fn error_if_no_app_provided() {
     definition.parameters.remove(APP_PROPERTY_NAME);
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    RtmpWatchStepGenerator::new(mock_sender)
+    RtmpWatchStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .err()
         .unwrap();
@@ -152,8 +156,9 @@ fn error_if_no_stream_key_provided() {
     definition.parameters.remove(STREAM_KEY_PROPERTY_NAME);
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    RtmpWatchStepGenerator::new(mock_sender)
+    RtmpWatchStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .err()
         .unwrap();
@@ -168,8 +173,9 @@ async fn rtmp_app_is_trimmed() {
     );
 
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpWatchStepGenerator::new(sender)
+    let (_step, _futures) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step");
 
@@ -203,8 +209,9 @@ async fn stream_key_is_trimmed() {
     );
 
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpWatchStepGenerator::new(sender)
+    let (_step, _futures) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned creating step");
 
@@ -244,8 +251,9 @@ fn new_step_is_in_created_status() {
     );
 
     let (mock_sender, _mock_receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (step, _futures) = RtmpWatchStepGenerator::new(mock_sender)
+    let (step, _futures) = RtmpWatchStepGenerator::new(mock_sender, reactor_sender)
         .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
@@ -257,8 +265,9 @@ fn new_step_is_in_created_status() {
 fn new_requests_registration_for_watchers() {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (_step, _futures) = RtmpWatchStepGenerator::new(sender)
+    let (_step, _futures) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 
@@ -287,19 +296,6 @@ fn new_requests_registration_for_watchers() {
         }
 
         message => panic!("Unexpected endpoint request received: {:?}", message),
-    };
-}
-
-#[tokio::test]
-async fn initialized_step_returns_pending_future() {
-    let (_step, mut futures, _media, _notification) = create_initialized_step();
-
-    assert_eq!(futures.len(), 1, "Unexpected number of futures returned");
-
-    let future = futures.remove(0);
-    match timeout(Duration::from_millis(10), future).await {
-        Ok(_) => panic!("Expected future to be pending, but instead it had a result"),
-        Err(_) => (),
     };
 }
 
@@ -729,8 +725,9 @@ fn create_initialized_step<'a>() -> (
 ) {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
     let (sender, mut receiver) = unbounded_channel();
+    let (reactor_sender, _reactor_receiver) = unbounded_channel();
 
-    let (step, init_results) = RtmpWatchStepGenerator::new(sender)
+    let (step, init_results) = RtmpWatchStepGenerator::new(sender, reactor_sender)
         .generate(definition)
         .expect("Error returned when creating rtmp receive step");
 

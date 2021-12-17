@@ -119,6 +119,7 @@ impl StepGenerator for FfmpegPullStepGenerator {
                 message_channel: sender,
                 ip_restrictions: IpRestriction::None,
                 use_tls: false,
+                requires_registrant_approval: false,
             });
 
         let futures = vec![
@@ -314,6 +315,11 @@ impl FfmpegPullStep {
                     self.stop_ffmpeg();
                     self.status = StepStatus::Error;
                 }
+            }
+
+            RtmpEndpointPublisherMessage::PublisherRequiringApproval { .. } => {
+                error!("Publisher approval requested but publishers should be auto-approved");
+                self.status = StepStatus::Error;
             }
         }
     }

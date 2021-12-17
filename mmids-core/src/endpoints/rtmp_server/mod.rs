@@ -26,6 +26,7 @@ use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot::Sender;
 
 /// Starts a new RTMP server endpoint, returning a channel that can be used to send notifications
 /// and requests to it.
@@ -103,6 +104,11 @@ pub enum RtmpEndpointRequest {
 
         /// If true, this port should be on a TLS socket (i.e. RTMPS)
         use_tls: bool,
+
+        /// If true, then publishers will not be automatically accepted even if they connect to
+        /// the correct app/stream key combination and pass ip restrictions. Instead the registrant
+        /// should be asked for final verification if the publisher should be allowed or not.
+        requires_registrant_approval: bool,
     },
 
     /// Requests the RTMP server to allow clients to receive video on the given port, app,
@@ -128,6 +134,11 @@ pub enum RtmpEndpointRequest {
 
         /// If true, this port should be on a TLS socket (i.e. RTMPS)
         use_tls: bool,
+
+        /// If true, then watchers will not be automatically accepted even if they connect to
+        /// the correct app/stream key combination and pass ip restrictions. Instead the registrant
+        /// should be asked for final verification if the watcher should be allowed or not.
+        requires_registrant_approval: bool,
     },
 
     /// Requests the specified registration should be removed
@@ -146,6 +157,13 @@ pub enum RtmpEndpointRequest {
     },
 }
 
+/// Response to approval/validation requests
+#[derive(Debug)]
+pub enum ValidationResponse {
+    Approve,
+    Reject,
+}
+
 /// Messages the rtmp server endpoint will send to publisher registrants.
 #[derive(Debug)]
 pub enum RtmpEndpointPublisherMessage {
@@ -155,6 +173,19 @@ pub enum RtmpEndpointPublisherMessage {
 
     /// Notification that the publisher registration succeeded.
     PublisherRegistrationSuccessful,
+
+    /// Notification that a new RTMP connection has been made and they have requested to be a
+    /// publisher on a stream key, but they require validation before being approved.
+    PublisherRequiringApproval {
+        /// Unique identifier for the TCP connection that's requesting to be a publisher
+        connection_id: ConnectionId,
+
+        /// The stream key that the connection is requesting to be a publisher to
+        stream_key: String,
+
+        /// Channel to send the approval or rejection response to
+        response_channel: Sender<ValidationResponse>,
+    },
 
     /// Notification that a new RTMP connection has been made and is publishing media
     NewPublisherConnected {
@@ -211,6 +242,19 @@ pub enum RtmpEndpointWatcherNotification {
 
     /// The request to register for watchers was successful
     WatcherRegistrationSuccessful,
+
+    /// Notification that a new RTMP connection has been made and they have requested to be a
+    /// watcher on a stream key, but they require validation before being approved.
+    WatcherRequiringApproval {
+        /// Unique identifier for the TCP connection that's requesting to be a watcher
+        connection_id: ConnectionId,
+
+        /// The stream key that the connection is requesting to be a watcher of
+        stream_key: String,
+
+        /// Channel to send the approval or rejection response to
+        response_channel: Sender<ValidationResponse>,
+    },
 
     /// Notifies the registrant that at least one watcher is now watching on a particular
     /// stream key,

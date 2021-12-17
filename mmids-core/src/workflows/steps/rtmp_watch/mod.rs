@@ -18,8 +18,10 @@ mod tests;
 use crate::endpoints::rtmp_server::{
     IpRestriction, RegistrationType, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
     RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration,
+    ValidationResponse,
 };
 use crate::net::{IpAddress, IpAddressParseError};
+use crate::reactors::manager::ReactorManagerRequest;
 use crate::utils::hash_map_to_stream_metadata;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::factory::StepGenerator;
@@ -33,6 +35,7 @@ use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot::{channel, Receiver, Sender};
 use tracing::{error, info, warn};
 
 pub const PORT_PROPERTY_NAME: &'static str = "port";
@@ -41,10 +44,12 @@ pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
 pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
 pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
 pub const RTMPS_FLAG: &'static str = "rtmps";
+pub const REACTOR_NAME: &'static str = "reactor";
 
 /// Generates new rtmp watch workflow step instances based on a given step definition.
 pub struct RtmpWatchStepGenerator {
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
+    reactor_manager: UnboundedSender<ReactorManagerRequest>,
 }
 
 struct RtmpWatchStep {
@@ -52,8 +57,10 @@ struct RtmpWatchStep {
     port: u16,
     rtmp_app: String,
     stream_key: StreamKeyRegistration,
+    reactor_name: Option<String>,
     status: StepStatus,
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
+    reactor_manager: UnboundedSender<ReactorManagerRequest>,
     media_channel: UnboundedSender<RtmpEndpointMediaMessage>,
     stream_id_to_name_map: HashMap<StreamId, String>,
 }
@@ -61,11 +68,17 @@ struct RtmpWatchStep {
 impl StepFutureResult for RtmpWatchStepFutureResult {}
 
 enum RtmpWatchStepFutureResult {
+    RtmpEndpointGone,
+    ReactorManagerGone,
     RtmpWatchNotificationReceived(
         RtmpEndpointWatcherNotification,
         UnboundedReceiver<RtmpEndpointWatcherNotification>,
     ),
-    RtmpEndpointGone,
+
+    ReactorWorkflowResponse {
+        workflow_name: Option<String>,
+        validation_channel: Sender<ValidationResponse>,
+    },
 }
 
 #[derive(ThisError, Debug)]
@@ -99,9 +112,13 @@ enum StepStartupError {
 }
 
 impl RtmpWatchStepGenerator {
-    pub fn new(rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>) -> Self {
+    pub fn new(
+        rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
+        reactor_manager: UnboundedSender<ReactorManagerRequest>,
+    ) -> Self {
         RtmpWatchStepGenerator {
             rtmp_endpoint_sender,
+            reactor_manager,
         }
     }
 }
@@ -169,6 +186,11 @@ impl StepGenerator for RtmpWatchStepGenerator {
             (false, false) => IpRestriction::None,
         };
 
+        let reactor_name = match definition.parameters.get(REACTOR_NAME) {
+            Some(Some(value)) => Some(value.clone()),
+            _ => None,
+        };
+
         let (media_sender, media_receiver) = unbounded_channel();
 
         let step = RtmpWatchStep {
@@ -177,9 +199,11 @@ impl StepGenerator for RtmpWatchStepGenerator {
             port,
             rtmp_app: app.to_string(),
             rtmp_endpoint_sender: self.rtmp_endpoint_sender.clone(),
+            reactor_manager: self.reactor_manager.clone(),
             media_channel: media_sender,
             stream_key,
             stream_id_to_name_map: HashMap::new(),
+            reactor_name,
         };
 
         let (notification_sender, notification_receiver) = unbounded_channel();
@@ -193,17 +217,25 @@ impl StepGenerator for RtmpWatchStepGenerator {
                 notification_channel: notification_sender,
                 ip_restrictions: ip_restriction,
                 use_tls: use_rtmps,
+                requires_registrant_approval: step.reactor_name.is_some(),
             });
 
         Ok((
             Box::new(step),
-            vec![wait_for_endpoint_notification(notification_receiver).boxed()],
+            vec![
+                wait_for_endpoint_notification(notification_receiver).boxed(),
+                notify_on_reactor_manager_close(self.reactor_manager.clone()).boxed(),
+            ],
         ))
     }
 }
 
 impl RtmpWatchStep {
-    fn handle_endpoint_notification(&mut self, notification: RtmpEndpointWatcherNotification) {
+    fn handle_endpoint_notification(
+        &mut self,
+        notification: RtmpEndpointWatcherNotification,
+        outputs: &mut StepOutputs,
+    ) {
         match notification {
             RtmpEndpointWatcherNotification::WatcherRegistrationFailed => {
                 error!("Registration for RTMP watchers was denied");
@@ -227,6 +259,36 @@ impl RtmpWatchStep {
                     stream_key = %stream_key,
                     "All watchers left stream key '{}'", stream_key
                 );
+            }
+
+            RtmpEndpointWatcherNotification::WatcherRequiringApproval {
+                connection_id,
+                stream_key,
+                response_channel,
+            } => {
+                if let Some(reactor) = &self.reactor_name {
+                    let (sender, receiver) = channel();
+                    let _ = self.reactor_manager.send(
+                        ReactorManagerRequest::CreateWorkflowForStreamName {
+                            reactor_name: reactor.clone(),
+                            stream_name: stream_key,
+                            response_channel: sender,
+                        },
+                    );
+
+                    outputs
+                        .futures
+                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
+                } else {
+                    error!(
+                        connection_id = %connection_id,
+                        stream_key = %stream_key,
+                        "Watcher requires approval for stream key {} but no reactor name was set",
+                        stream_key
+                    );
+
+                    let _ = response_channel.send(ValidationResponse::Reject);
+                }
             }
         }
     }
@@ -397,6 +459,13 @@ impl WorkflowStep for RtmpWatchStep {
                     return;
                 }
 
+                RtmpWatchStepFutureResult::ReactorManagerGone => {
+                    error!("Reactor manager gone");
+                    self.status = StepStatus::Error;
+
+                    return;
+                }
+
                 RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(
                     notification,
                     receiver,
@@ -405,7 +474,18 @@ impl WorkflowStep for RtmpWatchStep {
                         .futures
                         .push(wait_for_endpoint_notification(receiver).boxed());
 
-                    self.handle_endpoint_notification(notification);
+                    self.handle_endpoint_notification(notification, outputs);
+                }
+
+                RtmpWatchStepFutureResult::ReactorWorkflowResponse {
+                    workflow_name,
+                    validation_channel,
+                } => {
+                    if workflow_name.is_some() {
+                        let _ = validation_channel.send(ValidationResponse::Approve);
+                    } else {
+                        let _ = validation_channel.send(ValidationResponse::Reject);
+                    }
                 }
             }
         }
@@ -439,4 +519,28 @@ async fn wait_for_endpoint_notification(
     };
 
     Box::new(future_result)
+}
+
+async fn wait_for_reactor_response(
+    receiver: Receiver<Option<String>>,
+    response_channel: Sender<ValidationResponse>,
+) -> Box<dyn StepFutureResult> {
+    let result = match receiver.await {
+        Ok(result) => result,
+        Err(_) => None, // Treat the channel being closed as no workflow
+    };
+
+    let result = RtmpWatchStepFutureResult::ReactorWorkflowResponse {
+        workflow_name: result,
+        validation_channel: response_channel,
+    };
+
+    Box::new(result)
+}
+
+async fn notify_on_reactor_manager_close(
+    sender: UnboundedSender<ReactorManagerRequest>,
+) -> Box<dyn StepFutureResult> {
+    sender.closed().await;
+    Box::new(RtmpWatchStepFutureResult::ReactorManagerGone)
 }

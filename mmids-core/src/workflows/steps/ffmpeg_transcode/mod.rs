@@ -489,6 +489,7 @@ impl FfmpegTranscoder {
                                 media_channel: media_receiver,
                                 ip_restrictions: IpRestriction::None,
                                 use_tls: false,
+                                requires_registrant_approval: false,
                             });
 
                     outputs.futures.push(
@@ -534,6 +535,7 @@ impl FfmpegTranscoder {
                                 message_channel: sender,
                                 ip_restrictions: IpRestriction::None,
                                 use_tls: false,
+                                requires_registrant_approval: false,
                             });
 
                     outputs
@@ -680,6 +682,11 @@ impl FfmpegTranscoder {
 
                 RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key: _ } => (),
                 RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key: _ } => (),
+
+                RtmpEndpointWatcherNotification::WatcherRequiringApproval { .. } => {
+                    error!("Watcher requires approval but all watchers should be auto-approved");
+                    self.status = StepStatus::Error;
+                }
             }
         }
 
@@ -764,6 +771,11 @@ impl FfmpegTranscoder {
                         data,
                     },
                 }),
+
+                RtmpEndpointPublisherMessage::PublisherRequiringApproval { .. } => {
+                    error!("Publisher approval requested but publishers should be auto-approved");
+                    self.status = StepStatus::Error;
+                }
             }
         }
 

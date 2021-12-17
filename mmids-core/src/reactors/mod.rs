@@ -15,6 +15,7 @@ use std::collections::HashMap;
 pub use reactor::{start_reactor, ReactorRequest};
 
 /// How reactors are defined
+#[derive(Clone)]
 pub struct ReactorDefinition {
     /// The name of the reactor. Used by endpoints and workflow steps to identify which workflow
     /// they want to interact with.

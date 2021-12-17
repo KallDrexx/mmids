@@ -27,6 +27,7 @@ pub async fn main() {
         stream_id: None,
         ip_restrictions: IpRestriction::None,
         use_tls: false,
+        requires_registrant_approval: false,
     });
 
     info!("Requesting to listen for publish requests on port 1935 and app 'live'");
@@ -57,6 +58,7 @@ pub async fn main() {
         notification_channel: notification_sender,
         ip_restrictions: IpRestriction::None,
         use_tls: false,
+        requires_registrant_approval: false,
     });
 
     info!("Requesting to listening for play requests on port 1935 and app 'live'");

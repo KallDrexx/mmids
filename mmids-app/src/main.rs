@@ -9,6 +9,11 @@ use mmids_core::http_api::handlers;
 use mmids_core::http_api::routing::{PathPart, Route, RoutingTable};
 use mmids_core::http_api::HttpApiShutdownSignal;
 use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
+use mmids_core::reactors::executors::simple_http_executor::SimpleHttpExecutorGenerator;
+use mmids_core::reactors::executors::ReactorExecutorFactory;
+use mmids_core::reactors::manager::{
+    start_reactor_manager, CreateReactorResult, ReactorManagerRequest,
+};
 use mmids_core::workflows::definitions::WorkflowStepType;
 use mmids_core::workflows::manager::{
     start_workflow_manager, WorkflowManagerRequest, WorkflowManagerRequestOperation,
@@ -27,7 +32,7 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::oneshot::Sender;
+use tokio::sync::oneshot::{channel, Sender};
 use tracing::{info, warn};
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
@@ -52,7 +57,8 @@ pub async fn main() {
     let tls_options = load_tls_options(&config).await;
     let endpoints = start_endpoints(&config, tls_options, log_dir);
     let (pub_sender, sub_sender) = start_event_hub();
-    let step_factory = register_steps(endpoints, sub_sender);
+    let reactor_manager = start_reactor(&config, sub_sender.clone()).await;
+    let step_factory = register_steps(endpoints, sub_sender, reactor_manager);
     let manager = start_workflows(&config, step_factory, pub_sender);
     let http_api_shutdown = start_http_api(&config, manager);
 
@@ -94,20 +100,27 @@ fn get_log_directory(config: &MmidsConfig) -> String {
 fn register_steps(
     endpoints: Endpoints,
     subscription_sender: UnboundedSender<SubscriptionRequest>,
+    reactor_manager: UnboundedSender<ReactorManagerRequest>,
 ) -> Arc<WorkflowStepFactory> {
     info!("Starting workflow step factory, and adding known step types to it");
     let mut step_factory = WorkflowStepFactory::new();
     step_factory
         .register(
             WorkflowStepType(RTMP_RECEIVE.to_string()),
-            Box::new(RtmpReceiverStepGenerator::new(endpoints.rtmp.clone())),
+            Box::new(RtmpReceiverStepGenerator::new(
+                endpoints.rtmp.clone(),
+                reactor_manager.clone(),
+            )),
         )
         .expect("Failed to register rtmp_receive step");
 
     step_factory
         .register(
             WorkflowStepType(RTMP_WATCH.to_string()),
-            Box::new(RtmpWatchStepGenerator::new(endpoints.rtmp.clone())),
+            Box::new(RtmpWatchStepGenerator::new(
+                endpoints.rtmp.clone(),
+                reactor_manager.clone(),
+            )),
         )
         .expect("Failed to register rtmp_watch step");
 
@@ -154,7 +167,10 @@ fn register_steps(
     step_factory
         .register(
             WorkflowStepType(FORWARD_STEP.to_string()),
-            Box::new(WorkflowForwarderStepGenerator::new(subscription_sender)),
+            Box::new(WorkflowForwarderStepGenerator::new(
+                subscription_sender,
+                reactor_manager,
+            )),
         )
         .expect("Failed to register forward_to_workflow step");
 
@@ -331,4 +347,34 @@ fn start_http_api(
 
     let addr = ([127, 0, 0, 1], port).into();
     Some(mmids_core::http_api::start_http_api(addr, routes))
+}
+
+async fn start_reactor(
+    config: &MmidsConfig,
+    event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
+) -> UnboundedSender<ReactorManagerRequest> {
+    let mut factory = ReactorExecutorFactory::new();
+    factory
+        .register(
+            "simple_http".to_string(),
+            Box::new(SimpleHttpExecutorGenerator {}),
+        )
+        .expect("Failed to add simple_http reactor executor");
+
+    let reactor_manager = start_reactor_manager(factory, event_hub_subscriber.clone());
+    for (name, definition) in &config.reactors {
+        let (sender, receiver) = channel();
+        let _ = reactor_manager.send(ReactorManagerRequest::CreateReactor {
+            definition: definition.clone(),
+            response_channel: sender,
+        });
+
+        match receiver.await {
+            Ok(CreateReactorResult::Success) => (),
+            Ok(error) => panic!("Failed to start reactor {}: {:?}", name, error),
+            Err(_) => panic!("Reactor manager closed unexpectedly"),
+        }
+    }
+
+    reactor_manager
 }

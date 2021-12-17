@@ -37,6 +37,7 @@ pub enum ReactorManagerRequest {
     },
 }
 
+#[derive(Debug)]
 pub enum CreateReactorResult {
     Success,
     DuplicateReactorName,
