@@ -1,6 +1,7 @@
 //! The reactor manager creates new reactors and allows relaying requests to the correct reactor
 //! based on names.
 
+use crate::event_hub::SubscriptionRequest;
 use crate::reactors::executors::simple_http_executor::SimpleHttpExecutorGenerator;
 use crate::reactors::executors::{
     GenerationError, ReactorExecutorFactory, ReactorExecutorGenerator,
@@ -45,9 +46,10 @@ pub enum CreateReactorResult {
 
 pub fn start_reactor_manager(
     executor_factory: ReactorExecutorFactory,
+    event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
 ) -> UnboundedSender<ReactorManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(executor_factory, receiver);
+    let actor = Actor::new(executor_factory, receiver, event_hub_subscriber);
     tokio::spawn(actor.run());
 
     sender
@@ -63,6 +65,7 @@ enum FutureResult {
 
 struct Actor {
     executor_factory: ReactorExecutorFactory,
+    event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     reactors: HashMap<String, UnboundedSender<ReactorRequest>>,
 }
@@ -73,12 +76,14 @@ impl Actor {
     fn new(
         executor_factory: ReactorExecutorFactory,
         receiver: UnboundedReceiver<ReactorManagerRequest>,
+        event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
     ) -> Self {
         let futures = FuturesUnordered::new();
         futures.push(wait_for_request(receiver).boxed());
 
         Actor {
             executor_factory,
+            event_hub_subscriber,
             futures,
             reactors: HashMap::new(),
         }
@@ -152,7 +157,12 @@ impl Actor {
                     }
                 };
 
-                let reactor = start_reactor(definition.name.clone(), executor);
+                let reactor = start_reactor(
+                    definition.name.clone(),
+                    executor,
+                    self.event_hub_subscriber.clone(),
+                );
+
                 self.reactors.insert(definition.name, reactor);
 
                 let _ = response_channel.send(CreateReactorResult::Success);

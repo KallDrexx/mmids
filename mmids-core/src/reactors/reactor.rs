@@ -1,5 +1,7 @@
+use crate::event_hub::{SubscriptionRequest, WorkflowManagerEvent};
 use crate::reactors::executors::ReactorExecutor;
 use crate::workflows::definitions::WorkflowDefinition;
+use crate::workflows::manager::WorkflowManagerRequest;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -25,9 +27,10 @@ pub enum ReactorRequest {
 pub fn start_reactor(
     name: String,
     executor: Box<dyn ReactorExecutor>,
+    event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
 ) -> UnboundedSender<ReactorRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(name, receiver, executor);
+    let actor = Actor::new(name, receiver, executor, event_hub_subscriber);
     tokio::spawn(actor.run());
 
     sender
@@ -35,8 +38,14 @@ pub fn start_reactor(
 
 enum FutureResult {
     AllRequestConsumersGone,
+    EventHubGone,
+    WorkflowManagerGone,
     RequestReceived(ReactorRequest, UnboundedReceiver<ReactorRequest>),
     ExecutorResponseReceived(String, Option<WorkflowDefinition>),
+    WorkflowManagerEventReceived(
+        WorkflowManagerEvent,
+        UnboundedReceiver<WorkflowManagerEvent>,
+    ),
 }
 
 struct Actor {
@@ -44,6 +53,7 @@ struct Actor {
     executor: Box<dyn ReactorExecutor>,
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     active_requests: HashMap<String, Sender<Option<String>>>,
+    workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
 }
 
 unsafe impl Send for Actor {}
@@ -53,15 +63,24 @@ impl Actor {
         name: String,
         receiver: UnboundedReceiver<ReactorRequest>,
         executor: Box<dyn ReactorExecutor>,
+        event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
     ) -> Self {
         let futures = FuturesUnordered::new();
         futures.push(wait_for_request(receiver).boxed());
+
+        let (manager_sender, manager_receiver) = unbounded_channel();
+        let _ = event_hub_subscriber.send(SubscriptionRequest::WorkflowManagerEvents {
+            channel: manager_sender,
+        });
+
+        futures.push(wait_for_workflow_manager_event(manager_receiver).boxed());
 
         Actor {
             name,
             executor,
             futures,
             active_requests: HashMap::new(),
+            workflow_manager: None,
         }
     }
 
@@ -76,6 +95,16 @@ impl Actor {
                     break;
                 }
 
+                FutureResult::EventHubGone => {
+                    info!("Event manager gone");
+                    break;
+                }
+
+                FutureResult::WorkflowManagerGone => {
+                    info!("Workflow manager gone");
+                    break;
+                }
+
                 FutureResult::RequestReceived(request, receiver) => {
                     self.futures.push(wait_for_request(receiver).boxed());
                     self.handle_request(request);
@@ -83,6 +112,12 @@ impl Actor {
 
                 FutureResult::ExecutorResponseReceived(stream_name, workflow) => {
                     self.handle_executor_response(stream_name, workflow);
+                }
+
+                FutureResult::WorkflowManagerEventReceived(event, receiver) => {
+                    self.futures
+                        .push(wait_for_workflow_manager_event(receiver).boxed());
+                    self.handle_workflow_manager_event(event);
                 }
             }
         }
@@ -146,6 +181,17 @@ impl Actor {
             let _ = channel.send(None);
         }
     }
+
+    fn handle_workflow_manager_event(&mut self, event: WorkflowManagerEvent) {
+        match event {
+            WorkflowManagerEvent::WorkflowManagerRegistered { channel } => {
+                info!("Reactor received a workflow manager channel");
+                self.futures
+                    .push(notify_workflow_manager_gone(channel.clone()).boxed());
+                self.workflow_manager = Some(channel);
+            }
+        }
+    }
 }
 
 async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorRequest>) -> FutureResult {
@@ -161,4 +207,20 @@ async fn wait_for_executor_response(
 ) -> FutureResult {
     let result = future.await;
     FutureResult::ExecutorResponseReceived(stream_name, result)
+}
+
+async fn wait_for_workflow_manager_event(
+    mut receiver: UnboundedReceiver<WorkflowManagerEvent>,
+) -> FutureResult {
+    match receiver.recv().await {
+        Some(event) => FutureResult::WorkflowManagerEventReceived(event, receiver),
+        None => FutureResult::EventHubGone,
+    }
+}
+
+async fn notify_workflow_manager_gone(
+    sender: UnboundedSender<WorkflowManagerRequest>,
+) -> FutureResult {
+    sender.closed().await;
+    FutureResult::WorkflowManagerGone
 }

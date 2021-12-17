@@ -2,7 +2,7 @@
 //! used to start new workflows, change the steps of a managed workflow, get status the of managed
 //! workflows, and stop a managed workflow.
 
-use crate::event_hub::{PublishEventRequest, WorkflowStartedOrStoppedEvent};
+use crate::event_hub::{PublishEventRequest, WorkflowManagerEvent, WorkflowStartedOrStoppedEvent};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::runner::{WorkflowRequestOperation, WorkflowState};
 use crate::workflows::steps::factory::WorkflowStepFactory;
@@ -55,7 +55,7 @@ pub fn start_workflow_manager(
 ) -> UnboundedSender<WorkflowManagerRequest> {
     let (sender, receiver) = unbounded_channel();
     let actor = Actor::new(step_factory, event_hub_publisher);
-    tokio::spawn(actor.run(receiver));
+    tokio::spawn(actor.run(receiver, sender.clone()));
 
     sender
 }
@@ -91,7 +91,11 @@ impl Actor {
     }
 
     #[instrument(name = "Workflow Manager Execution", skip(self, request_receiver))]
-    async fn run(mut self, request_receiver: UnboundedReceiver<WorkflowManagerRequest>) {
+    async fn run(
+        mut self,
+        request_receiver: UnboundedReceiver<WorkflowManagerRequest>,
+        request_sender: UnboundedSender<WorkflowManagerRequest>,
+    ) {
         self.futures
             .push(wait_for_request(request_receiver).boxed());
 
@@ -99,6 +103,14 @@ impl Actor {
             .push(notify_when_event_hub_is_gone(self.event_hub_publisher.clone()).boxed());
 
         info!("Starting workflow manager");
+        let _ = self
+            .event_hub_publisher
+            .send(PublishEventRequest::WorkflowManagerEvent(
+                WorkflowManagerEvent::WorkflowManagerRegistered {
+                    channel: request_sender,
+                },
+            ));
+
         while let Some(result) = self.futures.next().await {
             match result {
                 FutureResult::AllConsumersGone => {

@@ -1,6 +1,7 @@
 //! The event hub is a central actor that receives events from all type of mmids subsystems and
 //! allows them to be published to interested subscribers.
 
+use crate::workflows::manager::WorkflowManagerRequest;
 use crate::workflows::WorkflowRequest;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -13,12 +14,17 @@ use tracing::{info, instrument, warn};
 /// A request to publish a notification to the event hub
 pub enum PublishEventRequest {
     WorkflowStartedOrStopped(WorkflowStartedOrStoppedEvent),
+    WorkflowManagerEvent(WorkflowManagerEvent),
 }
 
 /// A request to subscribe to a category of events
 pub enum SubscriptionRequest {
     WorkflowStartedOrStopped {
         channel: UnboundedSender<WorkflowStartedOrStoppedEvent>,
+    },
+
+    WorkflowManagerEvents {
+        channel: UnboundedSender<WorkflowManagerEvent>,
     },
 }
 
@@ -35,6 +41,14 @@ pub enum WorkflowStartedOrStoppedEvent {
     },
 }
 
+// Events relating to workflow managers
+#[derive(Clone)]
+pub enum WorkflowManagerEvent {
+    WorkflowManagerRegistered {
+        channel: UnboundedSender<WorkflowManagerRequest>,
+    },
+}
+
 pub fn start_event_hub() -> (
     UnboundedSender<PublishEventRequest>,
     UnboundedSender<SubscriptionRequest>,
@@ -47,26 +61,24 @@ pub fn start_event_hub() -> (
     (publish_sender, sub_sender)
 }
 
-struct WorkflowStartStopSubscriber {
-    id: usize,
-    channel: UnboundedSender<WorkflowStartedOrStoppedEvent>,
-}
-
 enum FutureResult {
     AllPublishConsumersGone,
     AllSubscriptionRequestConsumersGone,
     NewPublishRequest(PublishEventRequest, UnboundedReceiver<PublishEventRequest>),
     NewSubscriptionRequest(SubscriptionRequest, UnboundedReceiver<SubscriptionRequest>),
     WorkflowStartStopSubscriberGone(usize),
+    WorkflowManagerSubscriberGone(usize),
 }
 
 struct Actor {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     next_subscriber_id: Wrapping<usize>,
     active_subscriber_ids: HashSet<usize>,
-    workflow_start_stop_subscribers: Vec<WorkflowStartStopSubscriber>,
+    workflow_start_stop_subscribers: HashMap<usize, UnboundedSender<WorkflowStartedOrStoppedEvent>>,
+    workflow_manager_subscribers: HashMap<usize, UnboundedSender<WorkflowManagerEvent>>,
     new_subscribers_can_join: bool,
     active_workflows: HashMap<String, UnboundedSender<WorkflowRequest>>,
+    active_workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
 }
 
 impl Actor {
@@ -82,9 +94,11 @@ impl Actor {
             futures,
             next_subscriber_id: Wrapping(0),
             active_subscriber_ids: HashSet::new(),
-            workflow_start_stop_subscribers: Vec::new(),
+            workflow_start_stop_subscribers: HashMap::new(),
+            workflow_manager_subscribers: HashMap::new(),
             new_subscribers_can_join: true,
             active_workflows: HashMap::new(),
+            active_workflow_manager: None,
         }
     }
 
@@ -110,12 +124,12 @@ impl Actor {
 
                 FutureResult::WorkflowStartStopSubscriberGone(id) => {
                     self.active_subscriber_ids.remove(&id);
-                    for index in 0..self.workflow_start_stop_subscribers.len() {
-                        if self.workflow_start_stop_subscribers[index].id == id {
-                            self.workflow_start_stop_subscribers.remove(index);
-                            break;
-                        }
-                    }
+                    self.workflow_start_stop_subscribers.remove(&id);
+                }
+
+                FutureResult::WorkflowManagerSubscriberGone(id) => {
+                    self.active_subscriber_ids.remove(&id);
+                    self.workflow_manager_subscribers.remove(&id);
                 }
 
                 FutureResult::NewPublishRequest(request, receiver) => {
@@ -143,8 +157,8 @@ impl Actor {
     fn handle_publish_request(&mut self, request: PublishEventRequest) {
         match request {
             PublishEventRequest::WorkflowStartedOrStopped(event) => {
-                for subscriber in &self.workflow_start_stop_subscribers {
-                    let _ = subscriber.channel.send(event.clone());
+                for subscriber in self.workflow_start_stop_subscribers.values() {
+                    let _ = subscriber.send(event.clone());
                 }
 
                 // We want to maintain a list of active workflows, so if a subscriber joins after
@@ -156,6 +170,18 @@ impl Actor {
 
                     WorkflowStartedOrStoppedEvent::WorkflowEnded { name } => {
                         self.active_workflows.remove(&name);
+                    }
+                }
+            }
+
+            PublishEventRequest::WorkflowManagerEvent(event) => {
+                for subscriber in self.workflow_manager_subscribers.values() {
+                    let _ = subscriber.send(event.clone());
+                }
+
+                match event {
+                    WorkflowManagerEvent::WorkflowManagerRegistered { channel } => {
+                        self.active_workflow_manager = Some(channel);
                     }
                 }
             }
@@ -186,13 +212,22 @@ impl Actor {
                 }
 
                 self.workflow_start_stop_subscribers
-                    .push(WorkflowStartStopSubscriber {
-                        id: id.0,
-                        channel: channel.clone(),
-                    });
-
+                    .insert(id.0, channel.clone());
                 self.futures
                     .push(notify_workflow_start_stop_subscriber_gone(id.0, channel).boxed());
+            }
+
+            SubscriptionRequest::WorkflowManagerEvents { channel } => {
+                if let Some(sender) = &self.active_workflow_manager {
+                    let _ = channel.send(WorkflowManagerEvent::WorkflowManagerRegistered {
+                        channel: sender.clone(),
+                    });
+                }
+
+                self.workflow_manager_subscribers
+                    .insert(id.0, channel.clone());
+                self.futures
+                    .push(notify_workflow_manager_subscriber_gone(id.0, channel).boxed());
             }
         }
     }
@@ -226,4 +261,12 @@ async fn notify_workflow_start_stop_subscriber_gone(
 ) -> FutureResult {
     sender.closed().await;
     FutureResult::WorkflowStartStopSubscriberGone(id)
+}
+
+async fn notify_workflow_manager_subscriber_gone(
+    id: usize,
+    sender: UnboundedSender<WorkflowManagerEvent>,
+) -> FutureResult {
+    sender.closed().await;
+    FutureResult::WorkflowManagerSubscriberGone(id)
 }
