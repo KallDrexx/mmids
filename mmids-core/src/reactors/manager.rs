@@ -23,8 +23,8 @@ pub enum ReactorManagerRequest {
         response_channel: Sender<CreateReactorResult>,
     },
 
-    /// Requests that a workflow name is retrieved for a specific stream name
-    GetWorkflowForStreamName {
+    /// Requests that the specified reactor start a workflow based on the specified stream name
+    CreateWorkflowForStreamName {
         /// The name of the reactor to send this request to
         reactor_name: String,
 
@@ -32,7 +32,7 @@ pub enum ReactorManagerRequest {
         stream_name: String,
 
         /// The channel in which to send the response to. The response will contain the name of
-        /// the workflow the stream is associated with, if one is found.
+        /// the workflow the stream is associated with, if one was found.
         response_channel: Sender<Option<String>>,
     },
 }
@@ -168,7 +168,7 @@ impl Actor {
                 let _ = response_channel.send(CreateReactorResult::Success);
             }
 
-            ReactorManagerRequest::GetWorkflowForStreamName {
+            ReactorManagerRequest::CreateWorkflowForStreamName {
                 reactor_name,
                 stream_name,
                 response_channel,
@@ -187,7 +187,7 @@ impl Actor {
                     }
                 };
 
-                let _ = reactor.send(ReactorRequest::GetWorkflowNameForStream {
+                let _ = reactor.send(ReactorRequest::CreateWorkflowNameForStream {
                     stream_name,
                     response_channel,
                 });

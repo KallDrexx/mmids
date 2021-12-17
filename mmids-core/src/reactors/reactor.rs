@@ -1,7 +1,7 @@
 use crate::event_hub::{SubscriptionRequest, WorkflowManagerEvent};
 use crate::reactors::executors::ReactorExecutor;
 use crate::workflows::definitions::WorkflowDefinition;
-use crate::workflows::manager::WorkflowManagerRequest;
+use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -12,8 +12,8 @@ use tracing::{error, info, instrument};
 
 /// Requests that can be made to a reactor
 pub enum ReactorRequest {
-    /// Requests that the reactor gets the name of the workflow for a stream name
-    GetWorkflowNameForStream {
+    /// Requests that the reactor creates and manages a workflow for the specified stream name
+    CreateWorkflowNameForStream {
         /// Name of the stream to get a workflow for
         stream_name: String,
 
@@ -54,6 +54,7 @@ struct Actor {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     active_requests: HashMap<String, Sender<Option<String>>>,
     workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
+    cached_workflows: HashMap<String, WorkflowDefinition>,
 }
 
 unsafe impl Send for Actor {}
@@ -81,6 +82,7 @@ impl Actor {
             futures,
             active_requests: HashMap::new(),
             workflow_manager: None,
+            cached_workflows: HashMap::new(),
         }
     }
 
@@ -117,6 +119,7 @@ impl Actor {
                 FutureResult::WorkflowManagerEventReceived(event, receiver) => {
                     self.futures
                         .push(wait_for_workflow_manager_event(receiver).boxed());
+
                     self.handle_workflow_manager_event(event);
                 }
             }
@@ -127,7 +130,7 @@ impl Actor {
 
     fn handle_request(&mut self, request: ReactorRequest) {
         match request {
-            ReactorRequest::GetWorkflowNameForStream {
+            ReactorRequest::CreateWorkflowNameForStream {
                 stream_name,
                 response_channel,
             } => {
@@ -138,6 +141,7 @@ impl Actor {
 
                 self.active_requests
                     .insert(stream_name.clone(), response_channel);
+
                 let future = self.executor.get_workflow(stream_name.clone());
                 self.futures
                     .push(wait_for_executor_response(stream_name, future).boxed());
@@ -171,7 +175,20 @@ impl Actor {
                 workflow.name, stream_name,
             );
 
-            let _ = channel.send(Some(workflow.name));
+            let workflow_name = workflow.name.clone();
+            self.cached_workflows
+                .insert(stream_name.clone(), workflow.clone());
+
+            if let Some(manager) = &self.workflow_manager {
+                let _ = manager.send(WorkflowManagerRequest {
+                    request_id: format!("reactor_{}_stream_{}", self.name, stream_name),
+                    operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                        definition: workflow,
+                    },
+                });
+            }
+
+            let _ = channel.send(Some(workflow_name));
         } else {
             info!(
                 stream_name = %stream_name,
@@ -188,6 +205,17 @@ impl Actor {
                 info!("Reactor received a workflow manager channel");
                 self.futures
                     .push(notify_workflow_manager_gone(channel.clone()).boxed());
+
+                // Upsert all cached workflows
+                for workflow in self.cached_workflows.values() {
+                    let _ = channel.send(WorkflowManagerRequest {
+                        request_id: format!("reactor_{}_cache_catchup", self.name),
+                        operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                            definition: workflow.clone(),
+                        },
+                    });
+                }
+
                 self.workflow_manager = Some(channel);
             }
         }
