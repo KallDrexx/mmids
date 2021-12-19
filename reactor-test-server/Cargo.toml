@@ -1,0 +1,12 @@
+[package]
+name = "reactor-test-server"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.12", features = ["full"] }
+tokio-util = { version = "0.6", features = ["codec"] }
+futures = "0.3"
+hyper = { version = "0.14", features = ["full"] }

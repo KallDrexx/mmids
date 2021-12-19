@@ -90,7 +90,10 @@ impl Actor {
         }
     }
 
-    #[instrument(name = "Workflow Manager Execution", skip(self, request_receiver))]
+    #[instrument(
+        name = "Workflow Manager Execution",
+        skip(self, request_receiver, request_sender)
+    )]
     async fn run(
         mut self,
         request_receiver: UnboundedReceiver<WorkflowManagerRequest>,

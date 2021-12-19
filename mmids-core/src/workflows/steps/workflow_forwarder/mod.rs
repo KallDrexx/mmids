@@ -336,6 +336,16 @@ impl WorkflowStep for WorkflowForwarderStep {
                             );
 
                             stream.workflow_name = Some(name.clone());
+                            if let Some(channel) = self.known_workflows.get(&name) {
+                                for media in &stream.required_media {
+                                    let _ = channel.send(WorkflowRequest {
+                                        request_id: "from_workflow_forwarder".to_string(),
+                                        operation: WorkflowRequestOperation::MediaNotification {
+                                            media: media.clone(),
+                                        },
+                                    });
+                                }
+                            }
 
                             let entry = self
                                 .stream_for_workflow_name

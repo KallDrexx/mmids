@@ -1,0 +1,3 @@
+workflow abc {
+    rtmp_watch rtmp_app=abc stream_key=*
+}
