@@ -64,6 +64,9 @@ pub enum ConfigParseError {
 
     #[error("Multiple reactors have the name of '{name}'. Each reactor must have a unique name")]
     DuplicateReactorName { name: String },
+
+    #[error("The executor on line {line} did not have an executor specified")]
+    NoExecutorForReactor { line: usize },
 }
 
 #[derive(Parser)]
@@ -298,20 +301,24 @@ fn read_reactor(
             return Err(ConfigParseError::DuplicateReactorName { name });
         }
 
-        config.reactors.insert(
-            name.to_string(),
-            ReactorDefinition {
-                name,
-                parameters,
-                executor: executor_name,
-            },
-        );
-    } else {
-        if name.is_none() {
-            return Err(ConfigParseError::NoNameOnReactor {
+        if let Some(executor) = executor_name {
+            config.reactors.insert(
+                name.to_string(),
+                ReactorDefinition {
+                    name,
+                    parameters,
+                    executor,
+                },
+            );
+        } else {
+            return Err(ConfigParseError::NoExecutorForReactor {
                 line: starting_line,
             });
         }
+    } else {
+        return Err(ConfigParseError::NoNameOnReactor {
+            line: starting_line,
+        });
     }
 
     Ok(())

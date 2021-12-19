@@ -21,9 +21,8 @@ pub struct ReactorDefinition {
     /// they want to interact with.
     pub name: String,
 
-    /// The name of the query executor this reactor should use to perform queries. If one is
-    /// not specified then the default executor will be used.
-    pub executor: Option<String>,
+    /// The name of the query executor this reactor should use to perform queries
+    pub executor: String,
 
     /// Key value pairs used to instruct the reactor's executor. Valid values here are specific
     /// to the executor that was picked.

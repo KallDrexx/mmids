@@ -2,10 +2,7 @@
 //! based on names.
 
 use crate::event_hub::SubscriptionRequest;
-use crate::reactors::executors::simple_http_executor::SimpleHttpExecutorGenerator;
-use crate::reactors::executors::{
-    GenerationError, ReactorExecutorFactory, ReactorExecutorGenerator,
-};
+use crate::reactors::executors::{GenerationError, ReactorExecutorFactory};
 use crate::reactors::{start_reactor, ReactorDefinition, ReactorRequest};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -122,25 +119,21 @@ impl Actor {
                     return;
                 }
 
-                let default_generator = get_default_generator();
-                let generator = match definition.executor {
-                    None => &default_generator,
-                    Some(executor) => match self.executor_factory.get_generator(&executor) {
-                        Ok(generator) => generator,
-                        Err(error) => {
-                            warn!(
-                                reactor_name = %definition.name,
-                                executor_name = %executor,
-                                "Reactor {} is configured to use executor {}, but the factory \
-                                returned an error when trying to get it: {:?}",
-                                definition.name, executor, error
-                            );
+                let generator = match self.executor_factory.get_generator(&definition.executor) {
+                    Ok(generator) => generator,
+                    Err(error) => {
+                        warn!(
+                            reactor_name = %definition.name,
+                            executor_name = %definition.executor,
+                            "Reactor {} is configured to use executor {}, but the factory \
+                            returned an error when trying to get it: {:?}",
+                            definition.name, definition.executor, error
+                        );
 
-                            let _ = response_channel
-                                .send(CreateReactorResult::ExecutorGeneratorError(error));
-                            return;
-                        }
-                    },
+                        let _ = response_channel
+                            .send(CreateReactorResult::ExecutorGeneratorError(error));
+                        return;
+                    }
                 };
 
                 let executor = match generator.generate(&definition.parameters) {
@@ -195,10 +188,6 @@ impl Actor {
             }
         }
     }
-}
-
-fn get_default_generator() -> Box<dyn ReactorExecutorGenerator> {
-    Box::new(SimpleHttpExecutorGenerator {})
 }
 
 async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorManagerRequest>) -> FutureResult {
