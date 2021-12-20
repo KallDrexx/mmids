@@ -680,7 +680,11 @@ impl FfmpegTranscoder {
                     stream.rtmp_output_status = WatchRegistrationStatus::Inactive;
                 }
 
-                RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key: _ } => (),
+                RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+                    stream_key: _,
+                    reactor_keep_alive_channel: _,
+                } => (),
+
                 RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key: _ } => (),
 
                 RtmpEndpointWatcherNotification::WatcherRequiringApproval { .. } => {
@@ -724,6 +728,7 @@ impl FfmpegTranscoder {
                     stream_id: _,
                     stream_key: _,
                     connection_id: _,
+                    reactor_keep_alive_channel: _,
                 } => (),
                 RtmpEndpointPublisherMessage::PublishingStopped { connection_id: _ } => (),
 

@@ -160,7 +160,10 @@ pub enum RtmpEndpointRequest {
 /// Response to approval/validation requests
 #[derive(Debug)]
 pub enum ValidationResponse {
-    Approve,
+    Approve {
+        reactor_keep_alive_channel: Option<Sender<()>>,
+    },
+
     Reject,
 }
 
@@ -198,6 +201,10 @@ pub enum RtmpEndpointPublisherMessage {
         /// Actual stream key that this stream is coming in from.  Mostly used if the registrant
         /// specified that Any stream key would be allowed.
         stream_key: String,
+
+        /// If provided, than this is the keep alive channel the consumer should track until
+        /// the consumer decides that the reactor should close the target workflows.
+        reactor_keep_alive_channel: Option<Sender<()>>,
     },
 
     /// Notification that a publisher has stopped publishing.  It may still be connected to the
@@ -258,7 +265,10 @@ pub enum RtmpEndpointWatcherNotification {
 
     /// Notifies the registrant that at least one watcher is now watching on a particular
     /// stream key,
-    StreamKeyBecameActive { stream_key: String },
+    StreamKeyBecameActive {
+        stream_key: String,
+        reactor_keep_alive_channel: Option<Sender<()>>,
+    },
 
     /// Notifies the registrant that the last watcher has disconnected on the stream key, and
     /// there are no longer anyone watching

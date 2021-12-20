@@ -7,7 +7,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::Sender;
+use tokio::sync::oneshot::{Receiver, Sender};
 use tracing::{error, info, instrument};
 
 /// Requests that can be made to a reactor
@@ -21,6 +21,11 @@ pub enum ReactorRequest {
         /// associated with the stream name, or `None`, representing that no workflow is associated
         /// with the stream.
         response_channel: Sender<Option<String>>,
+
+        /// Channel that will be used to keep the created workflow alive. When the sender end of
+        /// the channel is closed, that will be a signal to the reactor to remove the created
+        /// workflow.
+        keep_alive_channel: Receiver<()>,
     },
 }
 
@@ -41,11 +46,25 @@ enum FutureResult {
     EventHubGone,
     WorkflowManagerGone,
     RequestReceived(ReactorRequest, UnboundedReceiver<ReactorRequest>),
-    ExecutorResponseReceived(String, Option<WorkflowDefinition>),
+    ExecutorResponseReceived {
+        stream_name: String,
+        workflow: Option<WorkflowDefinition>,
+        keep_alive_channel: Receiver<()>,
+    },
+
     WorkflowManagerEventReceived(
         WorkflowManagerEvent,
         UnboundedReceiver<WorkflowManagerEvent>,
     ),
+
+    KeepAliveChannelClosed {
+        stream_name: String,
+    },
+}
+
+struct CachedWorkflow {
+    definition: WorkflowDefinition,
+    keep_alive_count: usize,
 }
 
 struct Actor {
@@ -54,7 +73,7 @@ struct Actor {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     active_requests: HashMap<String, Sender<Option<String>>>,
     workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
-    cached_workflows: HashMap<String, WorkflowDefinition>,
+    cached_workflows: HashMap<String, CachedWorkflow>,
 }
 
 unsafe impl Send for Actor {}
@@ -107,13 +126,21 @@ impl Actor {
                     break;
                 }
 
+                FutureResult::KeepAliveChannelClosed { stream_name } => {
+                    self.handle_keep_alive_closed(stream_name);
+                }
+
                 FutureResult::RequestReceived(request, receiver) => {
                     self.futures.push(wait_for_request(receiver).boxed());
                     self.handle_request(request);
                 }
 
-                FutureResult::ExecutorResponseReceived(stream_name, workflow) => {
-                    self.handle_executor_response(stream_name, workflow);
+                FutureResult::ExecutorResponseReceived {
+                    stream_name,
+                    workflow,
+                    keep_alive_channel,
+                } => {
+                    self.handle_executor_response(stream_name, workflow, keep_alive_channel);
                 }
 
                 FutureResult::WorkflowManagerEventReceived(event, receiver) => {
@@ -133,6 +160,7 @@ impl Actor {
             ReactorRequest::CreateWorkflowNameForStream {
                 stream_name,
                 response_channel,
+                keep_alive_channel,
             } => {
                 info!(
                     stream_name = %stream_name,
@@ -143,8 +171,9 @@ impl Actor {
                     .insert(stream_name.clone(), response_channel);
 
                 let future = self.executor.get_workflow(stream_name.clone());
-                self.futures
-                    .push(wait_for_executor_response(stream_name, future).boxed());
+                self.futures.push(
+                    wait_for_executor_response(stream_name, future, keep_alive_channel).boxed(),
+                );
             }
         }
     }
@@ -153,6 +182,7 @@ impl Actor {
         &mut self,
         stream_name: String,
         workflow: Option<WorkflowDefinition>,
+        keep_alive_channel: Receiver<()>,
     ) {
         let channel = match self.active_requests.remove(&stream_name) {
             Some(channel) => channel,
@@ -176,8 +206,22 @@ impl Actor {
             );
 
             let workflow_name = workflow.name.clone();
-            self.cached_workflows
-                .insert(stream_name.clone(), workflow.clone());
+            if let Some(cache) = self.cached_workflows.get_mut(&stream_name) {
+                cache.definition = workflow.clone();
+                cache.keep_alive_count += 1;
+            } else {
+                self.cached_workflows.insert(
+                    stream_name.clone(),
+                    CachedWorkflow {
+                        definition: workflow.clone(),
+                        keep_alive_count: 1,
+                    },
+                );
+            }
+
+            self.futures.push(
+                notify_when_keep_alive_closed(keep_alive_channel, stream_name.clone()).boxed(),
+            );
 
             if let Some(manager) = &self.workflow_manager {
                 let _ = manager.send(WorkflowManagerRequest {
@@ -211,12 +255,41 @@ impl Actor {
                     let _ = channel.send(WorkflowManagerRequest {
                         request_id: format!("reactor_{}_cache_catchup", self.name),
                         operation: WorkflowManagerRequestOperation::UpsertWorkflow {
-                            definition: workflow.clone(),
+                            definition: workflow.definition.clone(),
                         },
                     });
                 }
 
                 self.workflow_manager = Some(channel);
+            }
+        }
+    }
+
+    fn handle_keep_alive_closed(&mut self, stream_name: String) {
+        if let Some(cache) = self.cached_workflows.get_mut(&stream_name) {
+            cache.keep_alive_count -= 1;
+            if cache.keep_alive_count == 0 {
+                info!(
+                    stream_name = %stream_name,
+                    "All keep alive channels for stream {} closed", stream_name
+                );
+
+                if let Some(channel) = &self.workflow_manager {
+                    let _ = channel.send(WorkflowManagerRequest {
+                        request_id: "from_reactor".to_string(),
+                        operation: WorkflowManagerRequestOperation::StopWorkflow {
+                            name: cache.definition.name.to_string(),
+                        },
+                    });
+                }
+
+                self.cached_workflows.remove(&stream_name);
+            } else {
+                info!(
+                    stream_name = %stream_name,
+                    "Keep alive channel closed for stream {}, {} remaining",
+                    stream_name, cache.keep_alive_count,
+                );
             }
         }
     }
@@ -232,9 +305,14 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorRequest>) -> Fu
 async fn wait_for_executor_response(
     stream_name: String,
     future: BoxFuture<'static, Option<WorkflowDefinition>>,
+    keep_alive_channel: Receiver<()>,
 ) -> FutureResult {
     let result = future.await;
-    FutureResult::ExecutorResponseReceived(stream_name, result)
+    FutureResult::ExecutorResponseReceived {
+        stream_name,
+        workflow: result,
+        keep_alive_channel,
+    }
 }
 
 async fn wait_for_workflow_manager_event(
@@ -251,4 +329,12 @@ async fn notify_workflow_manager_gone(
 ) -> FutureResult {
     sender.closed().await;
     FutureResult::WorkflowManagerGone
+}
+
+async fn notify_when_keep_alive_closed(
+    receiver: Receiver<()>,
+    stream_name: String,
+) -> FutureResult {
+    let _ = receiver.await;
+    FutureResult::KeepAliveChannelClosed { stream_name }
 }

@@ -52,6 +52,11 @@ pub struct RtmpWatchStepGenerator {
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
 }
 
+struct StreamWatchers {
+    // Holds the keep alive channel until all watchers have disconnected
+    _reactor_keep_alive_channel: Option<Sender<()>>,
+}
+
 struct RtmpWatchStep {
     definition: WorkflowStepDefinition,
     port: u16,
@@ -63,6 +68,7 @@ struct RtmpWatchStep {
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
     media_channel: UnboundedSender<RtmpEndpointMediaMessage>,
     stream_id_to_name_map: HashMap<StreamId, String>,
+    stream_watchers: HashMap<String, StreamWatchers>,
 }
 
 impl StepFutureResult for RtmpWatchStepFutureResult {}
@@ -78,6 +84,7 @@ enum RtmpWatchStepFutureResult {
     ReactorWorkflowResponse {
         workflow_name: Option<String>,
         validation_channel: Sender<ValidationResponse>,
+        keep_alive_channel: Sender<()>,
     },
 }
 
@@ -204,6 +211,7 @@ impl StepGenerator for RtmpWatchStepGenerator {
             stream_key,
             stream_id_to_name_map: HashMap::new(),
             reactor_name,
+            stream_watchers: HashMap::new(),
         };
 
         let (notification_sender, notification_receiver) = unbounded_channel();
@@ -247,10 +255,20 @@ impl RtmpWatchStep {
                 self.status = StepStatus::Active;
             }
 
-            RtmpEndpointWatcherNotification::StreamKeyBecameActive { stream_key } => {
+            RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+                stream_key,
+                reactor_keep_alive_channel,
+            } => {
                 info!(
                     stream_key = %stream_key,
                     "At least one watcher became active for stream key '{}'", stream_key
+                );
+
+                self.stream_watchers.insert(
+                    stream_key,
+                    StreamWatchers {
+                        _reactor_keep_alive_channel: reactor_keep_alive_channel,
+                    },
                 );
             }
 
@@ -259,6 +277,8 @@ impl RtmpWatchStep {
                     stream_key = %stream_key,
                     "All watchers left stream key '{}'", stream_key
                 );
+
+                self.stream_watchers.remove(&stream_key);
             }
 
             RtmpEndpointWatcherNotification::WatcherRequiringApproval {
@@ -267,18 +287,21 @@ impl RtmpWatchStep {
                 response_channel,
             } => {
                 if let Some(reactor) = &self.reactor_name {
+                    let (keep_alive_sender, keep_alive_receiver) = channel();
                     let (sender, receiver) = channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: reactor.clone(),
                             stream_name: stream_key,
                             response_channel: sender,
+                            keep_alive_channel: keep_alive_receiver,
                         },
                     );
 
-                    outputs
-                        .futures
-                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
+                    outputs.futures.push(
+                        wait_for_reactor_response(receiver, response_channel, keep_alive_sender)
+                            .boxed(),
+                    );
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -480,9 +503,12 @@ impl WorkflowStep for RtmpWatchStep {
                 RtmpWatchStepFutureResult::ReactorWorkflowResponse {
                     workflow_name,
                     validation_channel,
+                    keep_alive_channel,
                 } => {
                     if workflow_name.is_some() {
-                        let _ = validation_channel.send(ValidationResponse::Approve);
+                        let _ = validation_channel.send(ValidationResponse::Approve {
+                            reactor_keep_alive_channel: Some(keep_alive_channel),
+                        });
                     } else {
                         let _ = validation_channel.send(ValidationResponse::Reject);
                     }
@@ -524,6 +550,7 @@ async fn wait_for_endpoint_notification(
 async fn wait_for_reactor_response(
     receiver: Receiver<Option<String>>,
     response_channel: Sender<ValidationResponse>,
+    keep_alive_channel: Sender<()>,
 ) -> Box<dyn StepFutureResult> {
     let result = match receiver.await {
         Ok(result) => result,
@@ -533,6 +560,7 @@ async fn wait_for_reactor_response(
     let result = RtmpWatchStepFutureResult::ReactorWorkflowResponse {
         workflow_name: result,
         validation_channel: response_channel,
+        keep_alive_channel,
     };
 
     Box::new(result)

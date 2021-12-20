@@ -17,7 +17,7 @@ use futures::FutureExt;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{channel, Receiver};
+use tokio::sync::oneshot::{channel, Receiver, Sender};
 use tracing::{error, info};
 
 pub const TARGET_WORKFLOW: &'static str = "target_workflow";
@@ -32,6 +32,7 @@ pub struct WorkflowForwarderStepGenerator {
 struct StreamDetails {
     workflow_name: Option<String>,
     required_media: Vec<MediaNotification>,
+    reactor_keep_alive_channel: Option<Sender<()>>,
 }
 
 struct WorkflowForwarderStep {
@@ -179,13 +180,11 @@ impl WorkflowForwarderStep {
     fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
         match &media.content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
-                self.active_streams.insert(
-                    media.stream_id.clone(),
-                    StreamDetails {
-                        workflow_name: self.global_workflow_name.clone(),
-                        required_media: vec![media.clone()],
-                    },
-                );
+                let mut stream_details = StreamDetails {
+                    workflow_name: self.global_workflow_name.clone(),
+                    required_media: vec![media.clone()],
+                    reactor_keep_alive_channel: None,
+                };
 
                 if let Some(workflow) = &self.global_workflow_name {
                     let entry = self
@@ -197,15 +196,18 @@ impl WorkflowForwarderStep {
                 }
 
                 if let Some(reactor) = &self.reactor_name {
+                    let (keep_alive_sender, keep_alive_receiver) = channel();
                     let (sender, receiver) = channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: reactor.clone(),
                             stream_name: stream_name.clone(),
                             response_channel: sender,
+                            keep_alive_channel: keep_alive_receiver,
                         },
                     );
 
+                    stream_details.reactor_keep_alive_channel = Some(keep_alive_sender);
                     outputs.futures.push(
                         wait_for_reactor_response(
                             media.stream_id.clone(),
@@ -215,6 +217,9 @@ impl WorkflowForwarderStep {
                         .boxed(),
                     );
                 }
+
+                self.active_streams
+                    .insert(media.stream_id.clone(), stream_details);
             }
 
             MediaNotificationContent::StreamDisconnected => {

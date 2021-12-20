@@ -9,7 +9,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::Sender;
+use tokio::sync::oneshot::{Receiver, Sender};
 use tracing::{error, info, instrument, warn};
 
 /// Requests that can be made to the reactor manager
@@ -31,6 +31,11 @@ pub enum ReactorManagerRequest {
         /// The channel in which to send the response to. The response will contain the name of
         /// the workflow the stream is associated with, if one was found.
         response_channel: Sender<Option<String>>,
+
+        /// Channel that will be used to keep the created workflow alive. When the sender end of
+        /// the channel is closed, that will be a signal to the reactor to remove the created
+        /// workflow.
+        keep_alive_channel: Receiver<()>,
     },
 }
 
@@ -166,6 +171,7 @@ impl Actor {
                 reactor_name,
                 stream_name,
                 response_channel,
+                keep_alive_channel,
             } => {
                 let reactor = match self.reactors.get(&reactor_name) {
                     Some(reactor) => reactor,
@@ -184,6 +190,7 @@ impl Actor {
                 let _ = reactor.send(ReactorRequest::CreateWorkflowNameForStream {
                     stream_name,
                     response_channel,
+                    keep_alive_channel,
                 });
             }
         }

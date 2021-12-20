@@ -43,6 +43,13 @@ pub struct RtmpReceiverStepGenerator {
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
 }
 
+struct ConnectionDetails {
+    stream_id: StreamId,
+
+    // Required to keep workflow open until connection goes away
+    _reactor_keep_alive_channel: Option<Sender<()>>,
+}
+
 struct RtmpReceiverStep {
     definition: WorkflowStepDefinition,
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
@@ -51,7 +58,7 @@ struct RtmpReceiverStep {
     rtmp_app: String,
     stream_key: StreamKeyRegistration,
     status: StepStatus,
-    connection_stream_id_map: HashMap<ConnectionId, StreamId>,
+    connection_details: HashMap<ConnectionId, ConnectionDetails>,
     reactor_name: Option<String>,
 }
 
@@ -68,6 +75,7 @@ enum RtmpReceiveFutureResult {
     ReactorWorkflowReturned {
         workflow_name: Option<String>,
         response_channel: Sender<ValidationResponse>,
+        keep_alive_channel: Sender<()>,
     },
 }
 
@@ -182,7 +190,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             reactor_manager: self.reactor_manager.clone(),
             port,
             rtmp_app: app.to_string(),
-            connection_stream_id_map: HashMap::new(),
+            connection_details: HashMap::new(),
             reactor_name,
             stream_key: if stream_key == "*" {
                 StreamKeyRegistration::Any
@@ -240,6 +248,7 @@ impl RtmpReceiverStep {
                 stream_id,
                 connection_id,
                 stream_key,
+                reactor_keep_alive_channel,
             } => {
                 info!(
                     stream_id = ?stream_id,
@@ -248,8 +257,13 @@ impl RtmpReceiverStep {
                     "Rtmp receive step seen new publisher: {:?}, {:?}, {:?}", stream_id, connection_id, stream_key
                 );
 
-                self.connection_stream_id_map
-                    .insert(connection_id, stream_id.clone());
+                self.connection_details.insert(
+                    connection_id,
+                    ConnectionDetails {
+                        stream_id: stream_id.clone(),
+                        _reactor_keep_alive_channel: reactor_keep_alive_channel,
+                    },
+                );
 
                 outputs.media.push(MediaNotification {
                     stream_id,
@@ -260,17 +274,18 @@ impl RtmpReceiverStep {
             }
 
             RtmpEndpointPublisherMessage::PublishingStopped { connection_id } => {
-                match self.connection_stream_id_map.remove(&connection_id) {
+                match self.connection_details.remove(&connection_id) {
                     None => (),
-                    Some(stream_id) => {
+                    Some(connection) => {
                         info!(
-                            stream_id = ?stream_id,
+                            stream_id = ?connection.stream_id,
                             connection_id = ?connection_id,
-                            "Rtmp receive step notified that connection {:?} is no longer publishing stream {:?}", connection_id, stream_id
+                            "Rtmp receive step notified that connection {:?} is no longer publishing stream {:?}",
+                            connection_id, connection.stream_id
                         );
 
                         outputs.media.push(MediaNotification {
-                            stream_id,
+                            stream_id: connection.stream_id,
                             content: MediaNotificationContent::StreamDisconnected,
                         });
                     }
@@ -280,10 +295,10 @@ impl RtmpReceiverStep {
             RtmpEndpointPublisherMessage::StreamMetadataChanged {
                 publisher,
                 metadata,
-            } => match self.connection_stream_id_map.get(&publisher) {
+            } => match self.connection_details.get(&publisher) {
                 None => (),
-                Some(stream_id) => outputs.media.push(MediaNotification {
-                    stream_id: stream_id.clone(),
+                Some(connection) => outputs.media.push(MediaNotification {
+                    stream_id: connection.stream_id.clone(),
                     content: MediaNotificationContent::Metadata {
                         data: crate::utils::stream_metadata_to_hash_map(metadata),
                     },
@@ -297,11 +312,11 @@ impl RtmpReceiverStep {
                 codec,
                 is_sequence_header,
                 is_keyframe,
-            } => match self.connection_stream_id_map.get(&publisher) {
+            } => match self.connection_details.get(&publisher) {
                 None => (),
-                Some(stream_id) => {
+                Some(connection) => {
                     outputs.media.push(MediaNotification {
-                        stream_id: stream_id.clone(),
+                        stream_id: connection.stream_id.clone(),
                         content: MediaNotificationContent::Video {
                             is_keyframe,
                             is_sequence_header,
@@ -319,11 +334,11 @@ impl RtmpReceiverStep {
                 data,
                 codec,
                 timestamp,
-            } => match self.connection_stream_id_map.get(&publisher) {
+            } => match self.connection_details.get(&publisher) {
                 None => (),
-                Some(stream_id) => {
+                Some(connection) => {
                     outputs.media.push(MediaNotification {
-                        stream_id: stream_id.clone(),
+                        stream_id: connection.stream_id.clone(),
                         content: MediaNotificationContent::Audio {
                             is_sequence_header,
                             data,
@@ -340,18 +355,21 @@ impl RtmpReceiverStep {
                 response_channel,
             } => {
                 if let Some(name) = &self.reactor_name {
+                    let (keep_alive_sender, keep_alive_receiver) = channel();
                     let (sender, receiver) = channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: name.clone(),
                             stream_name: stream_key,
                             response_channel: sender,
+                            keep_alive_channel: keep_alive_receiver,
                         },
                     );
 
-                    outputs
-                        .futures
-                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
+                    outputs.futures.push(
+                        wait_for_reactor_response(receiver, response_channel, keep_alive_sender)
+                            .boxed(),
+                    );
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -418,10 +436,13 @@ impl WorkflowStep for RtmpReceiverStep {
                 RtmpReceiveFutureResult::ReactorWorkflowReturned {
                     workflow_name,
                     response_channel,
+                    keep_alive_channel,
                 } => {
                     // If a workflow was returned, then that means the the stream key is allowed
                     if workflow_name.is_some() {
-                        let _ = response_channel.send(ValidationResponse::Approve);
+                        let _ = response_channel.send(ValidationResponse::Approve {
+                            reactor_keep_alive_channel: Some(keep_alive_channel),
+                        });
                     } else {
                         let _ = response_channel.send(ValidationResponse::Reject);
                     }
@@ -457,18 +478,17 @@ async fn wait_for_rtmp_endpoint_response(
 async fn wait_for_reactor_response(
     reactor_receiver: Receiver<Option<String>>,
     connection_response_channel: Sender<ValidationResponse>,
+    keep_alive_channel: Sender<()>,
 ) -> Box<dyn StepFutureResult> {
     let result = match reactor_receiver.await {
-        Ok(response) => RtmpReceiveFutureResult::ReactorWorkflowReturned {
-            workflow_name: response,
-            response_channel: connection_response_channel,
-        },
+        Ok(response) => response,
+        Err(_) => None, // reactor closed, treat it the same as no workflow scenario
+    };
 
-        // If the reactor closed, pretend like no workflow was returned
-        Err(_) => RtmpReceiveFutureResult::ReactorWorkflowReturned {
-            workflow_name: None,
-            response_channel: connection_response_channel,
-        },
+    let result = RtmpReceiveFutureResult::ReactorWorkflowReturned {
+        workflow_name: result,
+        response_channel: connection_response_channel,
+        keep_alive_channel,
     };
 
     Box::new(result)
