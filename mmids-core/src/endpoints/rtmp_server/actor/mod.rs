@@ -11,6 +11,7 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use crate::net::ConnectionId;
+use crate::reactors::ReactorWorkflowUpdate;
 use crate::StreamId;
 use actor_types::*;
 use connection_handler::{ConnectionRequest, RtmpServerConnectionHandler};
@@ -20,7 +21,7 @@ use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{channel, Sender};
+use tokio::sync::oneshot::channel;
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
@@ -167,7 +168,7 @@ impl RtmpServerEndpointActor {
 
         match response {
             ValidationResponse::Approve {
-                reactor_keep_alive_channel,
+                reactor_update_channel,
             } => {
                 match &connection.state {
                     ConnectionState::None => {
@@ -203,7 +204,7 @@ impl RtmpServerEndpointActor {
                             port,
                             rtmp_app,
                             &stream_key,
-                            reactor_keep_alive_channel,
+                            Some(reactor_update_channel),
                         );
 
                         if let Some(future) = future {
@@ -232,7 +233,7 @@ impl RtmpServerEndpointActor {
                             port,
                             rtmp_app,
                             &stream_key,
-                            reactor_keep_alive_channel,
+                            Some(reactor_update_channel),
                         );
 
                         if let Some(future) = future {
@@ -940,7 +941,7 @@ fn handle_connection_request_watch(
     port: u16,
     rtmp_app: String,
     stream_key: &String,
-    reactor_keep_alive_channel: Option<Sender<()>>,
+    reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 ) -> Option<BoxFuture<'static, FutureResult>> {
     let connection = match port_map.connections.get_mut(&connection_id) {
         Some(x) => x,
@@ -1061,7 +1062,7 @@ fn handle_connection_request_watch(
         let _ = registrant.response_channel.send(
             RtmpEndpointWatcherNotification::StreamKeyBecameActive {
                 stream_key: stream_key.clone(),
-                reactor_keep_alive_channel,
+                reactor_update_channel,
             },
         );
     }
@@ -1109,7 +1110,7 @@ fn handle_connection_request_publish(
     port: u16,
     rtmp_app: String,
     stream_key: &String,
-    reactor_keep_alive_channel: Option<Sender<()>>,
+    reactor_response_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 ) -> Option<BoxFuture<'static, FutureResult>> {
     let connection = match port_map.connections.get_mut(&connection_id) {
         Some(x) => x,
@@ -1259,7 +1260,7 @@ fn handle_connection_request_publish(
             connection_id: connection_id.clone(),
             stream_key: stream_key.clone(),
             stream_id,
-            reactor_keep_alive_channel,
+            reactor_update_channel: reactor_response_channel,
         });
 
     return None;

@@ -211,7 +211,7 @@ impl FfmpegPullStep {
                 stream_id,
                 stream_key,
                 connection_id,
-                reactor_keep_alive_channel: _,
+                reactor_update_channel: _,
             } => {
                 info!(
                     stream_id = ?stream_id,

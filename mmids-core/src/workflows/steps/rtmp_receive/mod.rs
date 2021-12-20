@@ -19,6 +19,7 @@ use crate::workflows::steps::{
 };
 
 use crate::reactors::manager::ReactorManagerRequest;
+use crate::reactors::ReactorWorkflowUpdate;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::FutureExt;
@@ -26,7 +27,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{channel, Receiver, Sender};
+use tokio::sync::oneshot::Sender;
 use tracing::{error, info};
 
 pub const PORT_PROPERTY_NAME: &'static str = "port";
@@ -46,8 +47,12 @@ pub struct RtmpReceiverStepGenerator {
 struct ConnectionDetails {
     stream_id: StreamId,
 
-    // Required to keep workflow open until connection goes away
-    _reactor_keep_alive_channel: Option<Sender<()>>,
+    // Used to cancel the reactor update future. When a stream disconnects, this cancellation
+    // channel will be dropped causing the future waiting for reactor updates to be closed. This
+    // will inform the reactor that this step is no longer interested in whatever workflow it was
+    // managing for it. Not using a one shot, as the channel needs to live across multiple futures
+    // if updates come in.
+    _cancellation_channel: Option<UnboundedSender<()>>,
 }
 
 struct RtmpReceiverStep {
@@ -62,11 +67,12 @@ struct RtmpReceiverStep {
     reactor_name: Option<String>,
 }
 
-impl StepFutureResult for RtmpReceiveFutureResult {}
+impl StepFutureResult for FutureResult {}
 
-enum RtmpReceiveFutureResult {
+enum FutureResult {
     RtmpEndpointGone,
     ReactorManagerGone,
+    ReactorGone,
     RtmpEndpointResponseReceived(
         RtmpEndpointPublisherMessage,
         UnboundedReceiver<RtmpEndpointPublisherMessage>,
@@ -74,9 +80,18 @@ enum RtmpReceiveFutureResult {
 
     ReactorWorkflowReturned {
         workflow_name: Option<String>,
+        reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
         response_channel: Sender<ValidationResponse>,
-        keep_alive_channel: Sender<()>,
     },
+
+    ReactorUpdateReceived {
+        connection_id: ConnectionId,
+        update: ReactorWorkflowUpdate,
+        reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
+        cancellation_channel: UnboundedReceiver<()>,
+    },
+
+    ReactorCancellationReceived,
 }
 
 #[derive(ThisError, Debug)]
@@ -248,7 +263,7 @@ impl RtmpReceiverStep {
                 stream_id,
                 connection_id,
                 stream_key,
-                reactor_keep_alive_channel,
+                reactor_update_channel,
             } => {
                 info!(
                     stream_id = ?stream_id,
@@ -257,11 +272,25 @@ impl RtmpReceiverStep {
                     "Rtmp receive step seen new publisher: {:?}, {:?}, {:?}", stream_id, connection_id, stream_key
                 );
 
+                let cancellation_token = if let Some(update_channel) = reactor_update_channel {
+                    let (cancellation_sender, cancellation_receiver) = unbounded_channel();
+                    let future = wait_for_reactor_update(
+                        connection_id.clone(),
+                        update_channel,
+                        cancellation_receiver,
+                    );
+
+                    outputs.futures.push(future.boxed());
+                    Some(cancellation_sender)
+                } else {
+                    None
+                };
+
                 self.connection_details.insert(
                     connection_id,
                     ConnectionDetails {
                         stream_id: stream_id.clone(),
-                        _reactor_keep_alive_channel: reactor_keep_alive_channel,
+                        _cancellation_channel: cancellation_token,
                     },
                 );
 
@@ -355,21 +384,18 @@ impl RtmpReceiverStep {
                 response_channel,
             } => {
                 if let Some(name) = &self.reactor_name {
-                    let (keep_alive_sender, keep_alive_receiver) = channel();
-                    let (sender, receiver) = channel();
+                    let (sender, receiver) = unbounded_channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: name.clone(),
                             stream_name: stream_key,
                             response_channel: sender,
-                            keep_alive_channel: keep_alive_receiver,
                         },
                     );
 
-                    outputs.futures.push(
-                        wait_for_reactor_response(receiver, response_channel, keep_alive_sender)
-                            .boxed(),
-                    );
+                    outputs
+                        .futures
+                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -400,7 +426,7 @@ impl WorkflowStep for RtmpReceiverStep {
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
         for future_result in inputs.notifications.drain(..) {
-            let future_result = match future_result.downcast::<RtmpReceiveFutureResult>() {
+            let future_result = match future_result.downcast::<FutureResult>() {
                 Ok(result) => *result,
                 Err(_) => {
                     error!("Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type");
@@ -411,21 +437,33 @@ impl WorkflowStep for RtmpReceiverStep {
             };
 
             match future_result {
-                RtmpReceiveFutureResult::RtmpEndpointGone => {
+                FutureResult::RtmpEndpointGone => {
                     error!("Rtmp receive step stopping as the rtmp endpoint is gone");
                     self.status = StepStatus::Error;
 
                     return;
                 }
 
-                RtmpReceiveFutureResult::ReactorManagerGone => {
+                FutureResult::ReactorManagerGone => {
                     error!("Reactor manager gone");
                     self.status = StepStatus::Error;
 
                     return;
                 }
 
-                RtmpReceiveFutureResult::RtmpEndpointResponseReceived(message, receiver) => {
+                FutureResult::ReactorGone => {
+                    if let Some(name) = &self.reactor_name {
+                        error!("Reactor {} is gone", name);
+                    } else {
+                        error!("Got reactor gone signal but step is not using a reactor");
+                    }
+
+                    self.status = StepStatus::Error;
+
+                    return;
+                }
+
+                FutureResult::RtmpEndpointResponseReceived(message, receiver) => {
                     outputs
                         .futures
                         .push(wait_for_rtmp_endpoint_response(receiver).boxed());
@@ -433,20 +471,54 @@ impl WorkflowStep for RtmpReceiverStep {
                     self.handle_rtmp_publisher_message(outputs, message);
                 }
 
-                RtmpReceiveFutureResult::ReactorWorkflowReturned {
+                FutureResult::ReactorWorkflowReturned {
                     workflow_name,
+                    reactor_receiver,
                     response_channel,
-                    keep_alive_channel,
                 } => {
                     // If a workflow was returned, then that means the the stream key is allowed
                     if workflow_name.is_some() {
                         let _ = response_channel.send(ValidationResponse::Approve {
-                            reactor_keep_alive_channel: Some(keep_alive_channel),
+                            reactor_update_channel: reactor_receiver,
                         });
                     } else {
                         let _ = response_channel.send(ValidationResponse::Reject);
                     }
                 }
+
+                FutureResult::ReactorUpdateReceived {
+                    connection_id,
+                    update,
+                    reactor_receiver,
+                    cancellation_channel,
+                } => {
+                    if let Some(workflow_name) = update.workflow_name {
+                        info!(
+                            connection_id = %connection_id,
+                            "Received update that {}'s workflow has been changed to {}",
+                            connection_id, workflow_name
+                        );
+
+                        // No action needed as this is still a valid stream name
+                        let future = wait_for_reactor_update(
+                            connection_id,
+                            reactor_receiver,
+                            cancellation_channel,
+                        );
+
+                        outputs.futures.push(future.boxed());
+                    } else {
+                        info!(
+                            connection_id = %connection_id,
+                            "Received update that stream {} is no longer tied to a workflow",
+                            connection_id
+                        );
+
+                        // TODO: Need some way to disconnect publishers
+                    }
+                }
+
+                FutureResult::ReactorCancellationReceived => {}
             }
         }
     }
@@ -468,27 +540,51 @@ async fn wait_for_rtmp_endpoint_response(
     mut receiver: UnboundedReceiver<RtmpEndpointPublisherMessage>,
 ) -> Box<dyn StepFutureResult> {
     let notification = match receiver.recv().await {
-        None => RtmpReceiveFutureResult::RtmpEndpointGone,
-        Some(message) => RtmpReceiveFutureResult::RtmpEndpointResponseReceived(message, receiver),
+        None => FutureResult::RtmpEndpointGone,
+        Some(message) => FutureResult::RtmpEndpointResponseReceived(message, receiver),
     };
 
     Box::new(notification)
 }
 
 async fn wait_for_reactor_response(
-    reactor_receiver: Receiver<Option<String>>,
+    mut reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
     connection_response_channel: Sender<ValidationResponse>,
-    keep_alive_channel: Sender<()>,
 ) -> Box<dyn StepFutureResult> {
-    let result = match reactor_receiver.await {
-        Ok(response) => response,
-        Err(_) => None, // reactor closed, treat it the same as no workflow scenario
+    let result = match reactor_receiver.recv().await {
+        Some(response) => response.workflow_name,
+        None => None, // reactor closed, treat it the same as no workflow scenario
     };
 
-    let result = RtmpReceiveFutureResult::ReactorWorkflowReturned {
+    let result = FutureResult::ReactorWorkflowReturned {
         workflow_name: result,
+        reactor_receiver,
         response_channel: connection_response_channel,
-        keep_alive_channel,
+    };
+
+    Box::new(result)
+}
+
+async fn wait_for_reactor_update(
+    connection_id: ConnectionId,
+    mut reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
+    mut cancellation_receiver: UnboundedReceiver<()>,
+) -> Box<dyn StepFutureResult> {
+    let result = tokio::select! {
+        update = reactor_receiver.recv() => {
+            match update {
+                Some(update) => FutureResult::ReactorUpdateReceived{
+                    connection_id,
+                    update,
+                    reactor_receiver: reactor_receiver,
+                    cancellation_channel: cancellation_receiver,
+                },
+
+                None => FutureResult::ReactorGone,
+            }
+        }
+
+        _ = cancellation_receiver.recv() => FutureResult::ReactorCancellationReceived,
     };
 
     Box::new(result)
@@ -498,5 +594,5 @@ async fn notify_reactor_manager_gone(
     sender: UnboundedSender<ReactorManagerRequest>,
 ) -> Box<dyn StepFutureResult> {
     sender.closed().await;
-    Box::new(RtmpReceiveFutureResult::ReactorManagerGone)
+    Box::new(FutureResult::ReactorManagerGone)
 }

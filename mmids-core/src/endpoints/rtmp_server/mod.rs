@@ -18,6 +18,7 @@ mod actor;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::tcp::TcpSocketRequest;
 use crate::net::{ConnectionId, IpAddress};
+use crate::reactors::ReactorWorkflowUpdate;
 use crate::StreamId;
 use actor::actor_types::RtmpServerEndpointActor;
 use bytes::Bytes;
@@ -161,7 +162,7 @@ pub enum RtmpEndpointRequest {
 #[derive(Debug)]
 pub enum ValidationResponse {
     Approve {
-        reactor_keep_alive_channel: Option<Sender<()>>,
+        reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
     },
 
     Reject,
@@ -202,9 +203,9 @@ pub enum RtmpEndpointPublisherMessage {
         /// specified that Any stream key would be allowed.
         stream_key: String,
 
-        /// If provided, than this is the keep alive channel the consumer should track until
-        /// the consumer decides that the reactor should close the target workflows.
-        reactor_keep_alive_channel: Option<Sender<()>>,
+        /// If provided, this is a channel which will receive workflow updates from a reactor
+        /// tied to this publisher
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
     },
 
     /// Notification that a publisher has stopped publishing.  It may still be connected to the
@@ -267,7 +268,7 @@ pub enum RtmpEndpointWatcherNotification {
     /// stream key,
     StreamKeyBecameActive {
         stream_key: String,
-        reactor_keep_alive_channel: Option<Sender<()>>,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
     },
 
     /// Notifies the registrant that the last watcher has disconnected on the stream key, and

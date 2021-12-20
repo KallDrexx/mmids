@@ -22,6 +22,7 @@ use crate::endpoints::rtmp_server::{
 };
 use crate::net::{IpAddress, IpAddressParseError};
 use crate::reactors::manager::ReactorManagerRequest;
+use crate::reactors::ReactorWorkflowUpdate;
 use crate::utils::hash_map_to_stream_metadata;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::factory::StepGenerator;
@@ -35,7 +36,7 @@ use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{channel, Receiver, Sender};
+use tokio::sync::oneshot::Sender;
 use tracing::{error, info, warn};
 
 pub const PORT_PROPERTY_NAME: &'static str = "port";
@@ -53,8 +54,10 @@ pub struct RtmpWatchStepGenerator {
 }
 
 struct StreamWatchers {
-    // Holds the keep alive channel until all watchers have disconnected
-    _reactor_keep_alive_channel: Option<Sender<()>>,
+    // Use an unbounded channel for this instead of a one shot, as we risk losing the cancellation
+    // channel when a reactor update comes through. We can work around this by recreating the
+    // cancellation token each time, but it's easier to just use an `UnboundedSender` instead.
+    _reactor_cancel_channel: Option<UnboundedSender<()>>,
 }
 
 struct RtmpWatchStep {
@@ -76,6 +79,7 @@ impl StepFutureResult for RtmpWatchStepFutureResult {}
 enum RtmpWatchStepFutureResult {
     RtmpEndpointGone,
     ReactorManagerGone,
+    ReactorGone,
     RtmpWatchNotificationReceived(
         RtmpEndpointWatcherNotification,
         UnboundedReceiver<RtmpEndpointWatcherNotification>,
@@ -84,7 +88,18 @@ enum RtmpWatchStepFutureResult {
     ReactorWorkflowResponse {
         workflow_name: Option<String>,
         validation_channel: Sender<ValidationResponse>,
-        keep_alive_channel: Sender<()>,
+        reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
+    },
+
+    ReactorUpdateReceived {
+        stream_name: String,
+        update: ReactorWorkflowUpdate,
+        reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
+        cancellation_channel: UnboundedReceiver<()>,
+    },
+
+    ReactorReceiverCanceled {
+        stream_name: String,
     },
 }
 
@@ -257,17 +272,33 @@ impl RtmpWatchStep {
 
             RtmpEndpointWatcherNotification::StreamKeyBecameActive {
                 stream_key,
-                reactor_keep_alive_channel,
+                reactor_update_channel,
             } => {
                 info!(
                     stream_key = %stream_key,
                     "At least one watcher became active for stream key '{}'", stream_key
                 );
 
+                let cancellation_channel =
+                    if let Some(reactor_update_channel) = reactor_update_channel {
+                        let (cancellation_sender, cancellation_receiver) = unbounded_channel();
+                        let future = wait_for_reactor_update(
+                            stream_key.clone(),
+                            reactor_update_channel,
+                            cancellation_receiver,
+                        )
+                        .boxed();
+
+                        outputs.futures.push(future);
+                        Some(cancellation_sender)
+                    } else {
+                        None
+                    };
+
                 self.stream_watchers.insert(
                     stream_key,
                     StreamWatchers {
-                        _reactor_keep_alive_channel: reactor_keep_alive_channel,
+                        _reactor_cancel_channel: cancellation_channel,
                     },
                 );
             }
@@ -287,21 +318,18 @@ impl RtmpWatchStep {
                 response_channel,
             } => {
                 if let Some(reactor) = &self.reactor_name {
-                    let (keep_alive_sender, keep_alive_receiver) = channel();
-                    let (sender, receiver) = channel();
+                    let (sender, receiver) = unbounded_channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: reactor.clone(),
                             stream_name: stream_key,
                             response_channel: sender,
-                            keep_alive_channel: keep_alive_receiver,
                         },
                     );
 
-                    outputs.futures.push(
-                        wait_for_reactor_response(receiver, response_channel, keep_alive_sender)
-                            .boxed(),
-                    );
+                    outputs
+                        .futures
+                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -489,6 +517,18 @@ impl WorkflowStep for RtmpWatchStep {
                     return;
                 }
 
+                RtmpWatchStepFutureResult::ReactorGone => {
+                    if let Some(reactor_name) = &self.reactor_name {
+                        error!("The {} reactor is gone", reactor_name);
+                    } else {
+                        error!("Received notice that the reactor is gone, but this step doesn't use one");
+                    }
+
+                    self.status = StepStatus::Error;
+
+                    return;
+                }
+
                 RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(
                     notification,
                     receiver,
@@ -503,14 +543,55 @@ impl WorkflowStep for RtmpWatchStep {
                 RtmpWatchStepFutureResult::ReactorWorkflowResponse {
                     workflow_name,
                     validation_channel,
-                    keep_alive_channel,
+                    reactor_update_channel,
                 } => {
                     if workflow_name.is_some() {
                         let _ = validation_channel.send(ValidationResponse::Approve {
-                            reactor_keep_alive_channel: Some(keep_alive_channel),
+                            reactor_update_channel,
                         });
                     } else {
                         let _ = validation_channel.send(ValidationResponse::Reject);
+                    }
+                }
+
+                RtmpWatchStepFutureResult::ReactorUpdateReceived {
+                    stream_name,
+                    update,
+                    reactor_update_channel,
+                    cancellation_channel,
+                } => {
+                    if let Some(workflow_name) = update.workflow_name {
+                        info!(
+                            stream_key = %stream_name,
+                            "Received update that {}'s workflow has been changed to {}",
+                            stream_name, workflow_name
+                        );
+
+                        // No action needed as this is still a valid stream name
+                        let future = wait_for_reactor_update(
+                            stream_name,
+                            reactor_update_channel,
+                            cancellation_channel,
+                        );
+
+                        outputs.futures.push(future.boxed());
+                    } else {
+                        info!(
+                            stream_key = %stream_name,
+                            "Received update that stream {} is no longer tied to a workflow",
+                            stream_name
+                        );
+
+                        // TODO: Need some way to disconnect watchers
+                    }
+                }
+
+                RtmpWatchStepFutureResult::ReactorReceiverCanceled { stream_name } => {
+                    if let Some(_) = self.stream_watchers.remove(&stream_name) {
+                        info!(
+                            "Stream {}'s reactor updating has been cancelled",
+                            stream_name
+                        );
                     }
                 }
             }
@@ -548,19 +629,45 @@ async fn wait_for_endpoint_notification(
 }
 
 async fn wait_for_reactor_response(
-    receiver: Receiver<Option<String>>,
+    mut receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
     response_channel: Sender<ValidationResponse>,
-    keep_alive_channel: Sender<()>,
 ) -> Box<dyn StepFutureResult> {
-    let result = match receiver.await {
-        Ok(result) => result,
-        Err(_) => None, // Treat the channel being closed as no workflow
+    let result = match receiver.recv().await {
+        Some(result) => result.workflow_name,
+        None => None, // Treat the channel being closed as no workflow
     };
 
     let result = RtmpWatchStepFutureResult::ReactorWorkflowResponse {
         workflow_name: result,
         validation_channel: response_channel,
-        keep_alive_channel,
+        reactor_update_channel: receiver,
+    };
+
+    Box::new(result)
+}
+
+async fn wait_for_reactor_update(
+    stream_name: String,
+    mut update_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
+    mut cancellation_receiver: UnboundedReceiver<()>,
+) -> Box<dyn StepFutureResult> {
+    let result = tokio::select! {
+        update = update_receiver.recv() => {
+            match update {
+                Some(update) => RtmpWatchStepFutureResult::ReactorUpdateReceived{
+                    stream_name,
+                    update,
+                    reactor_update_channel: update_receiver,
+                    cancellation_channel: cancellation_receiver,
+                },
+
+                None => RtmpWatchStepFutureResult::ReactorGone,
+            }
+        }
+
+        _ = cancellation_receiver.recv() => RtmpWatchStepFutureResult::ReactorReceiverCanceled {
+            stream_name,
+        }
     };
 
     Box::new(result)

@@ -340,7 +340,7 @@ impl ExternalStreamReader {
 
                 RtmpEndpointWatcherNotification::StreamKeyBecameActive {
                     stream_key: _,
-                    reactor_keep_alive_channel: _,
+                    reactor_update_channel: _,
                 } => (),
 
                 RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key: _ } => (),

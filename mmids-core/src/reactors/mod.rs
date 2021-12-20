@@ -12,7 +12,7 @@ mod reactor;
 
 use std::collections::HashMap;
 
-pub use reactor::{start_reactor, ReactorRequest};
+pub use reactor::{start_reactor, ReactorRequest, ReactorWorkflowUpdate};
 
 /// How reactors are defined
 #[derive(Clone)]

@@ -587,11 +587,7 @@ reactor name executor=abc {
             "name".to_string(),
             "Unexpected name of reactor"
         );
-        assert_eq!(
-            reactor.executor,
-            Some("abc".to_string()),
-            "Unexpected executor"
-        );
+        assert_eq!(reactor.executor, "abc".to_string(), "Unexpected executor");
         assert_eq!(
             reactor.parameters.len(),
             2,

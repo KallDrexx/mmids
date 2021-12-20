@@ -323,6 +323,7 @@ async fn stream_started_notification_raised_when_publisher_connects() {
         stream_id: StreamId("stream-id".to_string()),
         connection_id: ConnectionId("conn-id".to_string()),
         stream_key: "stream_key".to_string(),
+        reactor_update_channel: None,
     });
 
     let (mut inputs, mut outputs) = create_step_parameters();
@@ -367,6 +368,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
         stream_id: stream_id.clone(),
         connection_id: connection_id.clone(),
         stream_key: "stream_key".to_string(),
+        reactor_update_channel: None,
     });
 
     let (mut inputs, mut outputs) = create_step_parameters();
@@ -413,6 +415,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
         stream_id: stream_id.clone(),
         connection_id: connection_id.clone(),
         stream_key: "stream_key".to_string(),
+        reactor_update_channel: None,
     });
 
     let (mut inputs, mut outputs) = create_step_parameters();
@@ -462,6 +465,7 @@ async fn video_notification_received_when_publisher_sends_video() {
         stream_id: stream_id.clone(),
         connection_id: connection_id.clone(),
         stream_key: "stream_key".to_string(),
+        reactor_update_channel: None,
     });
 
     let (mut inputs, mut outputs) = create_step_parameters();
@@ -530,6 +534,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         stream_id: stream_id.clone(),
         connection_id: connection_id.clone(),
         stream_key: "stream_key".to_string(),
+        reactor_update_channel: None,
     });
 
     let (mut inputs, mut outputs) = create_step_parameters();
@@ -558,6 +563,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         &StepStatus::Active,
         "Unexpected step status"
     );
+
     assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
     let media = outputs.media.remove(0);

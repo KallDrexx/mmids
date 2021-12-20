@@ -3,6 +3,7 @@
 
 use crate::event_hub::SubscriptionRequest;
 use crate::reactors::executors::{GenerationError, ReactorExecutorFactory};
+use crate::reactors::reactor::ReactorWorkflowUpdate;
 use crate::reactors::{start_reactor, ReactorDefinition, ReactorRequest};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -10,7 +11,7 @@ use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{Receiver, Sender};
+use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, warn};
 
 /// Requests that can be made to the reactor manager
@@ -29,14 +30,10 @@ pub enum ReactorManagerRequest {
         /// The name of the stream to look up a workflow for
         stream_name: String,
 
-        /// The channel in which to send the response to. The response will contain the name of
-        /// the workflow the stream is associated with, if one was found.
-        response_channel: Sender<Option<String>>,
-
         /// Channel that will be used to keep the created workflow alive. When the sender end of
         /// the channel is closed, that will be a signal to the reactor to remove the created
         /// workflow.
-        keep_alive_channel: Receiver<()>,
+        response_channel: UnboundedSender<ReactorWorkflowUpdate>,
     },
 }
 
@@ -173,7 +170,6 @@ impl Actor {
                 reactor_name,
                 stream_name,
                 response_channel,
-                keep_alive_channel,
             } => {
                 let reactor = match self.reactors.get(&reactor_name) {
                     Some(reactor) => reactor,
@@ -184,7 +180,10 @@ impl Actor {
                             reactor_name,
                         );
 
-                        let _ = response_channel.send(None);
+                        let _ = response_channel.send(ReactorWorkflowUpdate {
+                            workflow_name: None,
+                        });
+
                         return;
                     }
                 };
@@ -192,7 +191,6 @@ impl Actor {
                 let _ = reactor.send(ReactorRequest::CreateWorkflowNameForStream {
                     stream_name,
                     response_channel,
-                    keep_alive_channel,
                 });
             }
         }

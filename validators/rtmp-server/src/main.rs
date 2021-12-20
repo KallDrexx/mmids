@@ -88,7 +88,7 @@ pub async fn main() {
                 }
 
                 match message.unwrap() {
-                    RtmpEndpointWatcherNotification::StreamKeyBecameActive {stream_key} => {
+                    RtmpEndpointWatcherNotification::StreamKeyBecameActive {stream_key, ..} => {
                         info!("Stream key '{}' now has at least one watcher", stream_key);
                     }
 
@@ -108,7 +108,7 @@ pub async fn main() {
                 }
 
                 match message.unwrap() {
-                    RtmpEndpointPublisherMessage::NewPublisherConnected {connection_id, stream_key, stream_id} => {
+                    RtmpEndpointPublisherMessage::NewPublisherConnected {connection_id, stream_key, stream_id, ..} => {
                         info!("Connection {} connected as publisher for stream_key {} and stream id {:?}", connection_id, stream_key, stream_id);
                         publisher_stream_key_map.insert(connection_id, stream_key);
                     }
