@@ -8,6 +8,7 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
+use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::{Receiver, Sender};
 use tracing::{error, info, instrument, warn};
@@ -160,6 +161,7 @@ impl Actor {
                     definition.name.clone(),
                     executor,
                     self.event_hub_subscriber.clone(),
+                    Duration::from_secs(definition.update_interval),
                 );
 
                 self.reactors.insert(definition.name, reactor);

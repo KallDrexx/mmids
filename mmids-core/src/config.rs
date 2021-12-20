@@ -54,6 +54,9 @@ pub enum ConfigParseError {
     #[error("The reactor on line {line} had an unknown argument of '{argument}'")]
     UnknownReactorArgument { line: usize, argument: String },
 
+    #[error("The reactor on line {line} has an invalid update_interval value of '{argument}'. This value must be a number")]
+    InvalidUpdateIntervalValue { line: usize, argument: String },
+
     #[error(
         "The reactor parameter's value on line {line} is invalid. Equal signs are not allowed"
     )]
@@ -235,6 +238,7 @@ fn read_reactor(
     let mut name = None;
     let mut parameters = HashMap::new();
     let mut executor_name = None;
+    let mut update_interval = 0;
 
     for pair in pairs {
         match pair.as_rule() {
@@ -255,6 +259,22 @@ fn read_reactor(
                     if key == "executor" {
                         if let Some(value) = value {
                             executor_name = Some(value);
+                        }
+                    } else if key == "update_interval" {
+                        if let Some(value) = value {
+                            if let Ok(num) = value.parse() {
+                                update_interval = num;
+                            } else {
+                                return Err(ConfigParseError::InvalidUpdateIntervalValue {
+                                    line: pair.as_span().start_pos().line_col().0,
+                                    argument: value,
+                                });
+                            }
+                        } else {
+                            return Err(ConfigParseError::InvalidUpdateIntervalValue {
+                                line: pair.as_span().start_pos().line_col().0,
+                                argument: "".to_string(),
+                            });
                         }
                     } else {
                         return Err(ConfigParseError::UnknownReactorArgument {
@@ -308,6 +328,7 @@ fn read_reactor(
                     name,
                     parameters,
                     executor,
+                    update_interval,
                 },
             );
         } else {
