@@ -170,14 +170,14 @@ struct FfmpegProcess {
     notification_channel: UnboundedSender<FfmpegEndpointNotification>,
 }
 
-struct Actor<'a> {
+struct Actor {
     ffmpeg_exe_path: String,
     log_path: PathBuf,
-    futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
+    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     processes: HashMap<Uuid, FfmpegProcess>,
 }
 
-impl<'a> Actor<'a> {
+impl Actor {
     fn new(ffmpeg_exe_path: String, log_root: String) -> Result<Self, FfmpegEndpointStartError> {
         let path = Path::new(ffmpeg_exe_path.as_str());
         if !path.is_file() {

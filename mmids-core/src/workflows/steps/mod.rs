@@ -25,9 +25,9 @@ use futures::future::BoxFuture;
 pub trait StepFutureResult: Downcast {}
 impl_downcast!(StepFutureResult);
 
-pub type FutureList<'a> = Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>;
+pub type FutureList = Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>;
 pub type StepCreationResult = Result<
-    (Box<dyn WorkflowStep + Sync + Send>, FutureList<'static>),
+    (Box<dyn WorkflowStep + Sync + Send>, FutureList),
     Box<dyn std::error::Error + Sync + Send>,
 >;
 pub type CreateFactoryFnResult =
@@ -75,15 +75,15 @@ impl StepInputs {
 }
 
 /// Resulting outputs that come from executing a workflow step.
-pub struct StepOutputs<'a> {
+pub struct StepOutputs {
     /// Media notifications that the workflow step intends to pass to the next workflow step
     pub media: Vec<MediaNotification>,
 
     /// Any futures the workflow should track for this step
-    pub futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    pub futures: Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
 }
 
-impl<'a> StepOutputs<'a> {
+impl StepOutputs {
     pub fn new() -> Self {
         StepOutputs {
             media: Vec::new(),
@@ -130,8 +130,8 @@ mod test_utils {
     use std::time::Duration;
     use tokio::time::timeout;
 
-    pub async fn get_pending_future_result<'a>(
-        futures: Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    pub async fn get_pending_future_result(
+        futures: Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     ) -> Box<dyn StepFutureResult> {
         let mut awaitable_futures = FuturesUnordered::new();
         for future in futures {
@@ -144,7 +144,7 @@ mod test_utils {
         }
     }
 
-    pub fn create_step_parameters<'a>() -> (StepInputs, StepOutputs<'a>) {
+    pub fn create_step_parameters() -> (StepInputs, StepOutputs) {
         (
             StepInputs {
                 media: Vec::new(),

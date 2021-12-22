@@ -649,9 +649,9 @@ async fn media_input_does_not_get_passed_through() {
     )
 }
 
-fn create_initialized_step<'a>() -> (
+fn create_initialized_step() -> (
     Box<dyn WorkflowStep>,
-    Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     UnboundedSender<RtmpEndpointPublisherMessage>,
 ) {
     let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
@@ -677,9 +677,9 @@ fn create_initialized_step<'a>() -> (
     (step, init_results, message_channel)
 }
 
-async fn create_ready_step<'a>() -> (
+async fn create_ready_step() -> (
     Box<dyn WorkflowStep>,
-    Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     UnboundedSender<RtmpEndpointPublisherMessage>,
 ) {
     let (mut step, futures, message_channel) = create_initialized_step();

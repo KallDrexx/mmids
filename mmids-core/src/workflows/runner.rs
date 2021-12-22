@@ -79,14 +79,14 @@ struct StreamDetails {
     originating_step_id: u64,
 }
 
-struct Actor<'a> {
+struct Actor {
     name: String,
     steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep>>,
     active_steps: Vec<u64>,
     pending_steps: Vec<u64>,
-    futures: FuturesUnordered<BoxFuture<'a, FutureResult>>,
+    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     step_inputs: StepInputs,
-    step_outputs: StepOutputs<'a>,
+    step_outputs: StepOutputs,
     cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
     cached_inbound_media: HashMap<StreamId, Vec<MediaNotification>>,
     active_streams: HashMap<StreamId, StreamDetails>,
@@ -94,7 +94,7 @@ struct Actor<'a> {
     step_definitions: HashMap<u64, WorkflowStepDefinition>,
 }
 
-impl<'a> Actor<'a> {
+impl Actor {
     #[instrument(skip(definition, step_factory, receiver), fields(workflow_name = %definition.name))]
     fn new(
         definition: &WorkflowDefinition,
@@ -639,9 +639,9 @@ impl<'a> Actor<'a> {
     }
 }
 
-unsafe impl Send for Actor<'_> {}
+unsafe impl Send for Actor {}
 
-async fn wait_for_workflow_request<'a>(
+async fn wait_for_workflow_request(
     mut receiver: UnboundedReceiver<WorkflowRequest>,
 ) -> FutureResult {
     match receiver.recv().await {
@@ -650,9 +650,9 @@ async fn wait_for_workflow_request<'a>(
     }
 }
 
-async fn wait_for_step_future<'a>(
+async fn wait_for_step_future(
     step_id: u64,
-    future: BoxFuture<'a, Box<dyn StepFutureResult>>,
+    future: BoxFuture<'static, Box<dyn StepFutureResult>>,
 ) -> FutureResult {
     let result = future.await;
     FutureResult::StepFutureResolved { step_id, result }

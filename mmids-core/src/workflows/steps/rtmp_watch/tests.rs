@@ -716,9 +716,9 @@ fn create_definition(port: u16, app: &str, key: &str) -> WorkflowStepDefinition 
     definition
 }
 
-fn create_initialized_step<'a>() -> (
+fn create_initialized_step() -> (
     Box<dyn WorkflowStep>,
-    Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     UnboundedReceiver<RtmpEndpointMediaMessage>,
     UnboundedSender<RtmpEndpointWatcherNotification>,
 ) {
@@ -747,9 +747,9 @@ fn create_initialized_step<'a>() -> (
     (step, init_results, media_channel, notification_channel)
 }
 
-async fn create_active_step<'a>() -> (
+async fn create_active_step() -> (
     Box<dyn WorkflowStep>,
-    Vec<BoxFuture<'a, Box<dyn StepFutureResult>>>,
+    Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     UnboundedReceiver<RtmpEndpointMediaMessage>,
     UnboundedSender<RtmpEndpointWatcherNotification>,
 ) {

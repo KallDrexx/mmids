@@ -66,7 +66,7 @@ impl ExternalStreamReader {
         watcher_rtmp_app_name: String,
         rtmp_server: UnboundedSender<RtmpEndpointRequest>,
         external_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
-    ) -> (Self, FutureList<'static>) {
+    ) -> (Self, FutureList) {
         let step = ExternalStreamReader {
             status: StepStatus::Active,
             watcher_app_name: watcher_rtmp_app_name,

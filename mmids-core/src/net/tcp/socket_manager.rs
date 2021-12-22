@@ -36,12 +36,12 @@ struct OpenPort {
     response_channel: UnboundedSender<TcpSocketResponse>,
 }
 
-struct SocketManager<'a> {
+struct SocketManager {
     open_ports: HashMap<u16, OpenPort>,
-    futures: FuturesUnordered<BoxFuture<'a, SocketManagerFutureResult>>,
+    futures: FuturesUnordered<BoxFuture<'static, SocketManagerFutureResult>>,
 }
 
-impl<'a> SocketManager<'a> {
+impl SocketManager {
     fn new() -> Self {
         SocketManager {
             open_ports: HashMap::new(),
