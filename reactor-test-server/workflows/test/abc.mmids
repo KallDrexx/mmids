@@ -1,4 +1,4 @@
 workflow abc_workflow {
     rtmp_watch rtmp_app=abc stream_key=*
-    rtmp_watch rtmp_app=abc2 stream_key=*
+    rtmp_watch rtmp_app=abc stream_key=aaa
 }

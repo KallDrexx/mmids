@@ -413,7 +413,10 @@ impl WorkflowStep for WorkflowForwarderStep {
                     error!(
                         "Workflow forwarder step received a notification that is not a known type"
                     );
-                    self.status = StepStatus::Error;
+
+                    self.status = StepStatus::Error {
+                        message: "Received future result of unknown type".to_string(),
+                    };
 
                     return;
                 }
@@ -422,14 +425,18 @@ impl WorkflowStep for WorkflowForwarderStep {
             match future_result {
                 FutureResult::EventHubGone => {
                     error!("Received a notification that the event hub is gone");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Event hub gone".to_string(),
+                    };
 
                     return;
                 }
 
                 FutureResult::ReactorManagerGone => {
                     error!("Reactor manager is gone");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Reactor manager gone".to_string(),
+                    };
 
                     return;
                 }
@@ -441,7 +448,9 @@ impl WorkflowStep for WorkflowForwarderStep {
                         error!("Received notice that a reactor is gone but we aren't using one");
                     }
 
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Reactor gone".to_string(),
+                    };
 
                     return;
                 }

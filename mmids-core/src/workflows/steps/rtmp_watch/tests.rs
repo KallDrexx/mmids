@@ -309,11 +309,10 @@ async fn registration_failure_changes_status_to_error() {
 
     step.execute(&mut inputs, &mut outputs);
 
-    assert_eq!(
-        step.get_status(),
-        &StepStatus::Error,
-        "Unexpected status for step"
-    );
+    match step.get_status() {
+        StepStatus::Error { message: _ } => (),
+        x => panic!("Unexpected status for step: {:?}", x),
+    }
 }
 
 #[tokio::test]

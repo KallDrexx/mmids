@@ -262,7 +262,9 @@ impl RtmpWatchStep {
         match notification {
             RtmpEndpointWatcherNotification::WatcherRegistrationFailed => {
                 error!("Registration for RTMP watchers was denied");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Registration for watchers failed".to_string(),
+                };
             }
 
             RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => {
@@ -487,16 +489,14 @@ impl WorkflowStep for RtmpWatchStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         for notification in inputs.notifications.drain(..) {
             let future_result = match notification.downcast::<RtmpWatchStepFutureResult>() {
                 Ok(x) => *x,
                 Err(_) => {
                     error!("Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Received invalid future result type".to_string(),
+                    };
 
                     return;
                 }
@@ -505,14 +505,18 @@ impl WorkflowStep for RtmpWatchStep {
             match future_result {
                 RtmpWatchStepFutureResult::RtmpEndpointGone => {
                     error!("Rtmp endpoint gone, shutting step down");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Rtmp endpoint gone".to_string(),
+                    };
 
                     return;
                 }
 
                 RtmpWatchStepFutureResult::ReactorManagerGone => {
                     error!("Reactor manager gone");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Reactor manager gone".to_string(),
+                    };
 
                     return;
                 }
@@ -524,7 +528,9 @@ impl WorkflowStep for RtmpWatchStep {
                         error!("Received notice that the reactor is gone, but this step doesn't use one");
                     }
 
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Reactor gone".to_string(),
+                    };
 
                     return;
                 }

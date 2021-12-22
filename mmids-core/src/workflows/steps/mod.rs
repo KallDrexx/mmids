@@ -44,7 +44,7 @@ pub enum StepStatus {
 
     /// The step has encountered an unrecoverable error and can no longer handle media or
     /// notifications.  It will likely have to be recreated.
-    Error,
+    Error { message: String },
 
     /// The step has been shut down and is not expected to be invoked anymore. If it's wanted to be
     /// used it will have to be recreated

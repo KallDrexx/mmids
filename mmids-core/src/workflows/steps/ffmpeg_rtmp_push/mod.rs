@@ -107,10 +107,13 @@ impl WorkflowStep for FfmpegRtmpPushStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.stream_reader.status == StepStatus::Error {
+        if let StepStatus::Error { message } = &self.stream_reader.status {
             error!("External stream reader is in error status, so putting the step in in error status as well.");
 
-            self.status = StepStatus::Error;
+            self.status = StepStatus::Error {
+                message: message.to_string(),
+            };
+
             return;
         }
 

@@ -343,7 +343,13 @@ impl<'a> Actor<'a> {
         };
 
         let status = step.get_status();
-        if status != &StepStatus::Shutdown && status != &StepStatus::Error {
+        let execute = match status {
+            StepStatus::Created => true,
+            StepStatus::Active => true,
+            _ => false,
+        };
+
+        if execute {
             step.execute(&mut self.step_inputs, &mut self.step_outputs);
         }
 
@@ -385,7 +391,7 @@ impl<'a> Actor<'a> {
                     StepStatus::Active => (),
 
                     // TODO: Set workflow in error state for these two
-                    StepStatus::Error => return,
+                    StepStatus::Error { .. } => return,
                     StepStatus::Shutdown => return,
                 }
             } else {

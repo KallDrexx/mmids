@@ -247,7 +247,10 @@ impl RtmpReceiverStep {
         match message {
             RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
                 error!("Rtmp receive step failed to register for publish registration");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Rtmp receive step failed to register for publish registration"
+                        .to_string(),
+                };
 
                 return;
             }
@@ -430,7 +433,9 @@ impl WorkflowStep for RtmpReceiverStep {
                 Ok(result) => *result,
                 Err(_) => {
                     error!("Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type".to_string(),
+                    };
 
                     return;
                 }
@@ -439,14 +444,19 @@ impl WorkflowStep for RtmpReceiverStep {
             match future_result {
                 FutureResult::RtmpEndpointGone => {
                     error!("Rtmp receive step stopping as the rtmp endpoint is gone");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Rtmp receive step stopping as the rtmp endpoint is gone"
+                            .to_string(),
+                    };
 
                     return;
                 }
 
                 FutureResult::ReactorManagerGone => {
                     error!("Reactor manager gone");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Reactor manager gone".to_string(),
+                    };
 
                     return;
                 }
@@ -458,7 +468,9 @@ impl WorkflowStep for RtmpReceiverStep {
                         error!("Got reactor gone signal but step is not using a reactor");
                     }
 
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Reactor gone".to_string(),
+                    };
 
                     return;
                 }

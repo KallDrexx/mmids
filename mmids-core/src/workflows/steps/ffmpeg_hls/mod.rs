@@ -151,9 +151,11 @@ impl WorkflowStep for FfmpegHlsStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.stream_reader.status == StepStatus::Error {
+        if let StepStatus::Error { message } = &self.stream_reader.status {
             error!("external stream reader is in error status, so putting the step in in error status as well.");
-            self.status = StepStatus::Error;
+            self.status = StepStatus::Error {
+                message: message.to_string(),
+            };
             return;
         }
 
@@ -178,7 +180,12 @@ impl WorkflowStep for FfmpegHlsStep {
 
                         Err(error) => {
                             error!("Could not create HLS path: '{}': {:?}", self.path, error);
-                            self.status = StepStatus::Error;
+                            self.status = StepStatus::Error {
+                                message: format!(
+                                    "Could not create HLS path: '{}': {:?}",
+                                    self.path, error
+                                ),
+                            };
 
                             return;
                         }

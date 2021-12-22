@@ -134,20 +134,20 @@ impl StepGenerator for FfmpegPullStepGenerator {
 
 impl FfmpegPullStep {
     fn handle_resolved_future(&mut self, result: FutureResult, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         match result {
             FutureResult::FfmpegEndpointGone => {
                 error!("Ffmpeg endpoint is gone");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Ffmpeg endpoint is gone".to_string(),
+                };
                 self.stop_ffmpeg();
             }
 
             FutureResult::RtmpEndpointGone => {
                 error!("Rtmp endpoint gone");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Rtmp endpoint gone".to_string(),
+                };
                 self.stop_ffmpeg();
             }
 
@@ -174,7 +174,9 @@ impl FfmpegPullStep {
         match message {
             FfmpegEndpointNotification::FfmpegFailedToStart { cause } => {
                 error!("Ffmpeg failed to start: {:?}", cause);
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: format!("Ffmpeg failed to start: {:?}", cause),
+                };
             }
 
             FfmpegEndpointNotification::FfmpegStarted => {
@@ -198,7 +200,9 @@ impl FfmpegPullStep {
         match message {
             RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
                 error!("Publisher registration failed");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Publisher registration failed".to_string(),
+                };
             }
 
             RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
@@ -227,7 +231,13 @@ impl FfmpegPullStep {
                         "Expected publisher to have a stream name of {} but instead it was {}", self.stream_name, stream_key
                     );
 
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: format!(
+                            "Expected publisher to have a stream name of {} but instead it was {}",
+                            self.stream_name, stream_key
+                        ),
+                    };
+
                     self.stop_ffmpeg();
                 }
 
@@ -264,7 +274,9 @@ impl FfmpegPullStep {
                 } else {
                     error!("Received stream metadata without an active stream id");
                     self.stop_ffmpeg();
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Received stream metadata without an active stream id".to_string(),
+                    };
                 }
             }
 
@@ -290,7 +302,9 @@ impl FfmpegPullStep {
                 } else {
                     error!("Received video data without an active stream id");
                     self.stop_ffmpeg();
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Received video data without an active stream id".to_string(),
+                    };
                 }
             }
 
@@ -314,13 +328,18 @@ impl FfmpegPullStep {
                 } else {
                     error!("Received audio data without an active stream id");
                     self.stop_ffmpeg();
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message: "Received audio data without an active stream id".to_string(),
+                    };
                 }
             }
 
             RtmpEndpointPublisherMessage::PublisherRequiringApproval { .. } => {
                 error!("Publisher approval requested but publishers should be auto-approved");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Publisher approval requested but publishers should be auto-approved"
+                        .to_string(),
+                };
             }
         }
     }

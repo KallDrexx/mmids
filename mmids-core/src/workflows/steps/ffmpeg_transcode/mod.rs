@@ -306,10 +306,6 @@ impl FfmpegTranscoder {
         notification: Box<dyn StepFutureResult>,
         outputs: &mut StepOutputs,
     ) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         let notification = match notification.downcast::<FutureResult>() {
             Ok(x) => *x,
             Err(_) => return,
@@ -318,7 +314,9 @@ impl FfmpegTranscoder {
         match notification {
             FutureResult::FfmpegEndpointGone => {
                 error!("Ffmpeg endpoint is gone!");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Ffmpeg endpoint is gone".to_string(),
+                };
 
                 let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
                 for id in ids {
@@ -328,7 +326,9 @@ impl FfmpegTranscoder {
 
             FutureResult::RtmpEndpointGone => {
                 error!("RTMP endpoint is gone!");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "Rtmp endpoint is gone".to_string(),
+                };
 
                 let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
                 for id in ids {
@@ -399,10 +399,6 @@ impl FfmpegTranscoder {
     }
 
     fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         match &media.content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(stream) = self.active_streams.get(&media.stream_id) {
@@ -689,7 +685,11 @@ impl FfmpegTranscoder {
 
                 RtmpEndpointWatcherNotification::WatcherRequiringApproval { .. } => {
                     error!("Watcher requires approval but all watchers should be auto-approved");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message:
+                            "Watcher requires approval but all watchers should be auto-approved"
+                                .to_string(),
+                    };
                 }
             }
         }
@@ -779,7 +779,11 @@ impl FfmpegTranscoder {
 
                 RtmpEndpointPublisherMessage::PublisherRequiringApproval { .. } => {
                     error!("Publisher approval requested but publishers should be auto-approved");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message:
+                            "Publisher approval requested but publishers should be auto-approved"
+                                .to_string(),
+                    };
                 }
             }
         }
@@ -858,10 +862,6 @@ impl WorkflowStep for FfmpegTranscoder {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        if self.status == StepStatus::Error {
-            return;
-        }
-
         for notification in inputs.notifications.drain(..) {
             self.handle_resolved_future(notification, outputs);
         }

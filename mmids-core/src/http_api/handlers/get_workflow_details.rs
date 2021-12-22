@@ -148,7 +148,7 @@ impl From<WorkflowStepState> for WorkflowStepStateResponse {
             status: match step_state.status {
                 StepStatus::Created => "Created".to_string(),
                 StepStatus::Active => "Active".to_string(),
-                StepStatus::Error => "Error".to_string(),
+                StepStatus::Error { message } => format!("Error: {}", message),
                 StepStatus::Shutdown => "Torn Down".to_string(),
             },
         }

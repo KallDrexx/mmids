@@ -117,7 +117,9 @@ impl ExternalStreamReader {
         match notification {
             FutureResult::RtmpEndpointGone => {
                 error!("RTMP endpoint is gone!");
-                self.status = StepStatus::Error;
+                self.status = StepStatus::Error {
+                    message: "RTMP endpoint is gone".to_string(),
+                };
                 self.stop_all_streams();
             }
 
@@ -347,7 +349,11 @@ impl ExternalStreamReader {
 
                 RtmpEndpointWatcherNotification::WatcherRequiringApproval { .. } => {
                     error!("Received request for approval but requests should be auto-approved");
-                    self.status = StepStatus::Error;
+                    self.status = StepStatus::Error {
+                        message:
+                            "Received request for approval but requests should be auto-approved"
+                                .to_string(),
+                    };
                 }
             }
         }

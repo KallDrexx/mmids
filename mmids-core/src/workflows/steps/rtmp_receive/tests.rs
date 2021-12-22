@@ -299,7 +299,11 @@ async fn publish_failure_sets_step_to_error_mode() {
     step.execute(&mut inputs, &mut outputs);
 
     let status = step.get_status();
-    assert_eq!(status, &StepStatus::Error, "Unexpected step status");
+
+    match status {
+        StepStatus::Error { message: _ } => (),
+        x => panic!("Unexpected step status: {:?}", x),
+    }
 }
 
 #[tokio::test]
