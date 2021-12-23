@@ -46,6 +46,9 @@ pub enum ConnectionRequest {
         rtmp_app: String,
         stream_key: String,
     },
+
+    PublishFinished,
+    PlaybackFinished,
 }
 
 pub enum ConnectionResponse {
@@ -365,10 +368,22 @@ impl RtmpServerConnectionHandler {
                         stream_key,
                         stream_id,
                         request_id,
-                        ..
+                        reset: _,
+                        duration: _,
+                        start_at: _,
                     } => self.handle_rtmp_event_play_stream_requested(
                         app_name, stream_key, stream_id, request_id,
                     ),
+
+                    ServerSessionEvent::PublishStreamFinished {
+                        app_name,
+                        stream_key,
+                    } => self.handle_rtmp_event_publish_finished(app_name, stream_key),
+
+                    ServerSessionEvent::PlayStreamFinished {
+                        app_name,
+                        stream_key,
+                    } => self.handle_rtmp_event_play_finished(app_name, stream_key),
 
                     event => {
                         info!("Connection raised RTMP event: {:?}", event);
@@ -381,6 +396,101 @@ impl RtmpServerConnectionHandler {
                         payload
                     );
                 }
+            }
+        }
+    }
+
+    fn handle_rtmp_event_play_finished(&mut self, app_name: String, stream_key: String) {
+        match &self.state {
+            ConnectionState::Watching {
+                rtmp_app: active_app,
+                stream_key: active_key,
+                stream_id: _,
+            } => {
+                if *active_app != app_name {
+                    error!(
+                        requested_app = %app_name,
+                        active_app = %active_app,
+                        "Connection requested to stop playback on an app it's not connected to"
+                    );
+
+                    self.force_disconnect = true;
+                    return;
+                }
+
+                if *active_key != stream_key {
+                    error!(
+                        requested_key = %stream_key,
+                        active_key = %active_key,
+                        "Connection requested to stop playback on a stream key it's not watching"
+                    );
+
+                    self.force_disconnect = true;
+                    return;
+                }
+
+                self.state = ConnectionState::ConnectedToApp {
+                    rtmp_app: app_name.clone(),
+                };
+                let _ = self
+                    .request_sender
+                    .send(ConnectionRequest::PlaybackFinished);
+            }
+
+            _ => {
+                error!(
+                    "Connection {} requested to stop playback but was in an invalid state: {:?}",
+                    self.id, self.state
+                );
+
+                self.force_disconnect = true;
+                return;
+            }
+        }
+    }
+
+    fn handle_rtmp_event_publish_finished(&mut self, app_name: String, stream_key: String) {
+        match &self.state {
+            ConnectionState::Publishing {
+                rtmp_app: current_app,
+                stream_key: current_key,
+            } => {
+                if *current_app != app_name {
+                    error!(
+                        requested_app = %app_name,
+                        active_app = %current_app,
+                        "Connection requested to stop publishing on an app it's not connected to"
+                    );
+
+                    self.force_disconnect = true;
+                    return;
+                }
+
+                if *current_key != stream_key {
+                    error!(
+                        requested_key = %stream_key,
+                        active_key = %current_key,
+                        "Connection requested to stop publishing on a stream key it's not publishing on"
+                    );
+
+                    self.force_disconnect = true;
+                    return;
+                }
+
+                self.state = ConnectionState::ConnectedToApp {
+                    rtmp_app: app_name.clone(),
+                };
+                let _ = self.request_sender.send(ConnectionRequest::PublishFinished);
+            }
+
+            _ => {
+                error!(
+                    "Connection {} requested to stop publishing but was in an invalid state: {:?}",
+                    self.id, self.state
+                );
+
+                self.force_disconnect = true;
+                return;
             }
         }
     }
