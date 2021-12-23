@@ -42,13 +42,24 @@ pub enum WorkflowRequestOperation {
 }
 
 pub struct WorkflowState {
+    pub status: WorkflowStatus,
     pub active_steps: Vec<WorkflowStepState>,
     pub pending_steps: Vec<WorkflowStepState>,
 }
 
 pub struct WorkflowStepState {
+    pub step_id: u64,
     pub definition: WorkflowStepDefinition,
     pub status: StepStatus,
+}
+
+#[derive(PartialEq, Clone)]
+pub enum WorkflowStatus {
+    Running,
+    Error {
+        failed_step_id: u64,
+        message: String,
+    },
 }
 
 /// Starts the execution of a workflow with the specified definition
@@ -92,6 +103,7 @@ struct Actor {
     active_streams: HashMap<StreamId, StreamDetails>,
     step_factory: Arc<WorkflowStepFactory>,
     step_definitions: HashMap<u64, WorkflowStepDefinition>,
+    status: WorkflowStatus,
 }
 
 impl Actor {
@@ -119,6 +131,7 @@ impl Actor {
             active_streams: HashMap::new(),
             step_factory,
             step_definitions: HashMap::new(),
+            status: WorkflowStatus::Running,
         }
     }
 
@@ -167,6 +180,7 @@ impl Actor {
             WorkflowRequestOperation::GetState { response_channel } => {
                 info!("Workflow state requested by external caller");
                 let mut state = WorkflowState {
+                    status: self.status.clone(),
                     pending_steps: Vec::new(),
                     active_steps: Vec::new(),
                 };
@@ -175,11 +189,18 @@ impl Actor {
                     if let Some(definition) = self.step_definitions.get(&id) {
                         if let Some(step) = self.steps_by_definition_id.get(&id) {
                             state.pending_steps.push(WorkflowStepState {
+                                step_id: *id,
                                 definition: definition.clone(),
                                 status: step.get_status().clone(),
                             });
                         } else {
-                            error!(step_id = %id, "No step was found with an id of {}", id);
+                            state.pending_steps.push(WorkflowStepState {
+                                step_id: *id,
+                                definition: definition.clone(),
+                                status: StepStatus::Error {
+                                    message: "Step not instantiated".to_string(),
+                                },
+                            });
                         }
                     } else {
                         error!(step_id = %id, "No definition was found for step id {}", id);
@@ -190,11 +211,18 @@ impl Actor {
                     if let Some(definition) = self.step_definitions.get(&id) {
                         if let Some(step) = self.steps_by_definition_id.get(&id) {
                             state.active_steps.push(WorkflowStepState {
+                                step_id: *id,
                                 definition: definition.clone(),
                                 status: step.get_status().clone(),
                             });
                         } else {
-                            error!(step_id = %id, "No step was found with an id of {}", id);
+                            state.active_steps.push(WorkflowStepState {
+                                step_id: *id,
+                                definition: definition.clone(),
+                                status: StepStatus::Error {
+                                    message: "Step not instantiated".to_string(),
+                                },
+                            });
                         }
                     } else {
                         error!(step_id = %id, "No definition was found for step id {}", id);
@@ -239,6 +267,18 @@ impl Actor {
             definition.steps.len()
         );
 
+        // If the workflow is in an errored state, clear out all the existing steps, as they've
+        // been shut down anyway. So start this from a clean state
+        if let WorkflowStatus::Error {
+            message: _,
+            failed_step_id: _,
+        } = &self.status
+        {
+            self.active_steps.clear();
+            self.steps_by_definition_id.clear();
+            self.status = WorkflowStatus::Running;
+        }
+
         self.pending_steps.clear();
         for step_definition in definition.steps {
             let id = step_definition.get_id();
@@ -250,14 +290,27 @@ impl Actor {
 
             if !self.steps_by_definition_id.contains_key(&id) {
                 let span = span!(Level::INFO, "Step Creation", step_id = id);
-                let _ = span.enter();
+                let _enter = span.enter();
+
+                let mut details = format!("{}: ", step_definition.step_type.0);
+                for (key, value) in &step_definition.parameters {
+                    match value {
+                        Some(value) => details.push_str(&format!("{}={} ", key, value)),
+                        None => details.push_str(&format!("{} ", key)),
+                    };
+                }
+
+                info!("Creating step {}", details);
 
                 let step_result = match self.step_factory.create_step(step_definition) {
                     Ok(step_result) => step_result,
                     Err(error) => {
                         error!("Step factory failed to generate step instance: {:?}", error);
+                        self.set_status_to_error(
+                            id,
+                            format!("Failed to generate step instance: {:?}", error),
+                        );
 
-                        // TODO: put workflow in error state
                         return;
                     }
                 };
@@ -266,8 +319,8 @@ impl Actor {
                     Ok((step, futures)) => (step, futures),
                     Err(error) => {
                         error!("Step could not be generated: {}", error);
+                        self.set_status_to_error(id, format!("Failed to generate step: {}", error));
 
-                        // TODO: put workflow in error state
                         return;
                     }
                 };
@@ -291,6 +344,10 @@ impl Actor {
         preserve_current_step_inputs: bool,
         perform_pending_check: bool,
     ) {
+        if self.status != WorkflowStatus::Running {
+            return;
+        }
+
         if !preserve_current_step_inputs {
             self.step_inputs.clear();
         }
@@ -326,6 +383,10 @@ impl Actor {
     }
 
     fn execute_step(&mut self, step_id: u64) {
+        if self.status != WorkflowStatus::Running {
+            return;
+        }
+
         let span = span!(Level::INFO, "Step Execution", step_id = step_id);
         let _enter = span.enter();
 
@@ -342,19 +403,14 @@ impl Actor {
             }
         };
 
-        let status = step.get_status();
-        let execute = match status {
-            StepStatus::Created => true,
-            StepStatus::Active => true,
-            _ => false,
-        };
+        step.execute(&mut self.step_inputs, &mut self.step_outputs);
+        if let StepStatus::Error { message } = step.get_status() {
+            let message = message.clone();
+            self.set_status_to_error(step_id, message);
 
-        if execute {
-            step.execute(&mut self.step_inputs, &mut self.step_outputs);
+            return;
         }
 
-        // Even if we didn't call execute, run through the logic below to make sure we are in a
-        // clean state if we do fall through to the next step.
         for future in self.step_outputs.futures.drain(..) {
             self.futures
                 .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
@@ -381,7 +437,9 @@ impl Actor {
                         "Workflow had step id {} pending but this step was not defined", id
                     );
 
-                    return; // TODO: set workflow in error state
+                    let id = *id;
+                    self.set_status_to_error(id, "workflow step not defined".to_string());
+                    return;
                 }
             };
 
@@ -390,8 +448,12 @@ impl Actor {
                     StepStatus::Created => all_are_active = false,
                     StepStatus::Active => (),
 
-                    // TODO: Set workflow in error state for these two
-                    StepStatus::Error { .. } => return,
+                    StepStatus::Error { message } => {
+                        let id = *id;
+                        let message = message.clone();
+                        self.set_status_to_error(id, message);
+                        return;
+                    }
                     StepStatus::Shutdown => return,
                 }
             } else {
@@ -634,6 +696,29 @@ impl Actor {
 
                     collection.push(media.clone());
                 }
+            }
+        }
+    }
+
+    fn set_status_to_error(&mut self, step_id: u64, message: String) {
+        error!(
+            "Workflow set to error state due to step id {}: {}",
+            step_id, message
+        );
+        self.status = WorkflowStatus::Error {
+            failed_step_id: step_id,
+            message,
+        };
+
+        for step_id in &self.active_steps {
+            if let Some(step) = self.steps_by_definition_id.get_mut(step_id) {
+                step.shutdown();
+            }
+        }
+
+        for step_id in &self.pending_steps {
+            if let Some(step) = self.steps_by_definition_id.get_mut(step_id) {
+                step.shutdown();
             }
         }
     }

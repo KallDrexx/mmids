@@ -3,7 +3,7 @@
 use crate::http_api::routing::RouteHandler;
 use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use crate::workflows::steps::StepStatus;
-use crate::workflows::{WorkflowState, WorkflowStepState};
+use crate::workflows::{WorkflowState, WorkflowStatus, WorkflowStepState};
 use async_trait::async_trait;
 use hyper::http::HeaderValue;
 use hyper::{Body, Error, Request, Response, StatusCode};
@@ -25,6 +25,7 @@ pub struct GetWorkflowDetailsHandler {
 /// The API's response for the state of the requested workflow
 #[derive(Serialize)]
 pub struct WorkflowStateResponse {
+    status: String,
     active_steps: Vec<WorkflowStepStateResponse>,
     pending_steps: Vec<WorkflowStepStateResponse>,
 }
@@ -32,6 +33,7 @@ pub struct WorkflowStateResponse {
 /// API's response for the details of an individual workflow step
 #[derive(Serialize)]
 pub struct WorkflowStepStateResponse {
+    step_id: String,
     step_type: String,
     parameters: HashMap<String, Option<String>>,
     status: String,
@@ -125,6 +127,14 @@ impl RouteHandler for GetWorkflowDetailsHandler {
 impl From<WorkflowState> for WorkflowStateResponse {
     fn from(workflow: WorkflowState) -> Self {
         WorkflowStateResponse {
+            status: match workflow.status {
+                WorkflowStatus::Running => "Running".to_string(),
+                WorkflowStatus::Error {
+                    failed_step_id,
+                    message,
+                } => format!("Step id {} failed: {}", failed_step_id, message),
+            },
+
             active_steps: workflow
                 .active_steps
                 .into_iter()
@@ -143,13 +153,14 @@ impl From<WorkflowState> for WorkflowStateResponse {
 impl From<WorkflowStepState> for WorkflowStepStateResponse {
     fn from(step_state: WorkflowStepState) -> Self {
         WorkflowStepStateResponse {
+            step_id: step_state.definition.get_id().to_string(),
             step_type: step_state.definition.step_type.0,
             parameters: step_state.definition.parameters,
             status: match step_state.status {
                 StepStatus::Created => "Created".to_string(),
                 StepStatus::Active => "Active".to_string(),
                 StepStatus::Error { message } => format!("Error: {}", message),
-                StepStatus::Shutdown => "Torn Down".to_string(),
+                StepStatus::Shutdown => "Shut Down".to_string(),
             },
         }
     }
