@@ -440,7 +440,7 @@ impl RtmpTestClient {
         });
     }
 
-    fn execute_session_method_single_result(
+    pub fn execute_session_method_single_result(
         &mut self,
         function: impl FnOnce(&mut ClientSession) -> Result<ClientSessionResult, ClientSessionError>,
     ) {

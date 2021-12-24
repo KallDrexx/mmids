@@ -48,6 +48,11 @@ impl TestContextBuilder {
         self
     }
 
+    pub fn set_requires_registrant_approval(mut self, requires_approval: bool) -> Self {
+        self.requires_registrant_approval = Some(requires_approval);
+        self
+    }
+
     pub async fn into_publisher(self) -> TestContext {
         let (sender, receiver) = unbounded_channel();
         let request = RtmpEndpointRequest::ListenForPublishers {

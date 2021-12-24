@@ -5,7 +5,7 @@ use crate::endpoints::rtmp_server::actor::tests::test_context::TestContextBuilde
 use crate::endpoints::rtmp_server::{
     start_rtmp_server_endpoint, IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
-    StreamKeyRegistration,
+    StreamKeyRegistration, ValidationResponse,
 };
 use bytes::Bytes;
 use rml_rtmp::sessions::{ClientSessionEvent, StreamMetadata};
@@ -1746,4 +1746,221 @@ async fn watcher_does_not_receives_unknown_audio_codec() {
     if let Some(event) = event {
         panic!("Expected no events, but got {:?}", event);
     }
+}
+
+#[tokio::test]
+async fn consumer_accepts_publisher() {
+    let mut context = TestContextBuilder::new()
+        .set_requires_registrant_approval(true)
+        .into_publisher()
+        .await;
+
+    context.client.perform_handshake().await;
+    context
+        .client
+        .connect_to_app(context.rtmp_app.clone(), true)
+        .await;
+
+    context
+        .client
+        .publish_to_stream_key("key".to_string(), false)
+        .await;
+
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    match timeout(Duration::from_millis(10), receiver.recv()).await {
+        Ok(Some(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+            stream_key,
+            connection_id,
+            response_channel,
+        })) => {
+            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(
+                connection_id.0,
+                rtmp_client::CONNECTION_ID.to_string(),
+                "Unexpected connection id"
+            );
+
+            let (_sender, receiver) = unbounded_channel();
+            response_channel
+                .send(ValidationResponse::Approve {
+                    reactor_update_channel: receiver,
+                })
+                .expect("Failed to send approval")
+        }
+
+        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
+        _ => panic!("No endpoint publisher message received"),
+    }
+
+    match timeout(Duration::from_millis(10), receiver.recv()).await {
+        Ok(Some(RtmpEndpointPublisherMessage::NewPublisherConnected {
+            reactor_update_channel,
+            connection_id,
+            stream_id: _,
+            stream_key,
+        })) => {
+            assert_eq!(
+                connection_id.0,
+                rtmp_client::CONNECTION_ID.to_string(),
+                "Unexpected connection id"
+            );
+            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert!(
+                reactor_update_channel.is_some(),
+                "Expected a reactor channel"
+            );
+        }
+
+        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
+        _ => panic!("No endpoint publisher message received"),
+    }
+}
+
+#[tokio::test]
+async fn consumer_rejectin_publisher_disconnects_client() {
+    let mut context = TestContextBuilder::new()
+        .set_requires_registrant_approval(true)
+        .into_publisher()
+        .await;
+
+    context.client.perform_handshake().await;
+    context
+        .client
+        .connect_to_app(context.rtmp_app.clone(), true)
+        .await;
+
+    context
+        .client
+        .publish_to_stream_key("key".to_string(), false)
+        .await;
+
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    match timeout(Duration::from_millis(10), receiver.recv()).await {
+        Ok(Some(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+            stream_key,
+            connection_id,
+            response_channel,
+        })) => {
+            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(
+                connection_id.0,
+                rtmp_client::CONNECTION_ID.to_string(),
+                "Unexpected connection id"
+            );
+
+            response_channel
+                .send(ValidationResponse::Reject)
+                .expect("Failed to send approval");
+        }
+
+        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
+        _ => panic!("No endpoint publisher message received"),
+    }
+
+    context.client.assert_connection_sender_closed().await;
+}
+
+#[tokio::test]
+async fn consumer_accepts_watcher() {
+    let mut context = TestContextBuilder::new()
+        .set_requires_registrant_approval(true)
+        .into_watcher()
+        .await;
+
+    context.client.perform_handshake().await;
+    context
+        .client
+        .connect_to_app(context.rtmp_app.clone(), true)
+        .await;
+
+    context
+        .client
+        .watch_stream_key("key".to_string(), false)
+        .await;
+
+    let receiver = context.watch_receiver.as_mut().unwrap();
+    match timeout(Duration::from_millis(10), receiver.recv()).await {
+        Ok(Some(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
+            stream_key,
+            connection_id,
+            response_channel,
+        })) => {
+            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(
+                connection_id.0,
+                rtmp_client::CONNECTION_ID.to_string(),
+                "Unexpected connection id"
+            );
+
+            let (_sender, receiver) = unbounded_channel();
+            response_channel
+                .send(ValidationResponse::Approve {
+                    reactor_update_channel: receiver,
+                })
+                .expect("Failed to send approval")
+        }
+
+        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
+        _ => panic!("No endpoint publisher message received"),
+    }
+
+    match timeout(Duration::from_millis(10), receiver.recv()).await {
+        Ok(Some(RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+            stream_key,
+            reactor_update_channel,
+        })) => {
+            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert!(
+                reactor_update_channel.is_some(),
+                "Expected reactor update channel"
+            );
+        }
+
+        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
+        _ => panic!("No endpoint publisher message received"),
+    }
+}
+
+#[tokio::test]
+async fn consumer_rejecting_watcher_disconnects_client() {
+    let mut context = TestContextBuilder::new()
+        .set_requires_registrant_approval(true)
+        .into_watcher()
+        .await;
+
+    context.client.perform_handshake().await;
+    context
+        .client
+        .connect_to_app(context.rtmp_app.clone(), true)
+        .await;
+
+    context
+        .client
+        .watch_stream_key("key".to_string(), false)
+        .await;
+
+    let receiver = context.watch_receiver.as_mut().unwrap();
+    match timeout(Duration::from_millis(10), receiver.recv()).await {
+        Ok(Some(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
+            stream_key,
+            connection_id,
+            response_channel,
+        })) => {
+            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(
+                connection_id.0,
+                rtmp_client::CONNECTION_ID.to_string(),
+                "Unexpected connection id"
+            );
+
+            response_channel
+                .send(ValidationResponse::Reject)
+                .expect("Failed to send approval");
+        }
+
+        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
+        _ => panic!("No endpoint publisher message received"),
+    }
+
+    context.client.assert_connection_sender_closed().await;
 }
