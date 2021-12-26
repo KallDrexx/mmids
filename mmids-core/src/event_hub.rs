@@ -12,12 +12,14 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{info, instrument, warn};
 
 /// A request to publish a notification to the event hub
+#[derive(Debug)]
 pub enum PublishEventRequest {
     WorkflowStartedOrStopped(WorkflowStartedOrStoppedEvent),
     WorkflowManagerEvent(WorkflowManagerEvent),
 }
 
 /// A request to subscribe to a category of events
+#[derive(Debug)]
 pub enum SubscriptionRequest {
     WorkflowStartedOrStopped {
         channel: UnboundedSender<WorkflowStartedOrStoppedEvent>,
@@ -29,7 +31,7 @@ pub enum SubscriptionRequest {
 }
 
 /// Events relating to workflows being started or stopped
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum WorkflowStartedOrStoppedEvent {
     WorkflowStarted {
         name: String,
@@ -42,7 +44,7 @@ pub enum WorkflowStartedOrStoppedEvent {
 }
 
 // Events relating to workflow managers
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum WorkflowManagerEvent {
     WorkflowManagerRegistered {
         channel: UnboundedSender<WorkflowManagerRequest>,
@@ -269,4 +271,174 @@ async fn notify_workflow_manager_subscriber_gone(
 ) -> FutureResult {
     sender.closed().await;
     FutureResult::WorkflowManagerSubscriberGone(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn can_receive_workflow_started_notifications() {
+        let (publish_channel, subscribe_channel) = start_event_hub();
+        let (subscriber_sender, mut subscriber_receiver) = unbounded_channel();
+        let (workflow_sender, _workflow_receiver) = unbounded_channel();
+
+        subscribe_channel
+            .send(SubscriptionRequest::WorkflowStartedOrStopped {
+                channel: subscriber_sender,
+            })
+            .expect("Failed to subscribe to workflow start/stop events");
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        publish_channel
+            .send(PublishEventRequest::WorkflowStartedOrStopped(
+                WorkflowStartedOrStoppedEvent::WorkflowStarted {
+                    name: "test".to_string(),
+                    channel: workflow_sender,
+                },
+            ))
+            .expect("Failed to publish workflow started event");
+
+        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
+            Ok(Some(WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ })) => {
+                assert_eq!(&name, "test", "Unexpected workflow name");
+            }
+
+            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
+            _ => panic!("No event received"),
+        }
+    }
+
+    #[tokio::test]
+    async fn can_receive_workflow_started_notification_when_subscribed_after_published() {
+        let (publish_channel, subscribe_channel) = start_event_hub();
+        let (subscriber_sender, mut subscriber_receiver) = unbounded_channel();
+        let (workflow_sender, _workflow_receiver) = unbounded_channel();
+
+        publish_channel
+            .send(PublishEventRequest::WorkflowStartedOrStopped(
+                WorkflowStartedOrStoppedEvent::WorkflowStarted {
+                    name: "test".to_string(),
+                    channel: workflow_sender,
+                },
+            ))
+            .expect("Failed to publish workflow started event");
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        subscribe_channel
+            .send(SubscriptionRequest::WorkflowStartedOrStopped {
+                channel: subscriber_sender,
+            })
+            .expect("Failed to subscribe to workflow start/stop events");
+
+        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
+            Ok(Some(WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ })) => {
+                assert_eq!(&name, "test", "Unexpected workflow name");
+            }
+
+            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
+            _ => panic!("No event received"),
+        }
+    }
+
+    #[tokio::test]
+    async fn can_receive_workflow_stopped_notifications() {
+        let (publish_channel, subscribe_channel) = start_event_hub();
+        let (subscriber_sender, mut subscriber_receiver) = unbounded_channel();
+
+        subscribe_channel
+            .send(SubscriptionRequest::WorkflowStartedOrStopped {
+                channel: subscriber_sender,
+            })
+            .expect("Failed to subscribe to workflow start/stop events");
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        publish_channel
+            .send(PublishEventRequest::WorkflowStartedOrStopped(
+                WorkflowStartedOrStoppedEvent::WorkflowEnded {
+                    name: "test".to_string(),
+                },
+            ))
+            .expect("Failed to publish workflow ended event");
+
+        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
+            Ok(Some(WorkflowStartedOrStoppedEvent::WorkflowEnded { name })) => {
+                assert_eq!(&name, "test", "Unexpected workflow name");
+            }
+
+            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
+            _ => panic!("No event received"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_events_when_workflow_started_and_stopped_prior_to_subscription() {
+        let (publish_channel, subscribe_channel) = start_event_hub();
+        let (subscriber_sender, mut subscriber_receiver) = unbounded_channel();
+        let (workflow_sender, _workflow_receiver) = unbounded_channel();
+
+        publish_channel
+            .send(PublishEventRequest::WorkflowStartedOrStopped(
+                WorkflowStartedOrStoppedEvent::WorkflowStarted {
+                    name: "test".to_string(),
+                    channel: workflow_sender,
+                },
+            ))
+            .expect("Failed to publish workflow started event");
+
+        publish_channel
+            .send(PublishEventRequest::WorkflowStartedOrStopped(
+                WorkflowStartedOrStoppedEvent::WorkflowEnded {
+                    name: "test".to_string(),
+                },
+            ))
+            .expect("Failed to publish workflow ended event");
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        subscribe_channel
+            .send(SubscriptionRequest::WorkflowStartedOrStopped {
+                channel: subscriber_sender,
+            })
+            .expect("Failed to subscribe to workflow start/stop events");
+
+        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
+            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
+            _ => (),
+        }
+    }
+
+    #[tokio::test]
+    async fn can_receive_workflow_manager_registered_event() {
+        let (publish_channel, subscribe_channel) = start_event_hub();
+        let (subscriber_sender, mut subscriber_receiver) = unbounded_channel();
+        let (manager_sender, _manager_receiver) = unbounded_channel();
+
+        subscribe_channel
+            .send(SubscriptionRequest::WorkflowManagerEvents {
+                channel: subscriber_sender,
+            })
+            .expect("Failed to send subscription request");
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        publish_channel
+            .send(PublishEventRequest::WorkflowManagerEvent(
+                WorkflowManagerEvent::WorkflowManagerRegistered {
+                    channel: manager_sender,
+                },
+            ))
+            .expect("Failed to send publish request");
+
+        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
+            Ok(Some(WorkflowManagerEvent::WorkflowManagerRegistered { channel: _ })) => (),
+            Ok(None) => panic!("Channel closed"),
+            Err(_) => panic!("No event received"),
+        }
+    }
 }
