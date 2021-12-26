@@ -5,7 +5,7 @@ edition = "2018"
 
 [dependencies]
 mmids-core = {path = "../mmids-core"}
-tokio = { version = "1.12", features = ["full"] }
+tokio = { version = "1.15", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3.2"
 tracing-futures = "0.2.5"
