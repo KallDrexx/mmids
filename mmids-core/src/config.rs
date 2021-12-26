@@ -4,6 +4,7 @@ use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use std::collections::HashMap;
 use thiserror::Error;
+use tracing::warn;
 
 /// Configuration for a Mmids system.  Defines the settings and any workflows that should be active.
 pub struct MmidsConfig {
@@ -36,8 +37,10 @@ pub enum ConfigParseError {
     #[error("The argument provided for the setting on line {line} is invalid. Equal signs are not allowed")]
     InvalidSettingArgumentFormat { line: usize },
 
-    #[error("Workflows should only have a single argument (it's name) but the workflow on line {line} had multiple")]
-    TooManyWorkflowArguments { line: usize },
+    #[error(
+        "The `routed_by_reactor` argument on line {line} is invalid. Equal signs are not allowed"
+    )]
+    InvalidRoutedByReactorArgument { line: usize },
 
     #[error("The workflow on line {line} did not have a name specified")]
     NoNameOnWorkflow { line: usize },
@@ -50,9 +53,6 @@ pub enum ConfigParseError {
 
     #[error("Invalid workflow name of '{name}' on line {line}")]
     InvalidReactorName { line: usize, name: String },
-
-    #[error("The reactor on line {line} had an unknown argument of '{argument}'")]
-    UnknownReactorArgument { line: usize, argument: String },
 
     #[error("The reactor on line {line} has an invalid update_interval value of '{argument}'. This value must be a number")]
     InvalidUpdateIntervalValue { line: usize, argument: String },
@@ -134,14 +134,14 @@ fn read_settings(config: &mut MmidsConfig, pairs: Pairs<Rule>) -> Result<(), Con
                 let child_node = read_child_node(pair.clone())?;
                 if child_node.arguments.len() > 1 {
                     return Err(ConfigParseError::TooManySettingArguments {
-                        line: pair.as_span().start_pos().line_col().0,
+                        line: get_line_number(&pair),
                     });
                 }
 
                 if let Some(key) = child_node.arguments.keys().nth(0) {
                     if let Some(Some(_value)) = child_node.arguments.get(key) {
                         return Err(ConfigParseError::InvalidSettingArgumentFormat {
-                            line: pair.as_span().start_pos().line_col().0,
+                            line: get_line_number(&pair),
                         });
                     }
 
@@ -153,7 +153,7 @@ fn read_settings(config: &mut MmidsConfig, pairs: Pairs<Rule>) -> Result<(), Con
 
             Rule::argument => {
                 return Err(ConfigParseError::ArgumentsSpecifiedOnSettingNode {
-                    line: pair.as_span().start_pos().line_col().0,
+                    line: get_line_number(&pair),
                 })
             }
 
@@ -176,6 +176,7 @@ fn read_workflow(
 ) -> Result<(), ConfigParseError> {
     let mut steps = Vec::new();
     let mut workflow_name = None;
+    let mut routed_by_reactor = false;
     for pair in pairs {
         match pair.as_rule() {
             Rule::child_node => {
@@ -187,21 +188,36 @@ fn read_workflow(
             }
 
             Rule::argument => {
-                if workflow_name.is_some() {
-                    return Err(ConfigParseError::TooManyWorkflowArguments {
-                        line: pair.as_span().start_pos().line_col().0,
-                    });
-                }
-
                 let (key, value) = read_argument(pair.clone())?;
-                if value.is_some() {
-                    return Err(ConfigParseError::InvalidWorkflowName {
-                        name: pair.as_str().to_string(),
-                        line: pair.as_span().start_pos().line_col().0,
-                    });
-                }
+                if workflow_name.is_some() {
+                    if &key == "routed_by_reactor" {
+                        if value.is_some() {
+                            return Err(ConfigParseError::InvalidRoutedByReactorArgument {
+                                line: get_line_number(&pair),
+                            });
+                        }
 
-                workflow_name = Some(key);
+                        routed_by_reactor = true;
+                    } else {
+                        let line = get_line_number(&pair);
+                        warn!(
+                            workflow_name = %workflow_name.as_ref().unwrap(),
+                            line = %line,
+                            argument = %key,
+                            "Unknown argument '{}' for workflow {} on line {}",
+                            key, workflow_name.as_ref().unwrap(), line,
+                        );
+                    }
+                } else {
+                    if value.is_some() {
+                        return Err(ConfigParseError::InvalidWorkflowName {
+                            name: pair.as_str().to_string(),
+                            line: get_line_number(&pair),
+                        });
+                    }
+
+                    workflow_name = Some(key);
+                }
             }
 
             rule => {
@@ -218,9 +234,14 @@ fn read_workflow(
             return Err(ConfigParseError::DuplicateWorkflowName { name });
         }
 
-        config
-            .workflows
-            .insert(name.to_string(), WorkflowDefinition { name, steps });
+        config.workflows.insert(
+            name.to_string(),
+            WorkflowDefinition {
+                name,
+                steps,
+                routed_by_reactor,
+            },
+        );
     } else {
         return Err(ConfigParseError::NoNameOnWorkflow {
             line: starting_line,
@@ -248,14 +269,13 @@ fn read_reactor(
                     // Name must come first and only have a key, no pair
                     if value.is_some() {
                         return Err(ConfigParseError::InvalidReactorName {
-                            line: pair.as_span().start_pos().line_col().0,
+                            line: get_line_number(&pair),
                             name: pair.as_str().to_string(),
                         });
                     }
 
                     name = Some(key);
                 } else {
-                    // We only allow specific arguments to the reactor node
                     if key == "executor" {
                         if let Some(value) = value {
                             executor_name = Some(value);
@@ -266,21 +286,25 @@ fn read_reactor(
                                 update_interval = num;
                             } else {
                                 return Err(ConfigParseError::InvalidUpdateIntervalValue {
-                                    line: pair.as_span().start_pos().line_col().0,
+                                    line: get_line_number(&pair),
                                     argument: value,
                                 });
                             }
                         } else {
                             return Err(ConfigParseError::InvalidUpdateIntervalValue {
-                                line: pair.as_span().start_pos().line_col().0,
+                                line: get_line_number(&pair),
                                 argument: "".to_string(),
                             });
                         }
                     } else {
-                        return Err(ConfigParseError::UnknownReactorArgument {
-                            line: pair.as_span().start_pos().line_col().0,
-                            argument: key,
-                        });
+                        let line = get_line_number(&pair);
+                        warn!(
+                            line = %line,
+                            argument = %key,
+                            reactor_name = %name.as_ref().unwrap(),
+                            "Unknown argument '{}' for reactor {} on line {}",
+                            key, name.as_ref().unwrap(), line,
+                        );
                     }
                 }
             }
@@ -426,6 +450,10 @@ fn read_child_node(child_node: Pair<Rule>) -> Result<ChildNode, ConfigParseError
     Ok(parsed_node)
 }
 
+fn get_line_number(node: &Pair<Rule>) -> usize {
+    node.as_span().start_pos().line_col().0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,6 +515,10 @@ workflow name {
             workflow.steps.len(),
             2,
             "Unexpected number of workflow steps"
+        );
+        assert!(
+            !workflow.routed_by_reactor,
+            "Expected routed by reactor to be false"
         );
 
         let step1 = workflow.steps.get(0).unwrap();
@@ -652,5 +684,21 @@ workflow name2 {
 }
 ";
         parse(content).unwrap();
+    }
+
+    #[test]
+    fn can_parse_routed_by_reactor_argument_on_workflow() {
+        let content = "
+workflow name routed_by_reactor {
+    rtmp_receive port=1935 app=receive stream_key=*
+}
+";
+
+        let config = parse(content).unwrap();
+        let workflow = config.workflows.get("name").unwrap();
+        assert!(
+            workflow.routed_by_reactor,
+            "Expected routed by workflow to be true"
+        );
     }
 }

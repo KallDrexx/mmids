@@ -8,7 +8,7 @@ use crate::reactors::{start_reactor, ReactorDefinition, ReactorRequest};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
@@ -181,7 +181,8 @@ impl Actor {
                         );
 
                         let _ = response_channel.send(ReactorWorkflowUpdate {
-                            workflow_name: None,
+                            is_valid: false,
+                            routable_workflow_names: HashSet::new(),
                         });
 
                         return;

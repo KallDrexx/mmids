@@ -8,7 +8,7 @@ use thiserror::Error;
 /// Performs a request for workflow information on behalf of a reactor
 pub trait ReactorExecutor {
     /// Requests the definition of a workflow based on a stream name
-    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Option<WorkflowDefinition>>;
+    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Vec<WorkflowDefinition>>;
 }
 
 /// Allows generating a reactor executor using parameters from a reactor definition

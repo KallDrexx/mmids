@@ -1,4 +1,8 @@
-workflow abc_workflow {
+workflow abc_workflow routed_by_reactor {
     rtmp_watch rtmp_app=abc stream_key=*
-    rtmp_watch rtmp_app=abc stream_key=aaa
+    rtmp_watch rtmp_app=abc2 stream_key=*
+}
+
+workflow abc_workflow2 {
+    rtmp_watch rtmp_app=abc3 stream_key=*
 }

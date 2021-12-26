@@ -8,7 +8,7 @@ use crate::StreamId;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
@@ -173,7 +173,6 @@ impl Actor {
     fn handle_workflow_request(&mut self, request: WorkflowRequest, stop_workflow: &mut bool) {
         match request.operation {
             WorkflowRequestOperation::UpdateDefinition { new_definition } => {
-                info!("Workflow requested to have its definition updated");
                 self.apply_new_definition(new_definition);
             }
 
@@ -262,6 +261,21 @@ impl Actor {
     }
 
     fn apply_new_definition(&mut self, definition: WorkflowDefinition) {
+        let new_step_ids = definition
+            .steps
+            .iter()
+            .map(|x| x.get_id())
+            .collect::<HashSet<_>>();
+
+        if self.status == WorkflowStatus::Running
+            && self.pending_steps.is_empty()
+            && self.active_steps.len() == new_step_ids.len()
+            && self.active_steps.iter().all(|x| new_step_ids.contains(x))
+        {
+            // No actual changes to this workflow
+            return;
+        }
+
         info!(
             "Applying a new workflow definition with {} steps",
             definition.steps.len()

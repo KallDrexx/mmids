@@ -5,10 +5,10 @@ use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOp
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 /// Requests that can be made to a reactor
 pub enum ReactorRequest {
@@ -25,9 +25,11 @@ pub enum ReactorRequest {
 
 /// Contains information about a workflow from a reactor
 pub struct ReactorWorkflowUpdate {
-    /// The name of the current workflow the consumer should utilize. If `None` is returned then
-    /// that means that no workflow is currently associated with the original stream.
-    pub workflow_name: Option<String>,
+    /// If the reactor considers the stream name valid and workflows have been created for it.
+    pub is_valid: bool,
+
+    /// The names of workflows that the reactor expects streams to be routed to.
+    pub routable_workflow_names: HashSet<String>,
 }
 
 pub fn start_reactor(
@@ -56,7 +58,7 @@ enum FutureResult {
     RequestReceived(ReactorRequest, UnboundedReceiver<ReactorRequest>),
     ExecutorResponseReceived {
         stream_name: String,
-        workflow: Option<WorkflowDefinition>,
+        workflow: Vec<WorkflowDefinition>,
     },
 
     WorkflowManagerEventReceived(
@@ -73,8 +75,8 @@ enum FutureResult {
     },
 }
 
-struct CachedWorkflow {
-    definition: WorkflowDefinition,
+struct CachedWorkflows {
+    definitions: Vec<WorkflowDefinition>,
 }
 
 struct Actor {
@@ -82,7 +84,7 @@ struct Actor {
     executor: Box<dyn ReactorExecutor>,
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
-    cached_workflows_for_stream_name: HashMap<String, CachedWorkflow>,
+    cached_workflows_for_stream_name: HashMap<String, CachedWorkflows>,
     update_interval: Duration,
     stream_response_channels: HashMap<String, Vec<UnboundedSender<ReactorWorkflowUpdate>>>,
 }
@@ -198,7 +200,13 @@ impl Actor {
 
                 if let Some(cache) = self.cached_workflows_for_stream_name.get_mut(&stream_name) {
                     let _ = response_channel.send(ReactorWorkflowUpdate {
-                        workflow_name: Some(cache.definition.name.clone()),
+                        is_valid: true,
+                        routable_workflow_names: cache
+                            .definitions
+                            .iter()
+                            .filter(|w| w.routed_by_reactor)
+                            .map(|w| w.name.clone())
+                            .collect::<HashSet<_>>(),
                     });
                 } else {
                     let future = self.executor.get_workflow(stream_name.clone());
@@ -216,88 +224,107 @@ impl Actor {
     fn handle_executor_response(
         &mut self,
         stream_name: String,
-        workflow: Option<WorkflowDefinition>,
+        workflows: Vec<WorkflowDefinition>,
     ) {
-        if let Some(workflow) = workflow {
+        if let Some(channels) = self.stream_response_channels.get(&stream_name) {
+            let is_valid = !workflows.is_empty();
+            let routed_workflow_names = workflows
+                .iter()
+                .filter(|w| w.routed_by_reactor)
+                .map(|w| w.name.clone())
+                .collect::<HashSet<_>>();
+
             info!(
                 stream_name = %stream_name,
-                workflow_name = %workflow.name,
-                "Executor returned a workflow with the name {} for the stream {}",
-                workflow.name, stream_name,
+                workflow_count = %workflows.len(),
+                routed_count = %routed_workflow_names.len(),
+                "Executor returned {} workflows ({} routed) for the stream '{}'",
+                workflows.len(), routed_workflow_names.len(), stream_name,
             );
 
-            let workflow_name = workflow.name.clone();
-            if let Some(cache) = self.cached_workflows_for_stream_name.get_mut(&stream_name) {
-                if cache.definition.name != workflow_name {
-                    // Since the executor returned a different workflow as a response, we need to
-                    // shut the old one down.
+            if workflows.is_empty() {
+                if let Some(cache) = self.cached_workflows_for_stream_name.remove(&stream_name) {
+                    // Since we had some workflows cached, and now the external service isn't giving us
+                    // any workflows, that means this stream name is no longer valid.
                     if let Some(manager) = &self.workflow_manager {
+                        for workflow in cache.definitions {
+                            let _ = manager.send(WorkflowManagerRequest {
+                                request_id: format!(
+                                    "reactor_{}_stream_{}_ended",
+                                    self.name, stream_name
+                                ),
+                                operation: WorkflowManagerRequestOperation::StopWorkflow {
+                                    name: workflow.name,
+                                },
+                            });
+                        }
+                    }
+                }
+            } else {
+                if routed_workflow_names.is_empty() {
+                    warn!(
+                        stream_name = %stream_name,
+                        "Zero routed workflows returned for stream '{}'. Any workflow router steps \
+                            will not forward media to these workflows", stream_name
+                    );
+                }
+
+                // Upsert all returned workflows
+                if let Some(manager) = &self.workflow_manager {
+                    for workflow in &workflows {
                         let _ = manager.send(WorkflowManagerRequest {
-                            request_id: format!("reactor_{}_stream_{}", self.name, stream_name),
-                            operation: WorkflowManagerRequestOperation::StopWorkflow {
-                                name: cache.definition.name.clone(),
+                            request_id: format!(
+                                "reactor_{}_stream_{}_update",
+                                self.name, stream_name
+                            ),
+                            operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                                definition: workflow.clone(),
                             },
                         });
                     }
                 }
 
-                cache.definition = workflow.clone();
-            } else {
-                self.cached_workflows_for_stream_name.insert(
-                    stream_name.clone(),
-                    CachedWorkflow {
-                        definition: workflow.clone(),
-                    },
-                );
+                let current_workflow_names = workflows
+                    .iter()
+                    .map(|w| w.name.clone())
+                    .collect::<HashSet<_>>();
+
+                let new_cache = CachedWorkflows {
+                    definitions: workflows,
+                };
+                if let Some(old_cache) = self
+                    .cached_workflows_for_stream_name
+                    .insert(stream_name.clone(), new_cache)
+                {
+                    // Stop any workflows that are were not returned by the executor
+                    if let Some(manager) = &self.workflow_manager {
+                        for workflow in old_cache.definitions {
+                            if !current_workflow_names.contains(&workflow.name) {
+                                let _ = manager.send(WorkflowManagerRequest {
+                                    request_id: format!(
+                                        "reactor_{}_stream_{}_partially_ended",
+                                        self.name, stream_name
+                                    ),
+                                    operation: WorkflowManagerRequestOperation::StopWorkflow {
+                                        name: workflow.name,
+                                    },
+                                });
+                            }
+                        }
+                    }
+                }
             }
 
-            if let Some(manager) = &self.workflow_manager {
-                let _ = manager.send(WorkflowManagerRequest {
-                    request_id: format!("reactor_{}_stream_{}", self.name, stream_name),
-                    operation: WorkflowManagerRequestOperation::UpsertWorkflow {
-                        definition: workflow,
-                    },
+            for channel in channels {
+                let _ = channel.send(ReactorWorkflowUpdate {
+                    is_valid,
+                    routable_workflow_names: routed_workflow_names.clone(),
                 });
             }
 
-            if let Some(channels) = self.stream_response_channels.get(&stream_name) {
-                for channel in channels {
-                    let _ = channel.send(ReactorWorkflowUpdate {
-                        workflow_name: Some(workflow_name.clone()),
-                    });
-                }
-            }
-
             if !self.update_interval.is_zero() {
-                self.futures.push(
-                    wait_for_update_interval(stream_name, self.update_interval.clone()).boxed(),
-                );
-            }
-        } else {
-            info!(
-                stream_name = %stream_name,
-                "Executor returned no workflow for the stream {}", stream_name,
-            );
-
-            if let Some(channels) = self.stream_response_channels.remove(&stream_name) {
-                for channel in channels {
-                    let _ = channel.send(ReactorWorkflowUpdate {
-                        workflow_name: None,
-                    });
-                }
-            }
-
-            if let Some(cache) = self.cached_workflows_for_stream_name.remove(&stream_name) {
-                // Since we had a workflow cached, and now the external service isn't giving us one
-                // that means the workflow we created is no longer valid and should be shut down.
-                if let Some(workflow_manager) = &self.workflow_manager {
-                    let _ = workflow_manager.send(WorkflowManagerRequest {
-                        request_id: format!("reactor_{}_stream_{}", self.name, stream_name),
-                        operation: WorkflowManagerRequestOperation::StopWorkflow {
-                            name: cache.definition.name.clone(),
-                        },
-                    });
-                }
+                self.futures
+                    .push(wait_for_update_interval(stream_name, self.update_interval).boxed());
             }
         }
     }
@@ -310,13 +337,15 @@ impl Actor {
                     .push(notify_workflow_manager_gone(channel.clone()).boxed());
 
                 // Upsert all cached workflows
-                for workflow in self.cached_workflows_for_stream_name.values() {
-                    let _ = channel.send(WorkflowManagerRequest {
-                        request_id: format!("reactor_{}_cache_catchup", self.name),
-                        operation: WorkflowManagerRequestOperation::UpsertWorkflow {
-                            definition: workflow.definition.clone(),
-                        },
-                    });
+                for cached_workflow in self.cached_workflows_for_stream_name.values() {
+                    for workflow in &cached_workflow.definitions {
+                        let _ = channel.send(WorkflowManagerRequest {
+                            request_id: format!("reactor_{}_cache_catchup", self.name),
+                            operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                                definition: workflow.clone(),
+                            },
+                        });
+                    }
                 }
 
                 self.workflow_manager = Some(channel);
@@ -340,14 +369,20 @@ impl Actor {
 
                 self.stream_response_channels.remove(&stream_name);
 
-                if let Some(cache) = self.cached_workflows_for_stream_name.remove(&stream_name) {
-                    if let Some(channel) = &self.workflow_manager {
-                        let _ = channel.send(WorkflowManagerRequest {
-                            request_id: "from_reactor".to_string(),
-                            operation: WorkflowManagerRequestOperation::StopWorkflow {
-                                name: cache.definition.name.to_string(),
-                            },
-                        });
+                if let Some(channel) = &self.workflow_manager {
+                    if let Some(cache) = self.cached_workflows_for_stream_name.remove(&stream_name)
+                    {
+                        for workflow in cache.definitions {
+                            let _ = channel.send(WorkflowManagerRequest {
+                                request_id: format!(
+                                    "reactor_{}_stream_{}_closed",
+                                    self.name, stream_name
+                                ),
+                                operation: WorkflowManagerRequestOperation::StopWorkflow {
+                                    name: workflow.name,
+                                },
+                            });
+                        }
                     }
                 }
             } else {
@@ -370,7 +405,7 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorRequest>) -> Fu
 
 async fn wait_for_executor_response(
     stream_name: String,
-    future: BoxFuture<'static, Option<WorkflowDefinition>>,
+    future: BoxFuture<'static, Vec<WorkflowDefinition>>,
 ) -> FutureResult {
     let result = future.await;
     FutureResult::ExecutorResponseReceived {

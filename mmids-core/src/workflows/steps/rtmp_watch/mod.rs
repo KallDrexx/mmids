@@ -86,7 +86,7 @@ enum RtmpWatchStepFutureResult {
     ),
 
     ReactorWorkflowResponse {
-        workflow_name: Option<String>,
+        is_valid: bool,
         validation_channel: Sender<ValidationResponse>,
         reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
     },
@@ -547,11 +547,11 @@ impl WorkflowStep for RtmpWatchStep {
                 }
 
                 RtmpWatchStepFutureResult::ReactorWorkflowResponse {
-                    workflow_name,
+                    is_valid,
                     validation_channel,
                     reactor_update_channel,
                 } => {
-                    if workflow_name.is_some() {
+                    if is_valid {
                         let _ = validation_channel.send(ValidationResponse::Approve {
                             reactor_update_channel,
                         });
@@ -566,13 +566,7 @@ impl WorkflowStep for RtmpWatchStep {
                     reactor_update_channel,
                     cancellation_channel,
                 } => {
-                    if let Some(workflow_name) = update.workflow_name {
-                        info!(
-                            stream_key = %stream_name,
-                            "Received update that {}'s workflow has been changed to {}",
-                            stream_name, workflow_name
-                        );
-
+                    if update.is_valid {
                         // No action needed as this is still a valid stream name
                         let future = wait_for_reactor_update(
                             stream_name,
@@ -639,12 +633,12 @@ async fn wait_for_reactor_response(
     response_channel: Sender<ValidationResponse>,
 ) -> Box<dyn StepFutureResult> {
     let result = match receiver.recv().await {
-        Some(result) => result.workflow_name,
-        None => None, // Treat the channel being closed as no workflow
+        Some(result) => result.is_valid,
+        None => false, // Treat the channel being closed as no workflow
     };
 
     let result = RtmpWatchStepFutureResult::ReactorWorkflowResponse {
-        workflow_name: result,
+        is_valid: result,
         validation_channel: response_channel,
         reactor_update_channel: receiver,
     };

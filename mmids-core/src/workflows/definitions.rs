@@ -18,6 +18,7 @@ pub struct WorkflowStepDefinition {
 #[derive(Clone)]
 pub struct WorkflowDefinition {
     pub name: String,
+    pub routed_by_reactor: bool,
     pub steps: Vec<WorkflowStepDefinition>,
 }
 

@@ -79,7 +79,7 @@ enum FutureResult {
     ),
 
     ReactorWorkflowReturned {
-        workflow_name: Option<String>,
+        is_valid: bool,
         reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
         response_channel: Sender<ValidationResponse>,
     },
@@ -484,12 +484,11 @@ impl WorkflowStep for RtmpReceiverStep {
                 }
 
                 FutureResult::ReactorWorkflowReturned {
-                    workflow_name,
+                    is_valid,
                     reactor_receiver,
                     response_channel,
                 } => {
-                    // If a workflow was returned, then that means the the stream key is allowed
-                    if workflow_name.is_some() {
+                    if is_valid {
                         let _ = response_channel.send(ValidationResponse::Approve {
                             reactor_update_channel: reactor_receiver,
                         });
@@ -504,13 +503,7 @@ impl WorkflowStep for RtmpReceiverStep {
                     reactor_receiver,
                     cancellation_channel,
                 } => {
-                    if let Some(workflow_name) = update.workflow_name {
-                        info!(
-                            connection_id = %connection_id,
-                            "Received update that {}'s workflow has been changed to {}",
-                            connection_id, workflow_name
-                        );
-
+                    if update.is_valid {
                         // No action needed as this is still a valid stream name
                         let future = wait_for_reactor_update(
                             connection_id,
@@ -564,12 +557,12 @@ async fn wait_for_reactor_response(
     connection_response_channel: Sender<ValidationResponse>,
 ) -> Box<dyn StepFutureResult> {
     let result = match reactor_receiver.recv().await {
-        Some(response) => response.workflow_name,
-        None => None, // reactor closed, treat it the same as no workflow scenario
+        Some(response) => response.is_valid,
+        None => false, // reactor closed, treat it the same as no workflow scenario
     };
 
     let result = FutureResult::ReactorWorkflowReturned {
-        workflow_name: result,
+        is_valid: result,
         reactor_receiver,
         response_channel: connection_response_channel,
     };

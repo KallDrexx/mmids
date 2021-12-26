@@ -24,7 +24,7 @@ pub struct SimpleHttpExecutor {
 }
 
 impl ReactorExecutor for SimpleHttpExecutor {
-    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Option<WorkflowDefinition>> {
+    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Vec<WorkflowDefinition>> {
         execute_simple_http_executor(self.url.clone(), stream_name).boxed()
     }
 }
@@ -52,31 +52,14 @@ impl ReactorExecutorGenerator for SimpleHttpExecutorGenerator {
 }
 
 #[instrument]
-async fn execute_simple_http_executor(
-    url: String,
-    stream_name: String,
-) -> Option<WorkflowDefinition> {
+async fn execute_simple_http_executor(url: String, stream_name: String) -> Vec<WorkflowDefinition> {
     info!("Querying {} for workflow for stream '{}'", url, stream_name);
     let mut config = match execute_with_retry(&url, &stream_name, 0).await {
         Ok(config) => config,
-        Err(_) => return None,
+        Err(_) => return Vec::new(),
     };
 
-    if config.workflows.len() > 1 {
-        error!(
-            "The response contained {} workflows, but only 1 is allowed",
-            config.workflows.len()
-        );
-        return None;
-    }
-
-    if config.workflows.len() == 0 {
-        error!("The response's configuration did not contain any workflows");
-        return None;
-    }
-
-    let workflow = config.workflows.drain().nth(0).unwrap().1;
-    Some(workflow)
+    config.workflows.drain().map(|kvp| kvp.1).collect()
 }
 
 fn build_request(url: &String, stream_name: &String) -> Result<Request<Body>, ()> {
