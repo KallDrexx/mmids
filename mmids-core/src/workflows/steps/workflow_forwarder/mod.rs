@@ -173,6 +173,11 @@ impl WorkflowForwarderStep {
                     .push(notify_target_workflow_gone(name.clone(), channel.clone()).boxed());
 
                 if let Some(stream_ids) = self.stream_for_workflow_name.get(&name) {
+                    info!(
+                        workflow_name = %name,
+                        "Received notification that workflow {} has started", name
+                    );
+
                     for stream_id in stream_ids {
                         if let Some(stream) = self.active_streams.get_mut(stream_id) {
                             for media in &stream.required_media {
@@ -190,6 +195,13 @@ impl WorkflowForwarderStep {
 
             WorkflowStartedOrStoppedEvent::WorkflowEnded { name } => {
                 self.known_workflows.remove(&name);
+
+                if self.stream_for_workflow_name.contains_key(&name) {
+                    info!(
+                        workflow_name = %name,
+                        "Received notification that workflow {} has stopped", name
+                    );
+                }
             }
         }
     }
