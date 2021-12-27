@@ -4,10 +4,8 @@ use crate::endpoints::rtmp_server::{
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,
 };
-use crate::StreamId;
-use std::time::Duration;
+use crate::{test_utils, StreamId};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::time::timeout;
 
 const RTMP_APP: &'static str = "app";
 
@@ -98,15 +96,11 @@ impl TestContext {
             .publish_to_stream_key("key".to_string(), true)
             .await;
 
-        match timeout(
-            Duration::from_millis(10),
-            self.publish_receiver.as_mut().unwrap().recv(),
-        )
-        .await
-        {
-            Ok(Some(RtmpEndpointPublisherMessage::NewPublisherConnected { .. })) => (),
-            Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-            _ => panic!("No endpoint publisher message received"),
+        let receiver = self.publish_receiver.as_mut().unwrap();
+        let response = test_utils::expect_mpsc_response(receiver).await;
+        match response {
+            RtmpEndpointPublisherMessage::NewPublisherConnected { .. } => (),
+            message => panic!("Unexpected publisher message received: {:?}", message),
         };
     }
 
@@ -118,15 +112,11 @@ impl TestContext {
 
         self.client.watch_stream_key("key".to_string(), true).await;
 
-        match timeout(
-            Duration::from_millis(10),
-            self.watch_receiver.as_mut().unwrap().recv(),
-        )
-        .await
-        {
-            Ok(Some(RtmpEndpointWatcherNotification::StreamKeyBecameActive { .. })) => (),
-            Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-            _ => panic!("No endpoint publisher message received"),
+        let receiver = self.watch_receiver.as_mut().unwrap();
+        let response = test_utils::expect_mpsc_response(receiver).await;
+        match response {
+            RtmpEndpointWatcherNotification::StreamKeyBecameActive { .. } => (),
+            message => panic!("Unexpected publisher message received: {:?}", message),
         };
     }
 
@@ -143,11 +133,7 @@ impl TestContext {
 
         client.accept_port_request(9999, false).await;
 
-        let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-            Ok(Some(response)) => response,
-            _ => panic!("Request timed out, or channel closed"),
-        };
-
+        let response = test_utils::expect_mpsc_response(&mut receiver).await;
         match response {
             RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
             x => panic!("Unexpected endpoint response: {:?}", x),
@@ -177,11 +163,7 @@ impl TestContext {
 
         client.accept_port_request(9999, false).await;
 
-        let response = match timeout(Duration::from_millis(1), notification_receiver.recv()).await {
-            Ok(Some(response)) => response,
-            _ => panic!("Request timed out, or channel closed"),
-        };
-
+        let response = test_utils::expect_mpsc_response(&mut notification_receiver).await;
         match response {
             RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
             x => panic!("Unexpected endpoint response: {:?}", x),

@@ -276,8 +276,8 @@ async fn notify_workflow_manager_subscriber_gone(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils;
     use std::time::Duration;
-    use tokio::time::timeout;
 
     #[tokio::test]
     async fn can_receive_workflow_started_notifications() {
@@ -302,13 +302,13 @@ mod tests {
             ))
             .expect("Failed to publish workflow started event");
 
-        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
-            Ok(Some(WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ })) => {
+        let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
+        match response {
+            WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ } => {
                 assert_eq!(&name, "test", "Unexpected workflow name");
             }
 
-            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
-            _ => panic!("No event received"),
+            event => panic!("Unexpected event received: {:?}", event),
         }
     }
 
@@ -335,13 +335,13 @@ mod tests {
             })
             .expect("Failed to subscribe to workflow start/stop events");
 
-        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
-            Ok(Some(WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ })) => {
+        let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
+        match response {
+            WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ } => {
                 assert_eq!(&name, "test", "Unexpected workflow name");
             }
 
-            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
-            _ => panic!("No event received"),
+            event => panic!("Unexpected event received: {:?}", event),
         }
     }
 
@@ -366,13 +366,13 @@ mod tests {
             ))
             .expect("Failed to publish workflow ended event");
 
-        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
-            Ok(Some(WorkflowStartedOrStoppedEvent::WorkflowEnded { name })) => {
+        let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
+        match response {
+            WorkflowStartedOrStoppedEvent::WorkflowEnded { name } => {
                 assert_eq!(&name, "test", "Unexpected workflow name");
             }
 
-            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
-            _ => panic!("No event received"),
+            event => panic!("Unexpected event received: {:?}", event),
         }
     }
 
@@ -407,10 +407,7 @@ mod tests {
             })
             .expect("Failed to subscribe to workflow start/stop events");
 
-        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
-            Ok(Some(event)) => panic!("Unexpected event received: {:?}", event),
-            _ => (),
-        }
+        test_utils::expect_mpsc_timeout(&mut subscriber_receiver).await;
     }
 
     #[tokio::test]
@@ -435,10 +432,9 @@ mod tests {
             ))
             .expect("Failed to send publish request");
 
-        match timeout(Duration::from_millis(10), subscriber_receiver.recv()).await {
-            Ok(Some(WorkflowManagerEvent::WorkflowManagerRegistered { channel: _ })) => (),
-            Ok(None) => panic!("Channel closed"),
-            Err(_) => panic!("No event received"),
+        let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
+        match response {
+            WorkflowManagerEvent::WorkflowManagerRegistered { channel: _ } => (),
         }
     }
 }

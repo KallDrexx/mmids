@@ -37,6 +37,7 @@ pub struct TlsOptions {
 }
 
 /// Requests by callers to the TCP socket manager
+#[derive(Debug)]
 pub enum TcpSocketRequest {
     /// Request for the server to start listening on a specific TCP port
     OpenPort {

@@ -1,5 +1,6 @@
 use crate::net::tcp::{OutboundPacket, RequestFailureReason, TcpSocketRequest, TcpSocketResponse};
 use crate::net::ConnectionId;
+use crate::test_utils;
 use bytes::Bytes;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
 use rml_rtmp::sessions::{
@@ -41,17 +42,7 @@ impl RtmpTestClient {
     }
 
     pub async fn accept_port_request(&mut self, port: u16, use_tls: bool) {
-        let request = match timeout(
-            Duration::from_millis(10),
-            self.socket_manager_receiver.recv(),
-        )
-        .await
-        {
-            Ok(Some(request)) => request,
-            Ok(None) => panic!("Channel closed"),
-            Err(_) => panic!("Accept port request timed out"),
-        };
-
+        let request = test_utils::expect_mpsc_response(&mut self.socket_manager_receiver).await;
         match request {
             TcpSocketRequest::OpenPort {
                 port: requested_port,
@@ -83,17 +74,7 @@ impl RtmpTestClient {
     }
 
     pub async fn deny_port_request(&mut self, port: u16, use_tls: bool) {
-        let request = match timeout(
-            Duration::from_millis(10),
-            self.socket_manager_receiver.recv(),
-        )
-        .await
-        {
-            Ok(Some(request)) => request,
-            Ok(None) => panic!("Channel closed"),
-            Err(_) => panic!("Accept port request timed out"),
-        };
-
+        let request = test_utils::expect_mpsc_response(&mut self.socket_manager_receiver).await;
         match request {
             TcpSocketRequest::OpenPort {
                 port: requested_port,
@@ -125,15 +106,7 @@ impl RtmpTestClient {
     }
 
     pub async fn expect_empty_request_channel(&mut self) {
-        match timeout(
-            Duration::from_millis(10),
-            self.socket_manager_receiver.recv(),
-        )
-        .await
-        {
-            Err(_) => (),
-            _ => panic!("Expected timeout, got request instead"),
-        };
+        test_utils::expect_mpsc_timeout(&mut self.socket_manager_receiver).await;
     }
 
     pub async fn assert_connection_sender_closed(&mut self) {
@@ -182,11 +155,8 @@ impl RtmpTestClient {
         incoming_sender
             .send(Bytes::from(p0_and_p1))
             .expect("incoming bytes channel closed");
-        let response = match timeout(Duration::from_millis(100), outgoing_receiver.recv()).await {
-            Ok(Some(response)) => response,
-            _ => panic!("Failed to get outgoing bytes"),
-        };
 
+        let response = test_utils::expect_mpsc_response(&mut outgoing_receiver).await;
         let result = handshake
             .process_bytes(&response.bytes)
             .expect("Failed to process received p0 and p1 packet");
@@ -201,11 +171,8 @@ impl RtmpTestClient {
         incoming_sender
             .send(Bytes::from(response_bytes))
             .expect("Incoming bytes channel closed");
-        let response = match timeout(Duration::from_millis(100), outgoing_receiver.recv()).await {
-            Ok(Some(response)) => response,
-            _ => panic!("Failed to get outgoing bytes"),
-        };
 
+        let response = test_utils::expect_mpsc_response(&mut outgoing_receiver).await;
         let result = handshake
             .process_bytes(&response.bytes)
             .expect("Failed to process p2 packet");
@@ -275,12 +242,7 @@ impl RtmpTestClient {
 
         if should_succeed {
             let connection = self.connection.as_mut().unwrap();
-            let response =
-                match timeout(Duration::from_millis(10), connection.outgoing_bytes.recv()).await {
-                    Ok(Some(response)) => response,
-                    _ => panic!("No response for connection request was given"),
-                };
-
+            let response = test_utils::expect_mpsc_response(&mut connection.outgoing_bytes).await;
             let results = connection
                 .session
                 .handle_input(&response.bytes)
@@ -310,15 +272,8 @@ impl RtmpTestClient {
         });
 
         // `createStream` should always succeed
-        let response = match timeout(
-            Duration::from_millis(10),
-            self.connection.as_mut().unwrap().outgoing_bytes.recv(),
-        )
-        .await
-        {
-            Ok(Some(response)) => response,
-            _ => panic!("No response for connection request was given"),
-        };
+        let receiver = &mut self.connection.as_mut().unwrap().outgoing_bytes;
+        let response = test_utils::expect_mpsc_response(receiver).await;
 
         // handle create stream response
         self.execute_session_method_vec_result(|session| session.handle_input(&response.bytes));
@@ -358,17 +313,8 @@ impl RtmpTestClient {
         self.execute_session_method_single_result(|session| session.request_playback(stream_key));
 
         // `createStream` should always succeed
-        let response = match timeout(
-            Duration::from_millis(10),
-            self.connection.as_mut().unwrap().outgoing_bytes.recv(),
-        )
-        .await
-        {
-            Ok(Some(response)) => response,
-            _ => panic!("No response for connection request was given"),
-        };
-
-        // handle create stream response
+        let receiver = &mut self.connection.as_mut().unwrap().outgoing_bytes;
+        let response = test_utils::expect_mpsc_response(receiver).await;
         self.execute_session_method_vec_result(|session| session.handle_input(&response.bytes));
 
         if should_succeed {

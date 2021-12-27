@@ -277,6 +277,7 @@ pub enum RtmpEndpointWatcherNotification {
 }
 
 /// Message watcher registrants send to announce new media data that should be sent to watchers
+#[derive(Debug)]
 pub struct RtmpEndpointMediaMessage {
     pub stream_key: String,
     pub data: RtmpEndpointMediaData,

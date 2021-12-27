@@ -134,9 +134,7 @@ mod test_utils {
         futures: Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     ) -> Box<dyn StepFutureResult> {
         let mut awaitable_futures = FuturesUnordered::new();
-        for future in futures {
-            awaitable_futures.push(future);
-        }
+        awaitable_futures.extend(futures);
 
         match timeout(Duration::from_millis(10), awaitable_futures.next()).await {
             Ok(Some(result)) => result,

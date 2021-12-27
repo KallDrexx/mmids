@@ -9,6 +9,8 @@ pub mod event_hub;
 pub mod http_api;
 pub mod net;
 pub mod reactors;
+#[cfg(test)]
+mod test_utils;
 mod utils;
 pub mod workflows;
 

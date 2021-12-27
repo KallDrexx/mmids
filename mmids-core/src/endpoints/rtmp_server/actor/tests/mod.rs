@@ -7,12 +7,11 @@ use crate::endpoints::rtmp_server::{
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration, ValidationResponse,
 };
+use crate::test_utils;
 use bytes::Bytes;
 use rml_rtmp::sessions::{ClientSessionEvent, StreamMetadata};
 use rml_rtmp::time::RtmpTimestamp;
-use std::time::Duration;
 use tokio::sync::mpsc::unbounded_channel;
-use tokio::time::timeout;
 
 mod rtmp_client;
 mod test_context;
@@ -38,11 +37,7 @@ async fn can_register_for_specific_port_for_publishers() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -70,11 +65,7 @@ async fn can_register_with_tls_enabled() {
 
     client.accept_port_request(9999, true).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -102,11 +93,7 @@ async fn endpoint_publisher_receives_failed_when_port_rejected() {
 
     client.deny_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -134,11 +121,7 @@ async fn multiple_requests_for_same_port_only_sends_one_request_to_socket_manage
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("1st request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -160,11 +143,7 @@ async fn multiple_requests_for_same_port_only_sends_one_request_to_socket_manage
 
     client.expect_empty_request_channel().await;
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -192,11 +171,7 @@ async fn second_publisher_rejected_on_same_app_when_both_any_stream_key() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -216,11 +191,7 @@ async fn second_publisher_rejected_on_same_app_when_both_any_stream_key() {
         })
         .expect("2nd endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -248,11 +219,7 @@ async fn second_publisher_rejected_on_same_app_and_same_exact_key() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -272,11 +239,7 @@ async fn second_publisher_rejected_on_same_app_and_same_exact_key() {
         })
         .expect("2nd endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -304,11 +267,7 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_any_key
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -328,11 +287,7 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_any_key
         })
         .expect("2nd endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -360,11 +315,7 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_specifi
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -384,11 +335,7 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_specifi
         })
         .expect("2nd endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -416,11 +363,7 @@ async fn second_publisher_accepted_on_same_app_on_different_exact_keys() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -440,11 +383,7 @@ async fn second_publisher_accepted_on_same_app_on_different_exact_keys() {
         })
         .expect("2nd endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -473,11 +412,7 @@ async fn can_register_for_specific_port_for_watcher() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -506,11 +441,7 @@ async fn endpoint_watcher_receives_failed_when_port_rejected() {
 
     client.deny_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -539,11 +470,7 @@ async fn second_watcher_rejected_on_same_app_when_both_any_stream_key() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -564,11 +491,7 @@ async fn second_watcher_rejected_on_same_app_when_both_any_stream_key() {
         })
         .expect("Endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -597,11 +520,7 @@ async fn second_watcher_rejected_on_same_app_and_same_exact_key() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -622,10 +541,7 @@ async fn second_watcher_rejected_on_same_app_and_same_exact_key() {
         })
         .expect("Endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
 
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationFailed => (),
@@ -655,11 +571,7 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_any_key()
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -680,11 +592,7 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_any_key()
         })
         .expect("Endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -713,10 +621,7 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_specific_
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
 
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
@@ -738,10 +643,7 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_specific_
         })
         .expect("Endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
 
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationFailed => (),
@@ -771,10 +673,7 @@ async fn second_watcher_accepted_on_same_app_with_different_exact_keys() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("Request timed out, or channel closed"),
-    };
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
 
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
@@ -796,10 +695,7 @@ async fn second_watcher_accepted_on_same_app_with_different_exact_keys() {
         })
         .expect("Endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
 
     match response {
         RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful => (),
@@ -828,11 +724,7 @@ async fn second_request_fails_if_tls_option_differs() {
 
     client.accept_port_request(9999, false).await;
 
-    let response = match timeout(Duration::from_millis(1), receiver.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("1st request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -852,11 +744,7 @@ async fn second_request_fails_if_tls_option_differs() {
         })
         .expect("2nd endpoint request failed to send");
 
-    let response = match timeout(Duration::from_millis(1), receiver2.recv()).await {
-        Ok(Some(response)) => response,
-        _ => panic!("2nd request timed out, or channel closed"),
-    };
-
+    let response = test_utils::expect_mpsc_response(&mut receiver2).await;
     match response {
         RtmpEndpointPublisherMessage::PublisherRegistrationFailed => (),
         x => panic!("Unexpected endpoint response: {:?}", x),
@@ -914,18 +802,15 @@ async fn publisher_can_connect_on_registered_app_and_stream_key() {
         .publish_to_stream_key("key".to_string(), true)
         .await;
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewPublisherConnected {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewPublisherConnected {
             stream_key,
             connection_id,
             stream_id: _,
             reactor_update_channel: _,
-        })) => {
+        } => {
             assert_eq!(
                 stream_key,
                 "key".to_string(),
@@ -939,8 +824,7 @@ async fn publisher_can_connect_on_registered_app_and_stream_key() {
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -951,13 +835,10 @@ async fn publish_stopped_notification_raised_on_disconnection() {
 
     context.client.disconnect();
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::PublishingStopped { connection_id })) => {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::PublishingStopped { connection_id } => {
             assert_eq!(
                 connection_id.0,
                 rtmp_client::CONNECTION_ID.to_string(),
@@ -965,8 +846,7 @@ async fn publish_stopped_notification_raised_on_disconnection() {
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -977,13 +857,10 @@ async fn publish_stopped_when_rtmp_client_stops_publishing() {
 
     context.client.stop_publishing().await;
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::PublishingStopped { connection_id })) => {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::PublishingStopped { connection_id } => {
             assert_eq!(
                 connection_id.0,
                 rtmp_client::CONNECTION_ID.to_string(),
@@ -991,8 +868,7 @@ async fn publish_stopped_when_rtmp_client_stops_publishing() {
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1007,20 +883,17 @@ async fn notification_raised_when_video_published() {
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher,
             timestamp: event_timestamp,
             data: event_data,
             is_sequence_header: _,
             codec: _,
             is_keyframe: _,
-        })) => {
+        } => {
             assert_eq!(
                 publisher.0,
                 rtmp_client::CONNECTION_ID.to_string(),
@@ -1033,8 +906,7 @@ async fn notification_raised_when_video_published() {
             assert_eq!(event_data, data[1..], "Unexpected video data");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1049,25 +921,21 @@ async fn published_video_detects_h264_codec_when_first_byte_masks_to_0x07() {
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header: _,
             codec,
             is_keyframe: _,
-        })) => {
+        } => {
             assert_eq!(codec, VideoCodec::H264, "Unexpected video codec");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1082,25 +950,21 @@ async fn published_video_detects_unknown_codec_when_first_byte_does_not_mask_to_
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header: _,
             codec,
             is_keyframe: _,
-        })) => {
+        } => {
             assert_eq!(codec, VideoCodec::Unknown, "Unexpected video codec");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1115,25 +979,21 @@ async fn published_video_sequence_header_when_h264_and_second_byte_is_zero() {
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header,
             codec: _,
             is_keyframe: _,
-        })) => {
+        } => {
             assert!(is_sequence_header, "Unexpected sequence header value");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1148,25 +1008,21 @@ async fn published_video_not_sequence_header_when_h264_and_second_byte_is_not_ze
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header,
             codec: _,
             is_keyframe: _,
-        })) => {
+        } => {
             assert!(!is_sequence_header, "Unexpected sequence header value");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1181,25 +1037,21 @@ async fn published_video_not_key_frame_when_first_4_half_octet_is_not_one() {
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header: _,
             codec: _,
             is_keyframe,
-        })) => {
+        } => {
             assert!(!is_keyframe, "Unexpected sequence header value");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1214,25 +1066,21 @@ async fn published_video_key_frame_when_first_4_half_octet_is_one() {
         .client
         .publish_video(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewVideoData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewVideoData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header: _,
             codec: _,
             is_keyframe,
-        })) => {
+        } => {
             assert!(is_keyframe, "Unexpected sequence header value");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1246,16 +1094,13 @@ async fn notification_raised_when_metadata_published() {
 
     context.client.publish_metadata(metadata.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::StreamMetadataChanged {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::StreamMetadataChanged {
             publisher,
             metadata: event_metadata,
-        })) => {
+        } => {
             assert_eq!(
                 publisher.0,
                 rtmp_client::CONNECTION_ID.to_string(),
@@ -1268,8 +1113,7 @@ async fn notification_raised_when_metadata_published() {
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     }
 }
 
@@ -1284,19 +1128,16 @@ async fn notification_raised_when_audio_published() {
         .client
         .publish_audio(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewAudioData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewAudioData {
             publisher,
             timestamp: event_timestamp,
             data: event_data,
             is_sequence_header: _,
             codec: _,
-        })) => {
+        } => {
             assert_eq!(
                 publisher.0,
                 rtmp_client::CONNECTION_ID.to_string(),
@@ -1309,8 +1150,7 @@ async fn notification_raised_when_audio_published() {
             assert_eq!(event_data, data[1..], "Unexpected video data");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1325,24 +1165,20 @@ async fn published_audio_aac_codec_if_first_byte_0xa0() {
         .client
         .publish_audio(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewAudioData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewAudioData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header: _,
             codec,
-        })) => {
+        } => {
             assert_eq!(codec, AudioCodec::Aac, "Unexpected audio codec");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1357,24 +1193,20 @@ async fn published_audio_unknown_codec_if_first_byte_not_0xa0() {
         .client
         .publish_audio(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewAudioData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewAudioData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header: _,
             codec,
-        })) => {
+        } => {
             assert_eq!(codec, AudioCodec::Unknown, "Unexpected audio codec");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1389,24 +1221,20 @@ async fn published_audio_aac_sequence_header_if_second_byte_is_zero() {
         .client
         .publish_audio(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewAudioData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewAudioData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header,
             codec: _,
-        })) => {
+        } => {
             assert!(is_sequence_header, "Expected is sequence header to be true");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1421,27 +1249,23 @@ async fn published_audio_aac_not_sequence_header_if_second_byte_is_not_zero() {
         .client
         .publish_audio(data.clone(), timestamp.clone());
 
-    match timeout(
-        Duration::from_millis(10),
-        context.publish_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointPublisherMessage::NewAudioData {
+    let receiver = context.publish_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewAudioData {
             publisher: _,
             timestamp: _,
             data: _,
             is_sequence_header,
             codec: _,
-        })) => {
+        } => {
             assert!(
                 !is_sequence_header,
                 "Expected is sequence header to be false"
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
@@ -1459,21 +1283,17 @@ async fn stream_becoming_active_notification_when_watcher_connects() {
         .watch_stream_key("key".to_string(), true)
         .await;
 
-    match timeout(
-        Duration::from_millis(10),
-        context.watch_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+    let receiver = context.watch_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointWatcherNotification::StreamKeyBecameActive {
             stream_key,
             reactor_update_channel: _,
-        })) => {
+        } => {
             assert_eq!(stream_key, "key".to_string());
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     };
 }
 
@@ -1483,18 +1303,14 @@ async fn stream_becomes_inactive_when_only_watcher_stops_playback() {
     context.set_as_active_watcher().await;
     context.client.stop_watching().await;
 
-    match timeout(
-        Duration::from_millis(10),
-        context.watch_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key })) => {
+    let receiver = context.watch_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key } => {
             assert_eq!(stream_key, "key".to_string());
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 }
 
@@ -1504,18 +1320,14 @@ async fn stream_becomes_inactive_when_only_watcher_disconnects() {
     context.set_as_active_watcher().await;
     context.client.disconnect();
 
-    match timeout(
-        Duration::from_millis(10),
-        context.watch_receiver.as_mut().unwrap().recv(),
-    )
-    .await
-    {
-        Ok(Some(RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key })) => {
+    let receiver = context.watch_receiver.as_mut().unwrap();
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key } => {
             assert_eq!(stream_key, "key".to_string());
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 }
 
@@ -1767,12 +1579,13 @@ async fn consumer_accepts_publisher() {
         .await;
 
     let receiver = context.publish_receiver.as_mut().unwrap();
-    match timeout(Duration::from_millis(10), receiver.recv()).await {
-        Ok(Some(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::PublisherRequiringApproval {
             stream_key,
             connection_id,
             response_channel,
-        })) => {
+        } => {
             assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
             assert_eq!(
                 connection_id.0,
@@ -1788,17 +1601,17 @@ async fn consumer_accepts_publisher() {
                 .expect("Failed to send approval")
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 
-    match timeout(Duration::from_millis(10), receiver.recv()).await {
-        Ok(Some(RtmpEndpointPublisherMessage::NewPublisherConnected {
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::NewPublisherConnected {
             reactor_update_channel,
             connection_id,
             stream_id: _,
             stream_key,
-        })) => {
+        } => {
             assert_eq!(
                 connection_id.0,
                 rtmp_client::CONNECTION_ID.to_string(),
@@ -1811,8 +1624,7 @@ async fn consumer_accepts_publisher() {
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 }
 
@@ -1835,12 +1647,13 @@ async fn consumer_rejectin_publisher_disconnects_client() {
         .await;
 
     let receiver = context.publish_receiver.as_mut().unwrap();
-    match timeout(Duration::from_millis(10), receiver.recv()).await {
-        Ok(Some(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointPublisherMessage::PublisherRequiringApproval {
             stream_key,
             connection_id,
             response_channel,
-        })) => {
+        } => {
             assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
             assert_eq!(
                 connection_id.0,
@@ -1853,8 +1666,7 @@ async fn consumer_rejectin_publisher_disconnects_client() {
                 .expect("Failed to send approval");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 
     context.client.assert_connection_sender_closed().await;
@@ -1879,12 +1691,13 @@ async fn consumer_accepts_watcher() {
         .await;
 
     let receiver = context.watch_receiver.as_mut().unwrap();
-    match timeout(Duration::from_millis(10), receiver.recv()).await {
-        Ok(Some(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointWatcherNotification::WatcherRequiringApproval {
             stream_key,
             connection_id,
             response_channel,
-        })) => {
+        } => {
             assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
             assert_eq!(
                 connection_id.0,
@@ -1900,15 +1713,15 @@ async fn consumer_accepts_watcher() {
                 .expect("Failed to send approval")
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 
-    match timeout(Duration::from_millis(10), receiver.recv()).await {
-        Ok(Some(RtmpEndpointWatcherNotification::StreamKeyBecameActive {
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointWatcherNotification::StreamKeyBecameActive {
             stream_key,
             reactor_update_channel,
-        })) => {
+        } => {
             assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
             assert!(
                 reactor_update_channel.is_some(),
@@ -1916,8 +1729,7 @@ async fn consumer_accepts_watcher() {
             );
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 }
 
@@ -1940,12 +1752,13 @@ async fn consumer_rejecting_watcher_disconnects_client() {
         .await;
 
     let receiver = context.watch_receiver.as_mut().unwrap();
-    match timeout(Duration::from_millis(10), receiver.recv()).await {
-        Ok(Some(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
+    let response = test_utils::expect_mpsc_response(receiver).await;
+    match response {
+        RtmpEndpointWatcherNotification::WatcherRequiringApproval {
             stream_key,
             connection_id,
             response_channel,
-        })) => {
+        } => {
             assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
             assert_eq!(
                 connection_id.0,
@@ -1958,8 +1771,7 @@ async fn consumer_rejecting_watcher_disconnects_client() {
                 .expect("Failed to send approval");
         }
 
-        Ok(Some(message)) => panic!("Unexpected publisher message received: {:?}", message),
-        _ => panic!("No endpoint publisher message received"),
+        message => panic!("Unexpected publisher message received: {:?}", message),
     }
 
     context.client.assert_connection_sender_closed().await;

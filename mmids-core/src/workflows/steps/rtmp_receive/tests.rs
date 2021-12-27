@@ -4,14 +4,13 @@ use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::ConnectionId;
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::StreamId;
+use crate::{test_utils, StreamId};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::time::timeout;
 
 const TEST_PORT: u16 = 9999;
 const TEST_APP: &'static str = "some_app";
@@ -27,8 +26,9 @@ async fn can_create_from_filled_out_workflow_definition() {
         .generate(definition)
         .expect("Error returned creating step");
 
-    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
-        Ok(Some(request)) => match request {
+    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    match response {
+        request => match request {
             RtmpEndpointRequest::ListenForWatchers { .. } => {
                 panic!("Expected publish registration, instead got watch registration")
             }
@@ -52,8 +52,6 @@ async fn can_create_from_filled_out_workflow_definition() {
                 panic!("Expected publish registration, instead got removal request");
             }
         },
-
-        _ => panic!("No RTMP request surfaced"),
     };
 }
 
@@ -67,8 +65,9 @@ async fn asterisk_for_key_sets_key_to_any() {
         .generate(definition)
         .expect("Error returned creating step}");
 
-    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
-        Ok(Some(request)) => match request {
+    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    match response {
+        request => match request {
             RtmpEndpointRequest::ListenForWatchers { .. } => {
                 panic!("Expected publish registration, instead got watch registration")
             }
@@ -92,8 +91,6 @@ async fn asterisk_for_key_sets_key_to_any() {
                 );
             }
         },
-
-        _ => panic!("No RTMP request surfaced"),
     };
 }
 
@@ -109,8 +106,9 @@ async fn port_is_1935_if_none_provided() {
         .generate(definition)
         .expect("Error returned creating step}");
 
-    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
-        Ok(Some(request)) => match request {
+    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    match response {
+        request => match request {
             RtmpEndpointRequest::ListenForWatchers { .. } => {
                 panic!("Expected publish registration, instead got watch registration")
             }
@@ -123,8 +121,6 @@ async fn port_is_1935_if_none_provided() {
                 assert_eq!(port, 1935, "Unexpected port");
             }
         },
-
-        _ => panic!("No RTMP request surfaced"),
     };
 }
 
@@ -171,22 +167,19 @@ async fn rtmp_app_is_trimmed() {
         .generate(definition)
         .expect("Error returned creating step}");
 
-    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
-        Ok(Some(request)) => match request {
-            RtmpEndpointRequest::ListenForWatchers { .. } => {
-                panic!("Expected publish registration, instead got watch registration")
-            }
+    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    match response {
+        RtmpEndpointRequest::ListenForWatchers { .. } => {
+            panic!("Expected publish registration, instead got watch registration")
+        }
 
-            RtmpEndpointRequest::RemoveRegistration { .. } => {
-                panic!("Expected publish registration, instead got removal request");
-            }
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected publish registration, instead got removal request");
+        }
 
-            RtmpEndpointRequest::ListenForPublishers { rtmp_app, .. } => {
-                assert_eq!(rtmp_app, TEST_APP, "Unexpected rtmp app");
-            }
-        },
-
-        _ => panic!("No RTMP request surfaced"),
+        RtmpEndpointRequest::ListenForPublishers { rtmp_app, .. } => {
+            assert_eq!(rtmp_app, TEST_APP, "Unexpected rtmp app");
+        }
     };
 }
 
@@ -205,28 +198,25 @@ async fn stream_key_is_trimmed() {
         .generate(definition)
         .expect("Error returned creating step}");
 
-    match timeout(Duration::from_millis(10), mock_receiver.recv()).await {
-        Ok(Some(request)) => match request {
-            RtmpEndpointRequest::ListenForWatchers { .. } => {
-                panic!("Expected publish registration, instead got watch registration")
-            }
+    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    match response {
+        RtmpEndpointRequest::ListenForWatchers { .. } => {
+            panic!("Expected publish registration, instead got watch registration")
+        }
 
-            RtmpEndpointRequest::RemoveRegistration { .. } => {
-                panic!("Expected publish registration, instead got removal request");
-            }
+        RtmpEndpointRequest::RemoveRegistration { .. } => {
+            panic!("Expected publish registration, instead got removal request");
+        }
 
-            RtmpEndpointRequest::ListenForPublishers {
-                rtmp_stream_key, ..
-            } => {
-                assert_eq!(
-                    rtmp_stream_key,
-                    StreamKeyRegistration::Exact(TEST_KEY.to_string()),
-                    "Unexpected stream key registration"
-                );
-            }
-        },
-
-        _ => panic!("No RTMP request surfaced"),
+        RtmpEndpointRequest::ListenForPublishers {
+            rtmp_stream_key, ..
+        } => {
+            assert_eq!(
+                rtmp_stream_key,
+                StreamKeyRegistration::Exact(TEST_KEY.to_string()),
+                "Unexpected stream key registration"
+            );
+        }
     };
 }
 

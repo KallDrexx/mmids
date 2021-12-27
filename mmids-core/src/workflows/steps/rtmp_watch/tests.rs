@@ -6,14 +6,13 @@ use crate::endpoints::rtmp_server::{
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::steps::test_utils::{create_step_parameters, get_pending_future_result};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::StreamId;
+use crate::{test_utils, StreamId};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::time::timeout;
 
 const TEST_PORT: u16 = 9999;
 const TEST_APP: &'static str = "some_app";
@@ -351,11 +350,7 @@ async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
     });
 
     step.execute(&mut inputs, &mut outputs);
-
-    match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(_) => panic!("Expected no items in the media channel, but one was received"),
-        Err(_) => (),
-    }
+    test_utils::expect_mpsc_timeout(&mut media_channel).await;
 }
 
 #[tokio::test]
@@ -384,11 +379,7 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
 
     step.execute(&mut inputs, &mut outputs);
 
-    let media = match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(Some(message)) => message,
-        _ => panic!("Expected items in the media channel, but none was received"),
-    };
-
+    let media = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(
         media.stream_key,
         TEST_KEY.to_string(),
@@ -445,10 +436,7 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
 
     step.execute(&mut inputs, &mut outputs);
 
-    match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(_) => panic!("Expected no items in the media channel, but one was received"),
-        Err(_) => (),
-    };
+    test_utils::expect_mpsc_timeout(&mut media_channel).await;
 }
 
 #[tokio::test]
@@ -468,11 +456,7 @@ async fn audio_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
     });
 
     step.execute(&mut inputs, &mut outputs);
-
-    match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(_) => panic!("Expected no items in the media channel, but one was received"),
-        Err(_) => (),
-    }
+    test_utils::expect_mpsc_timeout(&mut media_channel).await;
 }
 
 #[tokio::test]
@@ -500,11 +484,7 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
 
     step.execute(&mut inputs, &mut outputs);
 
-    let media = match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(Some(message)) => message,
-        _ => panic!("Expected items in the media channel, but none was received"),
-    };
-
+    let media = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(
         media.stream_key,
         TEST_KEY.to_string(),
@@ -558,10 +538,7 @@ async fn audio_packet_not_sent_to_media_channel_after_stream_disconnection_messa
 
     step.execute(&mut inputs, &mut outputs);
 
-    match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(_) => panic!("Expected no items in the media channel, but one was received"),
-        Err(_) => (),
-    };
+    test_utils::expect_mpsc_timeout(&mut media_channel).await;
 }
 
 #[tokio::test]
@@ -579,10 +556,7 @@ async fn metadata_packet_not_sent_to_media_channel_if_new_stream_message_not_rec
 
     step.execute(&mut inputs, &mut outputs);
 
-    match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(_) => panic!("Expected no items in the media channel, but one was received"),
-        Err(_) => (),
-    }
+    test_utils::expect_mpsc_timeout(&mut media_channel).await;
 }
 
 #[tokio::test]
@@ -608,11 +582,7 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
 
     step.execute(&mut inputs, &mut outputs);
 
-    let media = match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(Some(message)) => message,
-        _ => panic!("Expected items in the media channel, but none was received"),
-    };
-
+    let media = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(
         media.stream_key,
         TEST_KEY.to_string(),
@@ -659,10 +629,7 @@ async fn metadata_packet_not_sent_to_media_channel_after_stream_disconnection_me
 
     step.execute(&mut inputs, &mut outputs);
 
-    match timeout(Duration::from_millis(10), media_channel.recv()).await {
-        Ok(_) => panic!("Expected no items in the media channel, but one was received"),
-        Err(_) => (),
-    };
+    test_utils::expect_mpsc_timeout(&mut media_channel).await;
 }
 
 #[tokio::test]
