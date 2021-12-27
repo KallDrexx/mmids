@@ -41,19 +41,21 @@ pub enum WorkflowRequestOperation {
     MediaNotification { media: MediaNotification },
 }
 
+#[derive(Debug)]
 pub struct WorkflowState {
     pub status: WorkflowStatus,
     pub active_steps: Vec<WorkflowStepState>,
     pub pending_steps: Vec<WorkflowStepState>,
 }
 
+#[derive(Debug)]
 pub struct WorkflowStepState {
     pub step_id: u64,
     pub definition: WorkflowStepDefinition,
     pub status: StepStatus,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum WorkflowStatus {
     Running,
     Error {

@@ -17,6 +17,7 @@ use tokio::sync::oneshot::Sender;
 use tracing::{info, instrument, warn};
 
 /// Requests an action be taken by the workflow manager
+#[derive(Debug)]
 pub struct WorkflowManagerRequest {
     /// An identifier that can identify this request. Mostly used for correlations
     pub request_id: String,
@@ -26,6 +27,7 @@ pub struct WorkflowManagerRequest {
 }
 
 /// Operations consumers can request the workflow manager to perform
+#[derive(Debug)]
 pub enum WorkflowManagerRequestOperation {
     /// Starts or updates a specified workflow based on the passed in definition
     UpsertWorkflow { definition: WorkflowDefinition },
@@ -45,6 +47,7 @@ pub enum WorkflowManagerRequestOperation {
     },
 }
 
+#[derive(Debug)]
 pub struct GetWorkflowResponse {
     pub name: String,
 }

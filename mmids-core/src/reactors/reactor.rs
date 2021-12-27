@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{info, instrument, warn};
 
 /// Requests that can be made to a reactor
+#[derive(Debug)]
 pub enum ReactorRequest {
     /// Requests that the reactor creates and manages a workflow for the specified stream name
     CreateWorkflowNameForStream {
@@ -24,6 +25,7 @@ pub enum ReactorRequest {
 }
 
 /// Contains information about a workflow from a reactor
+#[derive(Debug)]
 pub struct ReactorWorkflowUpdate {
     /// If the reactor considers the stream name valid and workflows have been created for it.
     pub is_valid: bool,
@@ -441,4 +443,400 @@ async fn notify_when_response_channel_closed(
 async fn wait_for_update_interval(stream_name: String, wait_time: Duration) -> FutureResult {
     tokio::time::sleep(wait_time).await;
     FutureResult::UpdateStreamNameRequested { stream_name }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils;
+    use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
+    use tokio::time::timeout;
+
+    struct TestContext {
+        _event_hub: UnboundedReceiver<SubscriptionRequest>,
+        _workflow_manager_events: UnboundedSender<WorkflowManagerEvent>,
+        workflow_manager: UnboundedReceiver<WorkflowManagerRequest>,
+        reactor: UnboundedSender<ReactorRequest>,
+    }
+
+    struct TestExecutor {
+        expected_name: String,
+        workflows: Vec<WorkflowDefinition>,
+    }
+
+    impl TestContext {
+        async fn new(name: String, duration: Duration, executor: TestExecutor) -> Self {
+            let (sender, mut sub_receiver) = unbounded_channel();
+            let reactor = start_reactor(name, Box::new(executor), sender, duration);
+
+            let response = test_utils::expect_mpsc_response(&mut sub_receiver).await;
+            let response_channel = match response {
+                SubscriptionRequest::WorkflowManagerEvents { channel } => channel,
+                event => panic!("Unexpected event: {:?}", event),
+            };
+
+            let (wm_sender, wm_receiver) = unbounded_channel();
+            response_channel
+                .send(WorkflowManagerEvent::WorkflowManagerRegistered { channel: wm_sender })
+                .expect("Channel closed");
+
+            TestContext {
+                reactor,
+                _event_hub: sub_receiver,
+                _workflow_manager_events: response_channel,
+                workflow_manager: wm_receiver,
+            }
+        }
+    }
+
+    impl ReactorExecutor for TestExecutor {
+        fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Vec<WorkflowDefinition>> {
+            let future = if self.expected_name == stream_name {
+                let workflows = self.workflows.clone();
+                async {
+                    return workflows;
+                }
+                .boxed()
+            } else {
+                async {
+                    return Vec::new();
+                }
+                .boxed()
+            };
+
+            future
+        }
+    }
+
+    #[tokio::test]
+    async fn can_get_routable_workflows_from_executor() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let context =
+            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let (sender, mut receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "stream".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        let update = test_utils::expect_mpsc_response(&mut receiver).await;
+        assert!(update.is_valid, "Expected is valid to be true");
+        assert_eq!(
+            update.routable_workflow_names.len(),
+            2,
+            "Expected 2 routable workflows"
+        );
+        assert!(
+            update.routable_workflow_names.contains("first"),
+            "Did not find 'first' workflow in routable results"
+        );
+
+        assert!(
+            update.routable_workflow_names.contains("third"),
+            "Did not find 'third' workflow in routable results"
+        );
+    }
+
+    #[tokio::test]
+    async fn not_valid_if_stream_name_invalid() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let context =
+            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let (sender, mut receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "invalid".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        let update = test_utils::expect_mpsc_response(&mut receiver).await;
+
+        assert!(!update.is_valid, "Expected is valid to be false");
+        assert_eq!(
+            update.routable_workflow_names.len(),
+            0,
+            "Expected no routable workflow names"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_workflows_upserted_to_workflow_manager() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let mut context =
+            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let (sender, _receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "stream".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        let mut workflows_found = [false, false, false];
+        loop {
+            let request = test_utils::expect_mpsc_response(&mut context.workflow_manager).await;
+            match request.operation {
+                WorkflowManagerRequestOperation::UpsertWorkflow { definition } => {
+                    if &definition.name == "first" {
+                        if workflows_found[0] {
+                            panic!("Received duplicate upsert request for workflow 'first'");
+                        }
+
+                        assert_eq!(definition.steps.len(), 1, "Expected 1 workflows");
+                        workflows_found[0] = true;
+                    } else if &definition.name == "second" {
+                        if workflows_found[1] {
+                            panic!("Received duplicate upsert request for workflow 'second'");
+                        }
+
+                        assert_eq!(definition.steps.len(), 2, "Expected 2 workflow steps");
+                        workflows_found[1] = true;
+                    } else if &definition.name == "third" {
+                        if workflows_found[2] {
+                            panic!("Received duplicate upsert request for workflow 'third'");
+                        }
+
+                        assert_eq!(definition.steps.len(), 3, "Expected 3 workflow steps");
+                        workflows_found[2] = true;
+                    } else {
+                        panic!("Unexpected workflow: {}", definition.name);
+                    }
+                }
+
+                operation => panic!("Expected upsert request, instead got {:?}", operation),
+            }
+
+            if workflows_found[0] && workflows_found[1] && workflows_found[2] {
+                break;
+            }
+        }
+
+        test_utils::expect_mpsc_timeout(&mut context.workflow_manager).await;
+    }
+
+    #[tokio::test]
+    async fn workflows_not_updated_when_duration_is_zero() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let context =
+            TestContext::new("reactor".to_string(), Duration::from_secs(10), executor).await;
+        let (sender, mut receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "stream".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        let _ = test_utils::expect_mpsc_response(&mut receiver).await;
+        test_utils::expect_mpsc_timeout(&mut receiver).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        test_utils::expect_mpsc_timeout(&mut receiver).await;
+    }
+
+    #[tokio::test]
+    async fn routable_workflows_updated_when_duration_set() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let context =
+            TestContext::new("reactor".to_string(), Duration::from_millis(500), executor).await;
+        let (sender, mut receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "stream".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        let _ = test_utils::expect_mpsc_response(&mut receiver).await;
+        test_utils::expect_mpsc_timeout(&mut receiver).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let update = test_utils::expect_mpsc_response(&mut receiver).await;
+        assert!(update.is_valid, "Expected is valid to be true");
+        assert_eq!(
+            update.routable_workflow_names.len(),
+            2,
+            "Expected 2 routable workflows"
+        );
+        assert!(
+            update.routable_workflow_names.contains("first"),
+            "Did not find 'first' workflow in routable results"
+        );
+
+        assert!(
+            update.routable_workflow_names.contains("third"),
+            "Did not find 'third' workflow in routable results"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_workflows_upserted_to_workflow_manager_again_after_duration() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let mut context =
+            TestContext::new("reactor".to_string(), Duration::from_millis(500), executor).await;
+        let (sender, _receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "stream".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        loop {
+            match timeout(Duration::from_millis(10), context.workflow_manager.recv()).await {
+                Ok(_) => (),
+                Err(_) => break,
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let mut workflows_found = [false, false, false];
+        loop {
+            let request = test_utils::expect_mpsc_response(&mut context.workflow_manager).await;
+            match request.operation {
+                WorkflowManagerRequestOperation::UpsertWorkflow { definition } => {
+                    if &definition.name == "first" {
+                        if workflows_found[0] {
+                            panic!("Received duplicate upsert request for workflow 'first'");
+                        }
+
+                        assert_eq!(definition.steps.len(), 1, "Expected 1 workflows");
+                        workflows_found[0] = true;
+                    } else if &definition.name == "second" {
+                        if workflows_found[1] {
+                            panic!("Received duplicate upsert request for workflow 'second'");
+                        }
+
+                        assert_eq!(definition.steps.len(), 2, "Expected 2 workflow steps");
+                        workflows_found[1] = true;
+                    } else if &definition.name == "third" {
+                        if workflows_found[2] {
+                            panic!("Received duplicate upsert request for workflow 'third'");
+                        }
+
+                        assert_eq!(definition.steps.len(), 3, "Expected 3 workflow steps");
+                        workflows_found[2] = true;
+                    } else {
+                        panic!("Unexpected workflow: {}", definition.name);
+                    }
+                }
+
+                operation => panic!("Expected upsert request, instead got {:?}", operation),
+            }
+
+            if workflows_found[0] && workflows_found[1] && workflows_found[2] {
+                break;
+            }
+        }
+
+        test_utils::expect_mpsc_timeout(&mut context.workflow_manager).await;
+    }
+
+    #[tokio::test]
+    async fn workflow_manager_not_given_new_workflows_when_duration_is_zero() {
+        let executor = TestExecutor {
+            expected_name: "stream".to_string(),
+            workflows: get_test_workflows(),
+        };
+
+        let mut context =
+            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let (sender, _receiver) = unbounded_channel();
+        context
+            .reactor
+            .send(ReactorRequest::CreateWorkflowNameForStream {
+                stream_name: "stream".to_string(),
+                response_channel: sender,
+            })
+            .expect("Channel closed");
+
+        loop {
+            match timeout(Duration::from_millis(10), context.workflow_manager.recv()).await {
+                Ok(_) => (),
+                Err(_) => break,
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        test_utils::expect_mpsc_timeout(&mut context.workflow_manager).await;
+    }
+
+    fn get_test_workflows() -> Vec<WorkflowDefinition> {
+        vec![
+            WorkflowDefinition {
+                name: "first".to_string(),
+                routed_by_reactor: true,
+                steps: vec![WorkflowStepDefinition {
+                    step_type: WorkflowStepType("a".to_string()),
+                    parameters: HashMap::new(),
+                }],
+            },
+            WorkflowDefinition {
+                name: "second".to_string(),
+                routed_by_reactor: false,
+                steps: vec![
+                    WorkflowStepDefinition {
+                        step_type: WorkflowStepType("b".to_string()),
+                        parameters: HashMap::new(),
+                    },
+                    WorkflowStepDefinition {
+                        step_type: WorkflowStepType("c".to_string()),
+                        parameters: HashMap::new(),
+                    },
+                ],
+            },
+            WorkflowDefinition {
+                name: "third".to_string(),
+                routed_by_reactor: true,
+                steps: vec![
+                    WorkflowStepDefinition {
+                        step_type: WorkflowStepType("d".to_string()),
+                        parameters: HashMap::new(),
+                    },
+                    WorkflowStepDefinition {
+                        step_type: WorkflowStepType("e".to_string()),
+                        parameters: HashMap::new(),
+                    },
+                    WorkflowStepDefinition {
+                        step_type: WorkflowStepType("f".to_string()),
+                        parameters: HashMap::new(),
+                    },
+                ],
+            },
+        ]
+    }
 }

@@ -8,14 +8,14 @@ use std::hash::{Hash, Hasher};
 pub struct WorkflowStepType(pub String);
 
 /// The definition of a workflow step and any parameters it may be using
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WorkflowStepDefinition {
     pub step_type: WorkflowStepType,
     pub parameters: HashMap<String, Option<String>>,
 }
 
 /// The definition of a workflow and the steps (in order) it contains
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WorkflowDefinition {
     pub name: String,
     pub routed_by_reactor: bool,
