@@ -266,3 +266,372 @@ async fn wait_for_workflow_gone(
     sender.closed().await;
     FutureResult::WorkflowGone(name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils;
+    use tokio::sync::oneshot::channel;
+
+    struct TestContext {
+        event_hub: UnboundedReceiver<PublishEventRequest>,
+        manager: UnboundedSender<WorkflowManagerRequest>,
+    }
+
+    impl TestContext {
+        fn new() -> Self {
+            let (sender, receiver) = unbounded_channel();
+            let factory = Arc::new(WorkflowStepFactory::new());
+            let manager = start_workflow_manager(factory, sender);
+
+            TestContext {
+                event_hub: receiver,
+                manager,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn new_workflow_manager_registers_with_event_hub() {
+        let mut context = TestContext::new();
+
+        let event = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+        match event {
+            PublishEventRequest::WorkflowManagerEvent(event) => match event {
+                WorkflowManagerEvent::WorkflowManagerRegistered { channel: _ } => (),
+            },
+
+            event => panic!("Expected workflow manager event, instead got {:?}", event),
+        }
+    }
+
+    #[tokio::test]
+    async fn created_workflow_has_event_published() {
+        let mut context = TestContext::new();
+        test_utils::expect_mpsc_response(&mut context.event_hub).await; // manager registered event
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let event = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+        match event {
+            PublishEventRequest::WorkflowStartedOrStopped(event) => match event {
+                WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ } => {
+                    assert_eq!(&name, "workflow", "Unexpected workflow name");
+                }
+
+                event => panic!("Unexpected workflow event received: {:?}", event),
+            },
+
+            event => panic!("Unexpected publish event received; {:?}", event),
+        }
+
+        test_utils::expect_mpsc_timeout(&mut context.event_hub).await;
+    }
+
+    #[tokio::test]
+    async fn created_workflow_shows_in_workflow_list() {
+        let context = TestContext::new();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::GetRunningWorkflows {
+                    response_channel: sender,
+                },
+            })
+            .expect("failed to send list workflow request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        assert_eq!(response.len(), 1, "Unexpected number of workflows");
+        assert_eq!(response[0].name, "workflow", "Unexpected workflow name");
+    }
+
+    #[tokio::test]
+    async fn can_get_details_of_created_workflow() {
+        let context = TestContext::new();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::GetWorkflowDetails {
+                    name: "workflow".to_string(),
+                    response_channel: sender,
+                },
+            })
+            .expect("failed to send list workflow request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        assert!(
+            response.is_some(),
+            "Expected workflow details to be returned"
+        );
+    }
+
+    #[tokio::test]
+    async fn second_upsert_request_does_not_send_second_stated_event() {
+        let mut context = TestContext::new();
+        test_utils::expect_mpsc_response(&mut context.event_hub).await; // manager registered event
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let _ = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        test_utils::expect_mpsc_timeout(&mut context.event_hub).await;
+    }
+
+    #[tokio::test]
+    async fn second_created_workflow_does_not_duplicate_in_workflow_list() {
+        let context = TestContext::new();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::GetRunningWorkflows {
+                    response_channel: sender,
+                },
+            })
+            .expect("failed to send list workflow request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        assert_eq!(response.len(), 1, "Unexpected number of workflows");
+        assert_eq!(response[0].name, "workflow", "Unexpected workflow name");
+    }
+
+    #[tokio::test]
+    async fn stopping_workflow_sends_stopped_event() {
+        let mut context = TestContext::new();
+        test_utils::expect_mpsc_response(&mut context.event_hub).await; // manager registered event
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let _ = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::StopWorkflow {
+                    name: "workflow".to_string(),
+                },
+            })
+            .expect("Failed to send stop command");
+
+        let event = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+        match event {
+            PublishEventRequest::WorkflowStartedOrStopped(event) => match event {
+                WorkflowStartedOrStoppedEvent::WorkflowEnded { name } => {
+                    assert_eq!(&name, "workflow", "Unexpected workflow name");
+                }
+
+                event => panic!("Unexpected workflow event received: {:?}", event),
+            },
+
+            event => panic!("Unexpected publish event received; {:?}", event),
+        }
+
+        test_utils::expect_mpsc_timeout(&mut context.event_hub).await;
+    }
+
+    #[tokio::test]
+    async fn stopped_workflow_does_not_show_in_workflow_list() {
+        let mut context = TestContext::new();
+        test_utils::expect_mpsc_response(&mut context.event_hub).await; // manager registered event
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let _ = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::StopWorkflow {
+                    name: "workflow".to_string(),
+                },
+            })
+            .expect("Failed to send stop command");
+
+        let _ = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::GetRunningWorkflows {
+                    response_channel: sender,
+                },
+            })
+            .expect("Failed to send get running workflow request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        assert!(response.is_empty(), "Expected empty workflow list");
+    }
+
+    #[tokio::test]
+    async fn no_details_returned_for_stopped_workflow() {
+        let mut context = TestContext::new();
+        test_utils::expect_mpsc_response(&mut context.event_hub).await; // manager registered event
+
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::UpsertWorkflow {
+                    definition: WorkflowDefinition {
+                        name: "workflow".to_string(),
+                        routed_by_reactor: false,
+                        steps: Vec::new(),
+                    },
+                },
+            })
+            .expect("Failed to send upsert request");
+
+        let _ = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::StopWorkflow {
+                    name: "workflow".to_string(),
+                },
+            })
+            .expect("Failed to send stop command");
+
+        let _ = test_utils::expect_mpsc_response(&mut context.event_hub).await;
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(WorkflowManagerRequest {
+                request_id: "".to_string(),
+                operation: WorkflowManagerRequestOperation::GetWorkflowDetails {
+                    name: "workflow".to_string(),
+                    response_channel: sender,
+                },
+            })
+            .expect("Failed to send get running workflow request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        assert!(response.is_none(), "Expected no workflow details returned");
+    }
+}
