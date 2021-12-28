@@ -3,6 +3,7 @@ use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, 
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
 use tracing::warn;
 
@@ -352,7 +353,7 @@ fn read_reactor(
                     name,
                     parameters,
                     executor,
-                    update_interval,
+                    update_interval: Duration::from_secs(update_interval),
                 },
             );
         } else {

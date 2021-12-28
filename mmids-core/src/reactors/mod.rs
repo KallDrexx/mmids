@@ -11,11 +11,12 @@ pub mod manager;
 mod reactor;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 pub use reactor::{start_reactor, ReactorRequest, ReactorWorkflowUpdate};
 
 /// How reactors are defined
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReactorDefinition {
     /// The name of the reactor. Used by endpoints and workflow steps to identify which workflow
     /// they want to interact with.
@@ -27,7 +28,7 @@ pub struct ReactorDefinition {
     /// How many seconds the reactor should wait before it re-runs the executor and gets the latest
     /// version of the corresponding workflow definition. An update interval of 0 (or a value not
     /// specified) means it will never update.
-    pub update_interval: u64,
+    pub update_interval: Duration,
 
     /// Key value pairs used to instruct the reactor's executor. Valid values here are specific
     /// to the executor that was picked.

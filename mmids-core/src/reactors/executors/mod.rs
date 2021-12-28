@@ -33,9 +33,6 @@ pub enum RegistrationError {
 pub enum GenerationError {
     #[error("No generators have been registered for the executor name '{0}'")]
     NoRegisteredGenerator(String),
-
-    #[error("The reactor to create did not have an executor specified")]
-    NoExecutorDefined,
 }
 
 impl ReactorExecutorFactory {

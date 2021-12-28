@@ -9,12 +9,12 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, warn};
 
 /// Requests that can be made to the reactor manager
+#[derive(Debug)]
 pub enum ReactorManagerRequest {
     /// Requests a reactor to be created based on the specified definition
     CreateReactor {
@@ -158,7 +158,7 @@ impl Actor {
                     definition.name.clone(),
                     executor,
                     self.event_hub_subscriber.clone(),
-                    Duration::from_secs(definition.update_interval),
+                    definition.update_interval,
                 );
 
                 self.reactors.insert(definition.name, reactor);
@@ -202,5 +202,290 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorManagerRequest>
     match receiver.recv().await {
         Some(request) => FutureResult::RequestReceived(request, receiver),
         None => FutureResult::AllConsumersGone,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reactors::executors::{ReactorExecutor, ReactorExecutorGenerator};
+    use crate::test_utils;
+    use crate::workflows::definitions::WorkflowDefinition;
+    use std::error::Error;
+    use std::time::Duration;
+    use tokio::sync::oneshot::channel;
+
+    #[tokio::test]
+    async fn successful_result_for_new_reactor() {
+        let context = TestContext::new();
+
+        let mut parameters = HashMap::new();
+        parameters.insert("abc".to_string(), None);
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters,
+                    executor: "exe".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        match response {
+            CreateReactorResult::Success => (),
+            response => panic!("Expected a success response, instead got {:?}", response),
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicate_name_error_when_multiple_reactors_have_same_name() {
+        let context = TestContext::new();
+
+        let mut parameters = HashMap::new();
+        parameters.insert("abc".to_string(), None);
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters: parameters.clone(),
+                    executor: "exe".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let _ = test_utils::expect_oneshot_response(receiver).await;
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters: parameters.clone(),
+                    executor: "exe".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        match response {
+            CreateReactorResult::DuplicateReactorName => (),
+            response => panic!("Expected a success response, instead got {:?}", response),
+        }
+    }
+
+    #[tokio::test]
+    async fn error_when_generator_fails() {
+        let context = TestContext::new();
+
+        let mut parameters = HashMap::new();
+        parameters.insert("abcd".to_string(), None);
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters,
+                    executor: "exe".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        match response {
+            CreateReactorResult::ExecutorReturnedError(_) => (),
+            response => panic!("Expected a success response, instead got {:?}", response),
+        }
+    }
+
+    #[tokio::test]
+    async fn error_when_generator_not_found() {
+        let context = TestContext::new();
+
+        let mut parameters = HashMap::new();
+        parameters.insert("abc".to_string(), None);
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters,
+                    executor: "exe2".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        match response {
+            CreateReactorResult::ExecutorGeneratorError(
+                GenerationError::NoRegisteredGenerator(name),
+            ) => {
+                assert_eq!(&name, "exe2", "Error contained an unexpected name");
+            }
+            response => panic!("Expected a success response, instead got {:?}", response),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_workflow_request_sends_to_correct_reactor() {
+        let context = TestContext::new();
+
+        let mut parameters = HashMap::new();
+        parameters.insert("abc".to_string(), None);
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters,
+                    executor: "exe".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        match response {
+            CreateReactorResult::Success => (),
+            response => panic!("Expected a success response, instead got {:?}", response),
+        }
+
+        let (sender, mut receiver) = unbounded_channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateWorkflowForStreamName {
+                reactor_name: "reactor".to_string(),
+                stream_name: "def".to_string(),
+                response_channel: sender,
+            })
+            .expect("Failed to send create workflow request");
+
+        let response = test_utils::expect_mpsc_response(&mut receiver).await;
+        assert!(
+            response.is_valid,
+            "Expected response to have an is_valid flag of true"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_workflow_request_returns_not_valid_when_no_reactor_has_specified_name() {
+        let context = TestContext::new();
+
+        let mut parameters = HashMap::new();
+        parameters.insert("abc".to_string(), None);
+
+        let (sender, receiver) = channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateReactor {
+                definition: ReactorDefinition {
+                    name: "reactor".to_string(),
+                    update_interval: Duration::new(0, 0),
+                    parameters,
+                    executor: "exe".to_string(),
+                },
+                response_channel: sender,
+            })
+            .expect("Failed to send create request");
+
+        let response = test_utils::expect_oneshot_response(receiver).await;
+        match response {
+            CreateReactorResult::Success => (),
+            response => panic!("Expected a success response, instead got {:?}", response),
+        }
+
+        let (sender, mut receiver) = unbounded_channel();
+        context
+            .manager
+            .send(ReactorManagerRequest::CreateWorkflowForStreamName {
+                reactor_name: "reactor2".to_string(),
+                stream_name: "def".to_string(),
+                response_channel: sender,
+            })
+            .expect("Failed to send create workflow request");
+
+        let response = test_utils::expect_mpsc_response(&mut receiver).await;
+        assert!(
+            !response.is_valid,
+            "Expected response to have an is_valid flag of false"
+        );
+    }
+
+    struct TestContext {
+        manager: UnboundedSender<ReactorManagerRequest>,
+        _event_receiver: UnboundedReceiver<SubscriptionRequest>,
+    }
+
+    struct TestExecutorGenerator;
+    struct TestExecutor;
+
+    impl TestContext {
+        fn new() -> Self {
+            let mut factory = ReactorExecutorFactory::new();
+            factory
+                .register("exe".to_string(), Box::new(TestExecutorGenerator))
+                .expect("Registration failed");
+
+            let (event_sender, event_receiver) = unbounded_channel();
+            let manager = start_reactor_manager(factory, event_sender);
+
+            TestContext {
+                manager,
+                _event_receiver: event_receiver,
+            }
+        }
+    }
+
+    impl ReactorExecutor for TestExecutor {
+        fn get_workflow(
+            &self,
+            _stream_name: String,
+        ) -> BoxFuture<'static, Vec<WorkflowDefinition>> {
+            async {
+                vec![WorkflowDefinition {
+                    name: "test".to_string(),
+                    routed_by_reactor: false,
+                    steps: Vec::new(),
+                }]
+            }
+            .boxed()
+        }
+    }
+
+    impl ReactorExecutorGenerator for TestExecutorGenerator {
+        fn generate(
+            &self,
+            parameters: &HashMap<String, Option<String>>,
+        ) -> Result<Box<dyn ReactorExecutor>, Box<dyn Error + Sync + Send>> {
+            if parameters.contains_key("abc") {
+                Ok(Box::new(TestExecutor))
+            } else {
+                Err("Test".into())
+            }
+        }
     }
 }
