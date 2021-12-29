@@ -25,7 +25,7 @@ impl PartialEq<Self> for ConnectionId {
 }
 
 /// Enumeration to make handling ip addresses vs subnets easier
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum IpAddress {
     Exact(Ipv4Addr),
     Cidr(Ipv4Cidr),

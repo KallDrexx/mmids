@@ -379,3 +379,90 @@ async fn wait_for_watch_notification(
 
     Box::new(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use futures::future::BoxFuture;
+    use futures::stream::FuturesUnordered;
+    use crate::test_utils;
+    use crate::workflows::steps::StreamHandlerFutureResult;
+    use super::*;
+
+    struct TestContext {
+        external_stream_reader: ExternalStreamReader,
+        rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
+        futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
+    }
+
+    struct Handler;
+    impl ExternalStreamHandler for Handler {
+        fn prepare_stream(&mut self, _stream_name: &str, _outputs: &mut StepOutputs) {}
+
+        fn stop_stream(&mut self) {}
+
+        fn handle_resolved_future(&mut self, _future: Box<dyn StreamHandlerFutureResult>, _outputs: &mut StepOutputs) -> ResolvedFutureStatus {
+            ResolvedFutureStatus::Success
+        }
+    }
+
+    struct Generator;
+    impl ExternalStreamHandlerGenerator for Generator {
+        fn generate(&self, _stream_id: StreamId) -> Box<dyn ExternalStreamHandler + Sync + Send> {
+            Box::new(Handler)
+        }
+    }
+
+    impl TestContext {
+        fn new() -> Self {
+            let (sender, receiver) = unbounded_channel();
+            let generator = Box::new(Generator);
+            let (reader, future_list) = ExternalStreamReader::new("app".to_string(), sender, generator);
+            let mut futures = FuturesUnordered::new();
+            futures.extend(future_list);
+
+            TestContext {
+                rtmp_endpoint: receiver,
+                external_stream_reader: reader,
+                futures,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_request_on_stream_connected_message() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::NewIncomingStream {
+                stream_name: "def".to_string(),
+            }
+        };
+
+        context.external_stream_reader.handle_media(media, &mut outputs);
+        context.futures.extend(outputs.futures);
+
+        let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
+        match response {
+            RtmpEndpointRequest::ListenForWatchers {
+                port,
+                rtmp_app,
+                rtmp_stream_key: _,
+                requires_registrant_approval,
+                media_channel: _,
+                use_tls,
+                ip_restrictions,
+                notification_channel: _,
+            } => {
+                assert_eq!(port, 1935, "Unexpected port");
+                assert_eq!(&rtmp_app, "app", "Unexpected rtmp application");
+                assert!(!use_tls, "Expected use tls to be disabled");
+                assert!(!requires_registrant_approval, "Expected not to require registrant approval");
+                assert_eq!(ip_restrictions, IpRestriction::None, "Expected no ip restrictions");
+            }
+
+            response => panic!("Expected ListenForWatchers, instead got {:?}", response),
+        }
+    }
+}
