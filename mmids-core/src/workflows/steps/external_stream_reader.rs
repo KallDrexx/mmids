@@ -338,12 +338,8 @@ impl ExternalStreamReader {
                     stream.rtmp_output_status = WatchRegistrationStatus::Inactive;
                 }
 
-                RtmpEndpointWatcherNotification::StreamKeyBecameActive {
-                    stream_key: _,
-                    reactor_update_channel: _,
-                } => (),
-
-                RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key: _ } => (),
+                RtmpEndpointWatcherNotification::StreamKeyBecameActive { .. } => (),
+                RtmpEndpointWatcherNotification::StreamKeyBecameInactive { .. } => (),
 
                 RtmpEndpointWatcherNotification::WatcherRequiringApproval { .. } => {
                     error!("Received request for approval but requests should be auto-approved");
@@ -382,49 +378,121 @@ async fn wait_for_watch_notification(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::codecs::{AudioCodec, VideoCodec};
+    use crate::endpoints::rtmp_server::RtmpEndpointMediaData;
+    use crate::test_utils;
+    use crate::utils::hash_map_to_stream_metadata;
+    use crate::workflows::steps::StreamHandlerFutureResult;
+    use bytes::Bytes;
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
-    use crate::test_utils;
-    use crate::workflows::steps::StreamHandlerFutureResult;
-    use super::*;
+    use rml_rtmp::time::RtmpTimestamp;
+    use std::time::Duration;
 
     struct TestContext {
         external_stream_reader: ExternalStreamReader,
         rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
         futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
+        prepare_stream_receiver: UnboundedReceiver<String>,
+        stop_stream_receiver: UnboundedReceiver<()>,
     }
 
-    struct Handler;
+    struct Handler {
+        prepare_stream_sender: UnboundedSender<String>,
+        stop_stream_sender: UnboundedSender<()>,
+    }
+
     impl ExternalStreamHandler for Handler {
-        fn prepare_stream(&mut self, _stream_name: &str, _outputs: &mut StepOutputs) {}
+        fn prepare_stream(&mut self, stream_name: &str, _outputs: &mut StepOutputs) {
+            let _ = self.prepare_stream_sender.send(stream_name.to_string());
+        }
 
-        fn stop_stream(&mut self) {}
+        fn stop_stream(&mut self) {
+            let _ = self.stop_stream_sender.send(());
+        }
 
-        fn handle_resolved_future(&mut self, _future: Box<dyn StreamHandlerFutureResult>, _outputs: &mut StepOutputs) -> ResolvedFutureStatus {
+        fn handle_resolved_future(
+            &mut self,
+            _future: Box<dyn StreamHandlerFutureResult>,
+            _outputs: &mut StepOutputs,
+        ) -> ResolvedFutureStatus {
             ResolvedFutureStatus::Success
         }
     }
 
-    struct Generator;
+    struct Generator {
+        prepare_stream_sender: UnboundedSender<String>,
+        stop_stream_sender: UnboundedSender<()>,
+    }
+
     impl ExternalStreamHandlerGenerator for Generator {
         fn generate(&self, _stream_id: StreamId) -> Box<dyn ExternalStreamHandler + Sync + Send> {
-            Box::new(Handler)
+            Box::new(Handler {
+                prepare_stream_sender: self.prepare_stream_sender.clone(),
+                stop_stream_sender: self.stop_stream_sender.clone(),
+            })
         }
     }
 
     impl TestContext {
         fn new() -> Self {
-            let (sender, receiver) = unbounded_channel();
-            let generator = Box::new(Generator);
-            let (reader, future_list) = ExternalStreamReader::new("app".to_string(), sender, generator);
+            let (rtmp_sender, rtmp_receiver) = unbounded_channel();
+            let (prepare_sender, prepare_receiver) = unbounded_channel();
+            let (stop_sender, stop_receiver) = unbounded_channel();
+            let generator = Box::new(Generator {
+                prepare_stream_sender: prepare_sender,
+                stop_stream_sender: stop_sender,
+            });
+
+            let (reader, future_list) =
+                ExternalStreamReader::new("app".to_string(), rtmp_sender, generator);
             let mut futures = FuturesUnordered::new();
             futures.extend(future_list);
 
             TestContext {
-                rtmp_endpoint: receiver,
+                rtmp_endpoint: rtmp_receiver,
                 external_stream_reader: reader,
                 futures,
+                prepare_stream_receiver: prepare_receiver,
+                stop_stream_receiver: stop_receiver,
             }
+        }
+
+        async fn accept_stream(&mut self) -> UnboundedReceiver<RtmpEndpointMediaMessage> {
+            let mut outputs = StepOutputs::new();
+
+            let media = MediaNotification {
+                stream_id: StreamId("abc".to_string()),
+                content: MediaNotificationContent::NewIncomingStream {
+                    stream_name: "def".to_string(),
+                },
+            };
+
+            self.external_stream_reader
+                .handle_media(media, &mut outputs);
+            self.futures.extend(outputs.futures.drain(..));
+
+            let response = test_utils::expect_mpsc_response(&mut self.rtmp_endpoint).await;
+            let (notification_channel, media_channel) = match response {
+                RtmpEndpointRequest::ListenForWatchers {
+                    notification_channel,
+                    media_channel,
+                    ..
+                } => (notification_channel, media_channel),
+
+                response => panic!("Unexpected request: {:?}", response),
+            };
+
+            notification_channel
+                .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful)
+                .expect("Failed to send registration success response");
+
+            let result = test_utils::expect_future_resolved(&mut self.futures).await;
+            self.external_stream_reader
+                .handle_resolved_future(result, &mut outputs);
+
+            media_channel
         }
     }
 
@@ -437,10 +505,12 @@ mod tests {
             stream_id: StreamId("abc".to_string()),
             content: MediaNotificationContent::NewIncomingStream {
                 stream_name: "def".to_string(),
-            }
+            },
         };
 
-        context.external_stream_reader.handle_media(media, &mut outputs);
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
         context.futures.extend(outputs.futures);
 
         let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
@@ -458,11 +528,368 @@ mod tests {
                 assert_eq!(port, 1935, "Unexpected port");
                 assert_eq!(&rtmp_app, "app", "Unexpected rtmp application");
                 assert!(!use_tls, "Expected use tls to be disabled");
-                assert!(!requires_registrant_approval, "Expected not to require registrant approval");
-                assert_eq!(ip_restrictions, IpRestriction::None, "Expected no ip restrictions");
+                assert!(
+                    !requires_registrant_approval,
+                    "Expected not to require registrant approval"
+                );
+                assert_eq!(
+                    ip_restrictions,
+                    IpRestriction::None,
+                    "Expected no ip restrictions"
+                );
             }
 
             response => panic!("Expected ListenForWatchers, instead got {:?}", response),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_connected_message_passed_immediately_as_output() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::NewIncomingStream {
+                stream_name: "def".to_string(),
+            },
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        assert_eq!(outputs.media.len(), 1, "Expected single media output");
+        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        match &outputs.media[0].content {
+            MediaNotificationContent::NewIncomingStream { stream_name } => {
+                assert_eq!(stream_name, "def", "Unexpected stream name");
+            }
+
+            content => panic!("Expected NewIncomingStream, got {:?}", content),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_disconnected_message_passed_immediately_as_output() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::StreamDisconnected,
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        assert_eq!(outputs.media.len(), 1, "Expected single media output");
+        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        match &outputs.media[0].content {
+            MediaNotificationContent::StreamDisconnected => (),
+            content => panic!("Expected NewIncomingStream, got {:?}", content),
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_message_passed_immediately_as_output() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("width".to_string(), "1920".to_string());
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::Metadata {
+                data: metadata.clone(),
+            },
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        assert_eq!(outputs.media.len(), 1, "Expected single media output");
+        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        match &outputs.media[0].content {
+            MediaNotificationContent::Metadata { data } => {
+                assert_eq!(data, &metadata, "Unexpected metadata in output");
+            }
+
+            content => panic!("Expected NewIncomingStream, got {:?}", content),
+        }
+    }
+
+    #[tokio::test]
+    async fn video_message_passed_immediately_as_output() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::Video {
+                data: Bytes::from(vec![1, 2, 3]),
+                codec: VideoCodec::H264,
+                timestamp: Duration::from_millis(5),
+                is_keyframe: true,
+                is_sequence_header: true,
+            },
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        assert_eq!(outputs.media.len(), 1, "Expected single media output");
+        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        match &outputs.media[0].content {
+            MediaNotificationContent::Video {
+                data,
+                codec,
+                timestamp,
+                is_sequence_header,
+                is_keyframe,
+            } => {
+                assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
+                assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
+                assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+                assert!(is_sequence_header, "Expected sequence header");
+                assert!(is_keyframe, "Expected key frame");
+            }
+
+            content => panic!("Expected NewIncomingStream, got {:?}", content),
+        }
+    }
+
+    #[tokio::test]
+    async fn audio_message_passed_immediately_as_output() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::Audio {
+                data: Bytes::from(vec![1, 2, 3]),
+                codec: AudioCodec::Aac,
+                timestamp: Duration::from_millis(5),
+                is_sequence_header: true,
+            },
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        assert_eq!(outputs.media.len(), 1, "Expected single media output");
+        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        match &outputs.media[0].content {
+            MediaNotificationContent::Audio {
+                data,
+                codec,
+                timestamp,
+                is_sequence_header,
+            } => {
+                assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
+                assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
+                assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+                assert!(is_sequence_header, "Expected sequence header");
+            }
+
+            content => panic!("Expected NewIncomingStream, got {:?}", content),
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_watch_registration_calls_prepare_stream() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::NewIncomingStream {
+                stream_name: "def".to_string(),
+            },
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+        context.futures.extend(outputs.futures.drain(..));
+
+        let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
+        let channel = match response {
+            RtmpEndpointRequest::ListenForWatchers {
+                notification_channel,
+                ..
+            } => notification_channel,
+            response => panic!("Unexpected request: {:?}", response),
+        };
+
+        channel
+            .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful)
+            .expect("Failed to send registration success response");
+
+        let result = test_utils::expect_future_resolved(&mut context.futures).await;
+        context
+            .external_stream_reader
+            .handle_resolved_future(result, &mut outputs);
+        let stream_name =
+            test_utils::expect_mpsc_response(&mut context.prepare_stream_receiver).await;
+
+        assert_eq!(&stream_name, "def", "Unexpected stream name prepared");
+    }
+
+    #[tokio::test]
+    async fn stream_disconnection_calls_stop_stream() {
+        let mut context = TestContext::new();
+        let _ = context.accept_stream().await;
+
+        let mut outputs = StepOutputs::new();
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::StreamDisconnected,
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+        context.futures.extend(outputs.futures.drain(..));
+
+        let _ = test_utils::expect_mpsc_response(&mut context.stop_stream_receiver).await;
+    }
+
+    #[tokio::test]
+    async fn stop_stream_not_called_if_no_incoming_stream_notification_came_in() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::StreamDisconnected,
+        };
+
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+        context.futures.extend(outputs.futures.drain(..));
+
+        test_utils::expect_mpsc_timeout(&mut context.stop_stream_receiver).await;
+    }
+
+    #[tokio::test]
+    async fn metadata_message_passed_to_watchers() {
+        let mut context = TestContext::new();
+        let mut media_receiver = context.accept_stream().await;
+
+        let mut raw_metadata = HashMap::new();
+        raw_metadata.insert("width".to_string(), "1920".to_string());
+
+        let expected_metadata = hash_map_to_stream_metadata(&raw_metadata);
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::Metadata { data: raw_metadata },
+        };
+
+        let mut outputs = StepOutputs::new();
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
+        assert_eq!(&media.stream_key, "abc", "Unexpected stream key for media");
+
+        match &media.data {
+            RtmpEndpointMediaData::NewStreamMetaData { metadata } => {
+                assert_eq!(metadata, &expected_metadata, "Unexpected metadata content");
+            }
+
+            data => panic!("Unexpected media data: {:?}", data),
+        }
+    }
+
+    #[tokio::test]
+    async fn video_message_passed_to_watchers() {
+        let mut context = TestContext::new();
+        let mut media_receiver = context.accept_stream().await;
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::Video {
+                data: Bytes::from(vec![1, 2, 3, 4]),
+                is_keyframe: true,
+                is_sequence_header: true,
+                codec: VideoCodec::H264,
+                timestamp: Duration::from_millis(5),
+            },
+        };
+
+        let mut outputs = StepOutputs::new();
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
+        assert_eq!(&media.stream_key, "abc", "Unexpected stream key for media");
+
+        match &media.data {
+            RtmpEndpointMediaData::NewVideoData {
+                data,
+                timestamp,
+                codec,
+                is_sequence_header,
+                is_keyframe,
+            } => {
+                assert_eq!(data, &vec![1, 2, 3, 4], "Unexpected bytes");
+                assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
+                assert!(is_sequence_header, "Expected sequence header to be true");
+                assert!(is_keyframe, "Expected key frame to be true");
+                assert_eq!(codec, &VideoCodec::H264, "Expected h264 codec");
+            }
+
+            data => panic!("Unexpected media data: {:?}", data),
+        }
+    }
+
+    #[tokio::test]
+    async fn audio_message_passed_to_watchers() {
+        let mut context = TestContext::new();
+        let mut media_receiver = context.accept_stream().await;
+
+        let media = MediaNotification {
+            stream_id: StreamId("abc".to_string()),
+            content: MediaNotificationContent::Audio {
+                data: Bytes::from(vec![1, 2, 3, 4]),
+                is_sequence_header: true,
+                codec: AudioCodec::Aac,
+                timestamp: Duration::from_millis(5),
+            },
+        };
+
+        let mut outputs = StepOutputs::new();
+        context
+            .external_stream_reader
+            .handle_media(media, &mut outputs);
+
+        let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
+        assert_eq!(&media.stream_key, "abc", "Unexpected stream key for media");
+
+        match &media.data {
+            RtmpEndpointMediaData::NewAudioData {
+                data,
+                timestamp,
+                codec,
+                is_sequence_header,
+            } => {
+                assert_eq!(data, &vec![1, 2, 3, 4], "Unexpected bytes");
+                assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
+                assert!(is_sequence_header, "Expected sequence header to be true");
+                assert_eq!(codec, &AudioCodec::Aac, "Expected h264 codec");
+            }
+
+            data => panic!("Unexpected media data: {:?}", data),
         }
     }
 }
