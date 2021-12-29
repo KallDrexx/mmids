@@ -12,13 +12,20 @@ pub mod rtmp_receive;
 pub mod rtmp_watch;
 pub mod workflow_forwarder;
 
-pub use external_stream_handler::*;
-pub use external_stream_reader::*;
+#[cfg(test)]
+use crate::workflows::steps::factory::StepGenerator;
+#[cfg(test)]
+use futures::stream::FuturesUnordered;
+#[cfg(test)]
+use std::iter::FromIterator;
 
 use super::MediaNotification;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
 use futures::future::BoxFuture;
+
+pub use external_stream_handler::*;
+pub use external_stream_reader::*;
 
 /// Represents the result of a future for a workflow step.  It is expected that the workflow step
 /// will downcast this result into a struct that it owns.
@@ -120,6 +127,53 @@ pub trait WorkflowStep {
     ///
     /// After this is called it is expected that the workflow step is in a `TornDown` state.
     fn shutdown(&mut self);
+}
+
+#[cfg(test)]
+struct StepTestContext {
+    step: Box<dyn WorkflowStep>,
+    futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
+    media_outputs: Vec<MediaNotification>,
+}
+
+#[cfg(test)]
+impl StepTestContext {
+    #[cfg(test)]
+    fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Self {
+        let (step, futures) = generator
+            .generate(definition)
+            .expect("Failed to generate workflow step");
+
+        StepTestContext {
+            step,
+            futures: FuturesUnordered::from_iter(futures),
+            media_outputs: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    fn execute_media(&mut self, media: MediaNotification) {
+        let mut outputs = StepOutputs::new();
+        let mut inputs = StepInputs::new();
+        inputs.media.push(media);
+
+        self.step.execute(&mut inputs, &mut outputs);
+
+        self.futures.extend(outputs.futures.drain(..));
+        self.media_outputs = outputs.media;
+    }
+
+    #[cfg(test)]
+    fn execute_notification(&mut self, notification: Box<dyn StepFutureResult>) {
+        let mut outputs = StepOutputs::new();
+        let mut inputs = StepInputs::new();
+        inputs.notifications.push(notification);
+
+        self.step.execute(&mut inputs, &mut outputs);
+
+        self.futures.extend(outputs.futures.drain(..));
+        self.media_outputs = outputs.media;
+    }
 }
 
 #[cfg(test)]

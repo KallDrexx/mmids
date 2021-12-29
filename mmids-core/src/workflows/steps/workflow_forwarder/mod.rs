@@ -2,6 +2,9 @@
 //! specified workflow, using the workflow media relay. All media notifications are also passed
 //! to subsequent steps.
 
+#[cfg(test)]
+mod tests;
+
 use crate::event_hub::{SubscriptionRequest, WorkflowStartedOrStoppedEvent};
 use crate::reactors::manager::ReactorManagerRequest;
 use crate::reactors::ReactorWorkflowUpdate;
