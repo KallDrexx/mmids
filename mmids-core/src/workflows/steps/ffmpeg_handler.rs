@@ -25,7 +25,7 @@ pub struct FfmpegHandlerGenerator {
 }
 
 pub trait FfmpegParameterGenerator {
-    fn form_parameters(&self, stream_id: &StreamId, stream_name: &String) -> FfmpegParams;
+    fn form_parameters(&self, stream_id: &StreamId, stream_name: &str) -> FfmpegParams;
 }
 
 #[derive(Debug)]
@@ -58,7 +58,7 @@ impl FfmpegHandlerGenerator {
 }
 
 impl ExternalStreamHandlerGenerator for FfmpegHandlerGenerator {
-    fn generate(&mut self, stream_id: StreamId) -> Box<dyn ExternalStreamHandler + Sync + Send> {
+    fn generate(&self, stream_id: StreamId) -> Box<dyn ExternalStreamHandler + Sync + Send> {
         Box::new(FfmpegHandler {
             ffmpeg_endpoint: self.ffmpeg_endpoint.clone(),
             param_generator: self.param_generator.clone(),
@@ -114,15 +114,12 @@ impl FfmpegHandler {
 }
 
 impl ExternalStreamHandler for FfmpegHandler {
-    fn prepare_stream(
-        &mut self,
-        stream_id: &StreamId,
-        stream_name: &String,
-        outputs: &mut StepOutputs,
-    ) {
+    fn prepare_stream(&mut self, stream_name: &str, outputs: &mut StepOutputs) {
         match &self.status {
             FfmpegHandlerStatus::Inactive => {
-                let parameters = self.param_generator.form_parameters(stream_id, stream_name);
+                let parameters = self
+                    .param_generator
+                    .form_parameters(&self.stream_id, stream_name);
                 let (sender, receiver) = unbounded_channel();
                 let _ = self
                     .ffmpeg_endpoint
@@ -134,7 +131,7 @@ impl ExternalStreamHandler for FfmpegHandler {
 
                 outputs
                     .futures
-                    .push(wait_for_ffmpeg_notification(stream_id.clone(), receiver).boxed());
+                    .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
 
                 self.status = FfmpegHandlerStatus::Pending;
             }
@@ -204,4 +201,83 @@ async fn wait_for_ffmpeg_notification(
         stream_id,
         future: Box::new(result),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::endpoints::ffmpeg::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
+
+    struct TestParamGenerator;
+    impl FfmpegParameterGenerator for TestParamGenerator {
+        fn form_parameters(&self, stream_id: &StreamId, stream_name: &str) -> FfmpegParams {
+            FfmpegParams {
+                audio_transcode: AudioTranscodeParams::Copy,
+                video_transcode: VideoTranscodeParams::Copy,
+                bitrate_in_kbps: None,
+                scale: None,
+                read_in_real_time: true,
+                input: stream_name.to_string(),
+                target: TargetParams::Rtmp {
+                    url: stream_id.0.clone(),
+                },
+            }
+        }
+    }
+
+    struct TestContext {
+        ffmpeg: UnboundedReceiver<FfmpegEndpointRequest>,
+        handler: Box<dyn ExternalStreamHandler>,
+    }
+
+    impl TestContext {
+        fn new() -> Self {
+            let (sender, receiver) = unbounded_channel();
+            let generator = FfmpegHandlerGenerator {
+                ffmpeg_endpoint: sender,
+                param_generator: Arc::new(Box::new(TestParamGenerator)),
+            };
+
+            let handler = generator.generate(StreamId("test".to_string()));
+            TestContext {
+                handler,
+                ffmpeg: receiver,
+            }
+        }
+    }
+
+    #[test]
+    fn prepare_stream_sends_start_ffmpeg_request() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        context.handler.prepare_stream("name", &mut outputs);
+
+        match context.ffmpeg.try_recv() {
+            Ok(FfmpegEndpointRequest::StartFfmpeg {
+                id: _,
+                params,
+                notification_channel: _,
+            }) => {
+                assert_eq!(&params.input, "name", "Unexpected parameter name");
+            }
+
+            other => panic!("Expected Ok(StartFfmpeg), instead got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stop_ffmpeg_sent_when_stop_stream_called() {
+        let mut context = TestContext::new();
+        let mut outputs = StepOutputs::new();
+
+        context.handler.prepare_stream("name", &mut outputs);
+        let _ = context.ffmpeg.try_recv();
+        context.handler.stop_stream();
+
+        match context.ffmpeg.try_recv() {
+            Ok(FfmpegEndpointRequest::StopFfmpeg { id: _ }) => (),
+            other => panic!("Expected Ok(StopFfmpeg) instead got {:?}", other),
+        }
+    }
 }

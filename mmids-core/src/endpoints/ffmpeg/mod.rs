@@ -18,6 +18,7 @@ use tracing::{error, info, instrument};
 use uuid::Uuid;
 
 /// Requests of ffmpeg operations
+#[derive(Debug)]
 pub enum FfmpegEndpointRequest {
     /// Request that ffmpeg should be started with the specified parameters
     StartFfmpeg {
@@ -41,6 +42,7 @@ pub enum FfmpegEndpointRequest {
 }
 
 /// Notifications of what's happening with an ffmpeg operation
+#[derive(Debug)]
 pub enum FfmpegEndpointNotification {
     FfmpegStarted,
     FfmpegStopped,

@@ -146,7 +146,7 @@ impl WorkflowStep for FfmpegRtmpPushStep {
 }
 
 impl FfmpegParameterGenerator for ParamGenerator {
-    fn form_parameters(&self, stream_id: &StreamId, _stream_name: &String) -> FfmpegParams {
+    fn form_parameters(&self, stream_id: &StreamId, _stream_name: &str) -> FfmpegParams {
         FfmpegParams {
             read_in_real_time: true,
             input: format!("rtmp://localhost/{}/{}", self.rtmp_app, stream_id.0),

@@ -259,11 +259,9 @@ impl ExternalStreamReader {
                     }
                 }
 
-                stream.external_stream_handler.prepare_stream(
-                    &stream_id,
-                    &stream.stream_name,
-                    outputs,
-                );
+                stream
+                    .external_stream_handler
+                    .prepare_stream(&stream.stream_name, outputs);
             }
         }
     }
