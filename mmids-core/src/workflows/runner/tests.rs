@@ -1,13 +1,15 @@
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType};
 use crate::workflows::runner::test_context::TestContext;
+use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::StepStatus;
 use crate::workflows::MediaNotificationContent::StreamDisconnected;
 use crate::workflows::{
-    MediaNotification, MediaNotificationContent, WorkflowRequest, WorkflowRequestOperation,
-    WorkflowStatus,
+    start_workflow, MediaNotification, MediaNotificationContent, WorkflowRequest,
+    WorkflowRequestOperation, WorkflowStatus,
 };
 use crate::{test_utils, StreamId};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot::channel;
 use tokio::time::timeout;
@@ -357,6 +359,7 @@ async fn new_pending_steps_replace_active_steps_when_pending_steps_get_active_st
         .input_status
         .send(StepStatus::Active)
         .expect("Failed to set input state");
+
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     // Otherwise pending step will immediately get a resolved future as active
@@ -460,5 +463,109 @@ async fn channel_closed_after_shutdown() {
     match timeout(Duration::from_millis(10), context.workflow.closed()).await {
         Ok(_) => (),
         Err(_) => panic!("Workflow channel didn't close"),
+    }
+}
+
+#[tokio::test]
+async fn workflow_in_error_state_if_factory_cant_find_step() {
+    let factory = Arc::new(WorkflowStepFactory::new());
+    let definition = WorkflowDefinition {
+        name: "abc".to_string(),
+        routed_by_reactor: false,
+        steps: vec![WorkflowStepDefinition {
+            step_type: WorkflowStepType("input".to_string()),
+            parameters: HashMap::new(),
+        }],
+    };
+
+    let step_id = definition.steps[0].get_id();
+    let workflow = start_workflow(definition, factory);
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let (sender, receiver) = channel();
+    workflow
+        .send(WorkflowRequest {
+            request_id: "".to_string(),
+            operation: WorkflowRequestOperation::GetState {
+                response_channel: sender,
+            },
+        })
+        .expect("Failed to send get state request");
+
+    let response = test_utils::expect_oneshot_response(receiver).await;
+    assert!(response.is_some(), "Expected valid response");
+
+    match response.unwrap().status {
+        WorkflowStatus::Error {
+            message: _,
+            failed_step_id,
+        } => {
+            assert_eq!(failed_step_id, step_id, "Unexpected failed step id");
+        }
+
+        status => panic!("Unexpected workflow status: {:?}", status),
+    }
+}
+
+#[tokio::test]
+async fn workflow_in_error_state_if_updated_steps_arent_registered_with_factory() {
+    let context = TestContext::new();
+    context
+        .output_status
+        .send(StepStatus::Active)
+        .expect("Failed to set output state");
+    context
+        .input_status
+        .send(StepStatus::Active)
+        .expect("Failed to set input state");
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let definition = WorkflowDefinition {
+        name: "abc".to_string(),
+        routed_by_reactor: false,
+        steps: vec![WorkflowStepDefinition {
+            step_type: WorkflowStepType("output2".to_string()),
+            parameters: HashMap::new(),
+        }],
+    };
+
+    let step1_id = definition.steps[0].get_id();
+
+    context
+        .workflow
+        .send(WorkflowRequest {
+            request_id: "".to_string(),
+            operation: WorkflowRequestOperation::UpdateDefinition {
+                new_definition: definition,
+            },
+        })
+        .expect("Failed to send update request");
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let (sender, receiver) = channel();
+    context
+        .workflow
+        .send(WorkflowRequest {
+            request_id: "".to_string(),
+            operation: WorkflowRequestOperation::GetState {
+                response_channel: sender,
+            },
+        })
+        .expect("Failed to send get state request");
+
+    let response = test_utils::expect_oneshot_response(receiver).await;
+    assert!(response.is_some(), "Expected valid response");
+
+    match response.unwrap().status {
+        WorkflowStatus::Error {
+            message: _,
+            failed_step_id,
+        } => {
+            assert_eq!(failed_step_id, step1_id, "Unexpected failed step id");
+        }
+
+        status => panic!("Unexpected workflow status: {:?}", status),
     }
 }
