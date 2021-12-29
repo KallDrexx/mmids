@@ -1,3 +1,10 @@
+#[cfg(test)]
+mod test_context;
+#[cfg(test)]
+mod test_steps;
+#[cfg(test)]
+mod tests;
+
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::{
@@ -15,6 +22,7 @@ use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, span, warn, Level};
 
 /// A request to the workflow to perform an action
+#[derive(Debug)]
 pub struct WorkflowRequest {
     /// An identifier that can be used to correlate this request with its
     pub request_id: String,
@@ -22,6 +30,7 @@ pub struct WorkflowRequest {
 }
 
 /// Operations that can be made to an actively running workflow
+#[derive(Debug)]
 pub enum WorkflowRequestOperation {
     /// Requests the workflow update with a new definition. The workflow will take shape to look
     /// exactly as the specified definition has.  Any existing steps that aren't specified will

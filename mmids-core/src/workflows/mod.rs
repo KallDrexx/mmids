@@ -22,7 +22,7 @@ use std::time::Duration;
 pub use runner::{WorkflowState, WorkflowStepState};
 
 /// Notification about media coming across a specific stream
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MediaNotification {
     /// The identifier for the stream that this notification pertains to
     pub stream_id: StreamId,
