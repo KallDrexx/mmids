@@ -66,16 +66,24 @@ impl TestContext {
         }
     }
 
-    async fn send_workflow_started_event(&mut self, name: &str) {
+    async fn send_workflow_started_event(
+        &mut self,
+        name: &str,
+        sender: Option<UnboundedSender<WorkflowRequest>>,
+    ) {
         self.workflow_event_channel
             .send(WorkflowStartedOrStoppedEvent::WorkflowStarted {
                 name: name.to_string(),
-                channel: self.workflow_sender.clone(),
+                channel: if let Some(sender) = sender {
+                    sender
+                } else {
+                    self.workflow_sender.clone()
+                },
             })
             .expect("Failed to send workflow started event");
 
         let result = test_utils::expect_future_resolved(&mut self.step_context.futures).await;
-        self.step_context.execute_notification(result);
+        self.step_context.execute_notification(result).await;
     }
 
     async fn send_workflow_stopped_event(&mut self, name: &str) {
@@ -86,14 +94,14 @@ impl TestContext {
             .expect("Failed to send workflow ended event");
 
         let result = test_utils::expect_future_resolved(&mut self.step_context.futures).await;
-        self.step_context.execute_notification(result);
+        self.step_context.execute_notification(result).await;
     }
 }
 
 #[tokio::test]
 async fn new_stream_message_sent_to_global_workflow() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     context.step_context.execute_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -130,7 +138,7 @@ async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
@@ -152,7 +160,7 @@ async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
 #[tokio::test]
 async fn no_message_passed_if_workflow_has_different_name_than_global_name() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.send_workflow_started_event("test2").await;
+    context.send_workflow_started_event("test2", None).await;
 
     context.step_context.execute_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -167,7 +175,7 @@ async fn no_message_passed_if_workflow_has_different_name_than_global_name() {
 #[tokio::test]
 async fn no_message_passed_if_workflow_stopped_before_media_sent() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
     context.send_workflow_stopped_event("test").await;
 
     context.step_context.execute_media(MediaNotification {
@@ -196,7 +204,7 @@ async fn no_message_passed_if_stream_disconnected_before_workflow_started() {
         content: MediaNotificationContent::StreamDisconnected,
     });
 
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
 }
 
@@ -391,7 +399,7 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
@@ -436,7 +444,7 @@ async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_wo
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
@@ -472,7 +480,7 @@ async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_s
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
@@ -516,7 +524,7 @@ async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_wo
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
@@ -549,7 +557,7 @@ async fn metadata_not_sent_when_received_before_workflow_starts() {
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test").await;
+    context.send_workflow_started_event("test", None).await;
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
@@ -562,4 +570,103 @@ async fn metadata_not_sent_when_received_before_workflow_starts() {
     }
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
+}
+
+#[tokio::test]
+async fn new_stream_triggers_reactor_query() {
+    let mut context = TestContext::new(None, Some("test")).await;
+    context.step_context.execute_media(MediaNotification {
+        stream_id: StreamId("abc".to_string()),
+        content: MediaNotificationContent::NewIncomingStream {
+            stream_name: "def".to_string(),
+        },
+    });
+
+    let response = test_utils::expect_mpsc_response(&mut context.reactor_manager).await;
+    match response {
+        ReactorManagerRequest::CreateWorkflowForStreamName {
+            reactor_name,
+            stream_name,
+            ..
+        } => {
+            assert_eq!(&reactor_name, "test", "Unexpected reactor name");
+            assert_eq!(&stream_name, "def", "Unexpected stream name");
+        }
+
+        response => panic!("Unexpected request: {:?}", response),
+    }
+}
+
+#[tokio::test]
+async fn new_stream_passed_to_all_specified_routable_workflow() {
+    let mut context = TestContext::new(None, Some("test")).await;
+    context.step_context.execute_media(MediaNotification {
+        stream_id: StreamId("abc".to_string()),
+        content: MediaNotificationContent::NewIncomingStream {
+            stream_name: "def".to_string(),
+        },
+    });
+
+    let response = test_utils::expect_mpsc_response(&mut context.reactor_manager).await;
+    match response {
+        ReactorManagerRequest::CreateWorkflowForStreamName {
+            response_channel, ..
+        } => {
+            let mut workflows = HashSet::new();
+            workflows.insert("first".to_string());
+            workflows.insert("second".to_string());
+
+            response_channel
+                .send(ReactorWorkflowUpdate {
+                    is_valid: true,
+                    routable_workflow_names: workflows,
+                })
+                .expect("Failed to send reactor response");
+        }
+
+        response => panic!("Unexpected request: {:?}", response),
+    }
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let (w1_sender, mut w1_receiver) = unbounded_channel();
+    let (w2_sender, mut w2_receiver) = unbounded_channel();
+    context
+        .send_workflow_started_event("first", Some(w1_sender))
+        .await;
+    context
+        .send_workflow_started_event("second", Some(w2_sender))
+        .await;
+
+    let response = test_utils::expect_mpsc_response(&mut w1_receiver).await;
+    match response.operation {
+        WorkflowRequestOperation::MediaNotification { media } => {
+            assert_eq!(&media.stream_id.0, "abc", "Unexpected stream id");
+            match media.content {
+                MediaNotificationContent::NewIncomingStream { stream_name } => {
+                    assert_eq!(&stream_name, "def", "Unexpected stream name");
+                }
+
+                content => panic!("Unexpected media content: {:?}", content),
+            }
+        }
+
+        operation => panic!("Unexpected operation: {:?}", operation),
+    }
+
+    let response = test_utils::expect_mpsc_response(&mut w2_receiver).await;
+    match response.operation {
+        WorkflowRequestOperation::MediaNotification { media } => {
+            assert_eq!(&media.stream_id.0, "abc", "Unexpected stream id");
+            match media.content {
+                MediaNotificationContent::NewIncomingStream { stream_name } => {
+                    assert_eq!(&stream_name, "def", "Unexpected stream name");
+                }
+
+                content => panic!("Unexpected media content: {:?}", content),
+            }
+        }
+
+        operation => panic!("Unexpected operation: {:?}", operation),
+    }
 }

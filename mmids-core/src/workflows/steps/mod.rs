@@ -12,13 +12,6 @@ pub mod rtmp_receive;
 pub mod rtmp_watch;
 pub mod workflow_forwarder;
 
-#[cfg(test)]
-use crate::workflows::steps::factory::StepGenerator;
-#[cfg(test)]
-use futures::stream::FuturesUnordered;
-#[cfg(test)]
-use std::iter::FromIterator;
-
 use super::MediaNotification;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
@@ -130,6 +123,17 @@ pub trait WorkflowStep {
 }
 
 #[cfg(test)]
+use crate::workflows::steps::factory::StepGenerator;
+#[cfg(test)]
+use futures::stream::FuturesUnordered;
+#[cfg(test)]
+use futures::StreamExt;
+#[cfg(test)]
+use std::iter::FromIterator;
+#[cfg(test)]
+use std::time::Duration;
+
+#[cfg(test)]
 struct StepTestContext {
     step: Box<dyn WorkflowStep>,
     futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
@@ -164,15 +168,24 @@ impl StepTestContext {
     }
 
     #[cfg(test)]
-    fn execute_notification(&mut self, notification: Box<dyn StepFutureResult>) {
-        let mut outputs = StepOutputs::new();
-        let mut inputs = StepInputs::new();
-        inputs.notifications.push(notification);
+    async fn execute_notification(&mut self, notification: Box<dyn StepFutureResult>) {
+        let mut notification = Some(notification);
+        while let Some(result) = notification {
+            let mut outputs = StepOutputs::new();
+            let mut inputs = StepInputs::new();
+            inputs.notifications.push(result);
 
-        self.step.execute(&mut inputs, &mut outputs);
+            self.step.execute(&mut inputs, &mut outputs);
 
-        self.futures.extend(outputs.futures.drain(..));
-        self.media_outputs = outputs.media;
+            self.futures.extend(outputs.futures.drain(..));
+            self.media_outputs = outputs.media;
+
+            notification =
+                match tokio::time::timeout(Duration::from_millis(10), self.futures.next()).await {
+                    Ok(Some(notification)) => Some(notification),
+                    _ => None,
+                };
+        }
     }
 }
 
