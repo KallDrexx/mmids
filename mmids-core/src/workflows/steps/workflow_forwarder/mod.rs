@@ -168,7 +168,6 @@ impl WorkflowForwarderStep {
     ) {
         match event {
             WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel } => {
-                dbg!(&name);
                 // We need to track all workflows started, in case we need the channel of a workflow
                 // that starts after the reactor lets us know its relevant to a stream
                 self.known_workflows.insert(name.clone(), channel.clone());

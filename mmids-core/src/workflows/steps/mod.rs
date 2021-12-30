@@ -142,7 +142,6 @@ struct StepTestContext {
 
 #[cfg(test)]
 impl StepTestContext {
-    #[cfg(test)]
     fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Self {
         let (step, futures) = generator
             .generate(definition)
@@ -155,7 +154,6 @@ impl StepTestContext {
         }
     }
 
-    #[cfg(test)]
     fn execute_media(&mut self, media: MediaNotification) {
         let mut outputs = StepOutputs::new();
         let mut inputs = StepInputs::new();
@@ -167,24 +165,35 @@ impl StepTestContext {
         self.media_outputs = outputs.media;
     }
 
-    #[cfg(test)]
     async fn execute_notification(&mut self, notification: Box<dyn StepFutureResult>) {
-        let mut notification = Some(notification);
-        while let Some(result) = notification {
+        let mut outputs = StepOutputs::new();
+        let mut inputs = StepInputs::new();
+        inputs.notifications.push(notification);
+
+        self.step.execute(&mut inputs, &mut outputs);
+
+        self.futures.extend(outputs.futures.drain(..));
+        self.media_outputs = outputs.media;
+
+        self.execute_pending_notifications().await;
+    }
+
+    async fn execute_pending_notifications(&mut self) {
+        loop {
+            let notification =
+                match tokio::time::timeout(Duration::from_millis(10), self.futures.next()).await {
+                    Ok(Some(notification)) => notification,
+                    _ => break,
+                };
+
             let mut outputs = StepOutputs::new();
             let mut inputs = StepInputs::new();
-            inputs.notifications.push(result);
+            inputs.notifications.push(notification);
 
             self.step.execute(&mut inputs, &mut outputs);
 
             self.futures.extend(outputs.futures.drain(..));
             self.media_outputs = outputs.media;
-
-            notification =
-                match tokio::time::timeout(Duration::from_millis(10), self.futures.next()).await {
-                    Ok(Some(notification)) => Some(notification),
-                    _ => None,
-                };
         }
     }
 }

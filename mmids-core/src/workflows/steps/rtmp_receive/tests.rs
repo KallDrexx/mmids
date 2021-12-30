@@ -1,704 +1,805 @@
-use super::super::test_utils::{create_step_parameters, get_pending_future_result};
 use super::*;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::ConnectionId;
 use crate::workflows::definitions::WorkflowStepType;
+use crate::workflows::steps::StepTestContext;
+use crate::workflows::MediaNotificationContent::StreamDisconnected;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::{test_utils, StreamId};
 use bytes::Bytes;
-use futures::future::BoxFuture;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use tokio::sync::oneshot::channel;
 
-const TEST_PORT: u16 = 9999;
-const TEST_APP: &'static str = "some_app";
-const TEST_KEY: &'static str = "test_key";
+struct TestContext {
+    step_context: StepTestContext,
+    rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
+    reactor_manager: UnboundedReceiver<ReactorManagerRequest>,
+}
 
-#[tokio::test]
-async fn can_create_from_filled_out_workflow_definition() {
-    let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    let (mock_sender, mut mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
+struct DefinitionBuilder {
+    port: Option<u16>,
+    app: Option<String>,
+    key: Option<String>,
+    reactor: Option<String>,
+}
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned creating step");
+impl DefinitionBuilder {
+    fn new() -> Self {
+        DefinitionBuilder {
+            port: None,
+            app: None,
+            key: None,
+            reactor: None,
+        }
+    }
 
-    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
-    match response {
-        request => match request {
-            RtmpEndpointRequest::ListenForWatchers { .. } => {
-                panic!("Expected publish registration, instead got watch registration")
-            }
+    fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
 
+    fn app(mut self, app: &str) -> Self {
+        self.app = Some(app.to_string());
+        self
+    }
+
+    fn key(mut self, key: &str) -> Self {
+        self.key = Some(key.to_string());
+        self
+    }
+
+    fn reactor_name(mut self, name: &str) -> Self {
+        self.reactor = Some(name.to_string());
+        self
+    }
+
+    fn build(self) -> WorkflowStepDefinition {
+        let mut definition = WorkflowStepDefinition {
+            step_type: WorkflowStepType("rtmp_receive".to_string()),
+            parameters: HashMap::new(),
+        };
+
+        if let Some(port) = self.port {
+            definition
+                .parameters
+                .insert(PORT_PROPERTY_NAME.to_string(), Some(port.to_string()));
+        }
+
+        if let Some(app) = self.app {
+            definition
+                .parameters
+                .insert(APP_PROPERTY_NAME.to_string(), Some(app));
+        } else {
+            definition
+                .parameters
+                .insert(APP_PROPERTY_NAME.to_string(), Some("app".to_string()));
+        }
+
+        if let Some(key) = self.key {
+            definition
+                .parameters
+                .insert(STREAM_KEY_PROPERTY_NAME.to_string(), Some(key));
+        } else {
+            definition
+                .parameters
+                .insert(STREAM_KEY_PROPERTY_NAME.to_string(), Some("*".to_string()));
+        }
+
+        if let Some(reactor) = self.reactor {
+            definition
+                .parameters
+                .insert(REACTOR_NAME.to_string(), Some(reactor));
+        }
+
+        definition
+    }
+}
+
+impl TestContext {
+    fn new(definition: WorkflowStepDefinition) -> Self {
+        let (reactor_sender, reactor_receiver) = unbounded_channel();
+        let (rtmp_sender, rtmp_receiver) = unbounded_channel();
+
+        let generator = RtmpReceiverStepGenerator {
+            reactor_manager: reactor_sender,
+            rtmp_endpoint_sender: rtmp_sender,
+        };
+
+        let step_context = StepTestContext::new(Box::new(generator), definition);
+
+        TestContext {
+            step_context,
+            rtmp_endpoint: rtmp_receiver,
+            reactor_manager: reactor_receiver,
+        }
+    }
+
+    async fn accept_registration(&mut self) -> UnboundedSender<RtmpEndpointPublisherMessage> {
+        let request = test_utils::expect_mpsc_response(&mut self.rtmp_endpoint).await;
+        let channel = match request {
             RtmpEndpointRequest::ListenForPublishers {
-                port,
-                rtmp_app,
-                rtmp_stream_key,
-                ..
+                message_channel, ..
             } => {
-                assert_eq!(port, TEST_PORT, "Unexpected port");
-                assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected app");
-                assert_eq!(
-                    rtmp_stream_key,
-                    StreamKeyRegistration::Exact(TEST_KEY.to_string()),
-                    "Unexpected stream key"
-                );
+                message_channel
+                    .send(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful)
+                    .expect("Failed to send registration response");
+
+                message_channel
             }
 
-            RtmpEndpointRequest::RemoveRegistration { .. } => {
-                panic!("Expected publish registration, instead got removal request");
-            }
-        },
-    };
+            request => panic!("Unexpected rtmp request seen: {:?}", request),
+        };
+
+        self.step_context.execute_pending_notifications().await;
+
+        channel
+    }
+
+    async fn get_reactor_channel(&mut self) -> UnboundedSender<ReactorWorkflowUpdate> {
+        let request = test_utils::expect_mpsc_response(&mut self.reactor_manager).await;
+        match request {
+            ReactorManagerRequest::CreateWorkflowForStreamName {
+                response_channel, ..
+            } => response_channel,
+            request => panic!("Unexpected request: {:?}", request),
+        }
+    }
 }
 
 #[tokio::test]
-async fn asterisk_for_key_sets_key_to_any() {
-    let definition = create_definition(TEST_PORT, TEST_APP, "*");
-    let (mock_sender, mut mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
+async fn requests_registration_for_publishers() {
+    let definition = DefinitionBuilder::new()
+        .port(1234)
+        .app("some_app")
+        .key("some_key")
+        .build();
 
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned creating step}");
+    let mut context = TestContext::new(definition);
 
-    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     match response {
-        request => match request {
-            RtmpEndpointRequest::ListenForWatchers { .. } => {
-                panic!("Expected publish registration, instead got watch registration")
-            }
-
-            RtmpEndpointRequest::RemoveRegistration { .. } => {
-                panic!("Expected publish registration, instead got removal request");
-            }
-
-            RtmpEndpointRequest::ListenForPublishers {
-                port,
-                rtmp_app,
+        RtmpEndpointRequest::ListenForPublishers {
+            port,
+            rtmp_app,
+            rtmp_stream_key,
+            ..
+        } => {
+            assert_eq!(port, 1234, "Unexpected port");
+            assert_eq!(&rtmp_app, "some_app", "Unexpected rtmp app");
+            assert_eq!(
                 rtmp_stream_key,
-                ..
-            } => {
-                assert_eq!(port, TEST_PORT, "Unexpected port");
-                assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected app");
-                assert_eq!(
-                    rtmp_stream_key,
-                    StreamKeyRegistration::Any,
-                    "Unexpected stream key"
-                );
-            }
-        },
-    };
+                StreamKeyRegistration::Exact("some_key".to_string()),
+                "Unexpected stream key"
+            );
+        }
+
+        response => panic!("Unexpected rtmp request: {:?}", response),
+    }
 }
 
 #[tokio::test]
-async fn port_is_1935_if_none_provided() {
-    let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
+async fn no_port_specified_defaults_to_1935() {
+    let mut definition = DefinitionBuilder::new().key("app").key("key").build();
+
     definition.parameters.remove(PORT_PROPERTY_NAME);
+    let mut context = TestContext::new(definition);
 
-    let (mock_sender, mut mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned creating step}");
-
-    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     match response {
-        request => match request {
-            RtmpEndpointRequest::ListenForWatchers { .. } => {
-                panic!("Expected publish registration, instead got watch registration")
-            }
+        RtmpEndpointRequest::ListenForPublishers { port, .. } => {
+            assert_eq!(port, 1935, "Unexpected port");
+        }
 
-            RtmpEndpointRequest::RemoveRegistration { .. } => {
-                panic!("Expected publish registration, instead got removal request");
-            }
-
-            RtmpEndpointRequest::ListenForPublishers { port, .. } => {
-                assert_eq!(port, 1935, "Unexpected port");
-            }
-        },
-    };
-}
-
-#[test]
-fn error_if_no_app_provided() {
-    let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.remove(APP_PROPERTY_NAME);
-
-    let (mock_sender, _mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .err()
-        .unwrap();
-}
-
-#[test]
-fn error_if_no_stream_key_provided() {
-    let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.remove(STREAM_KEY_PROPERTY_NAME);
-
-    let (mock_sender, _mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .err()
-        .unwrap();
+        response => panic!("Unexpected rtmp request: {:?}", response),
+    }
 }
 
 #[tokio::test]
-async fn rtmp_app_is_trimmed() {
-    let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.insert(
-        APP_PROPERTY_NAME.to_string(),
-        Some(" ".to_string() + TEST_APP + " "),
-    );
+async fn asterisk_stream_key_acts_as_wildcard() {
+    let definition = DefinitionBuilder::new().key("*").build();
+    let mut context = TestContext::new(definition);
 
-    let (mock_sender, mut mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned creating step}");
-
-    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
+    let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     match response {
-        RtmpEndpointRequest::ListenForWatchers { .. } => {
-            panic!("Expected publish registration, instead got watch registration")
-        }
-
-        RtmpEndpointRequest::RemoveRegistration { .. } => {
-            panic!("Expected publish registration, instead got removal request");
-        }
-
-        RtmpEndpointRequest::ListenForPublishers { rtmp_app, .. } => {
-            assert_eq!(rtmp_app, TEST_APP, "Unexpected rtmp app");
-        }
-    };
-}
-
-#[tokio::test]
-async fn stream_key_is_trimmed() {
-    let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.insert(
-        STREAM_KEY_PROPERTY_NAME.to_string(),
-        Some(" ".to_string() + TEST_KEY + " "),
-    );
-
-    let (mock_sender, mut mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned creating step}");
-
-    let response = test_utils::expect_mpsc_response(&mut mock_receiver).await;
-    match response {
-        RtmpEndpointRequest::ListenForWatchers { .. } => {
-            panic!("Expected publish registration, instead got watch registration")
-        }
-
-        RtmpEndpointRequest::RemoveRegistration { .. } => {
-            panic!("Expected publish registration, instead got removal request");
-        }
-
         RtmpEndpointRequest::ListenForPublishers {
             rtmp_stream_key, ..
         } => {
             assert_eq!(
                 rtmp_stream_key,
-                StreamKeyRegistration::Exact(TEST_KEY.to_string()),
-                "Unexpected stream key registration"
-            );
-        }
-    };
-}
-
-#[test]
-fn new_step_is_in_created_status() {
-    let mut definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    definition.parameters.insert(
-        STREAM_KEY_PROPERTY_NAME.to_string(),
-        Some(" ".to_string() + TEST_KEY + " "),
-    );
-
-    let (mock_sender, _mock_receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    let (step, _futures) = RtmpReceiverStepGenerator::new(mock_sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned when creating rtmp receive step");
-
-    let status = step.get_status();
-    assert_eq!(status, &StepStatus::Created, "Unexpected status");
-}
-
-#[test]
-fn new_registers_for_publishing() {
-    let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    let (sender, mut receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    let (_step, _futures) = RtmpReceiverStepGenerator::new(sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned when creating rtmp receive step");
-
-    let message = receiver
-        .try_recv()
-        .expect("Unexpected error reading from the receiver");
-
-    match message {
-        RtmpEndpointRequest::ListenForPublishers {
-            rtmp_app,
-            port,
-            rtmp_stream_key,
-            stream_id,
-            message_channel: _,
-            ip_restrictions: _,
-            use_tls: _,
-            requires_registrant_approval: _,
-        } => {
-            assert_eq!(port, TEST_PORT, "Unexpected port");
-            assert_eq!(rtmp_app, TEST_APP.to_string(), "Unexpected rtmp app");
-            assert_eq!(
-                rtmp_stream_key,
-                StreamKeyRegistration::Exact(TEST_KEY.to_string()),
+                StreamKeyRegistration::Any,
                 "Unexpected stream key"
             );
-            assert_eq!(stream_id, None, "No stream id was expected to be provided");
         }
 
-        message => panic!("Unexpected endpoint request received: {:?}", message),
-    };
-}
-
-#[tokio::test]
-async fn publish_failure_sets_step_to_error_mode() {
-    let (mut step, futures, message_channel) = create_initialized_step();
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationFailed);
-    let notification = get_pending_future_result(futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
-
-    step.execute(&mut inputs, &mut outputs);
-
-    let status = step.get_status();
-
-    match status {
-        StepStatus::Error { message: _ } => (),
-        x => panic!("Unexpected step status: {:?}", x),
+        response => panic!("Unexpected rtmp request: {:?}", response),
     }
 }
 
 #[tokio::test]
-async fn publish_success_sets_step_to_ready_status() {
-    let (mut step, futures, message_channel) = create_initialized_step();
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful);
-    let notification = get_pending_future_result(futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
+async fn error_if_no_app_specified() {
+    let mut definition = DefinitionBuilder::new().build();
+    definition.parameters.remove(APP_PROPERTY_NAME);
 
-    step.execute(&mut inputs, &mut outputs);
+    let result = std::panic::catch_unwind(|| {
+        TestContext::new(definition);
+    });
 
-    let status = step.get_status();
-    assert_eq!(status, &StepStatus::Active, "Unexpected step status");
+    assert!(result.is_err(), "Expected failure");
+}
+
+#[tokio::test]
+async fn error_if_no_key_specified() {
+    let mut definition = DefinitionBuilder::new().build();
+    definition.parameters.remove(STREAM_KEY_PROPERTY_NAME);
+
+    let result = std::panic::catch_unwind(|| {
+        TestContext::new(definition);
+    });
+
+    assert!(result.is_err(), "Expected failure");
+}
+
+#[test]
+fn step_starts_in_created_state() {
+    let definition = DefinitionBuilder::new().build();
+    let context = TestContext::new(definition);
+
+    let status = context.step_context.step.get_status();
+    assert_eq!(status, &StepStatus::Created, "Unexpected step status");
+}
+
+#[tokio::test]
+async fn registration_failure_sets_status_to_error() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let request = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
+    let _channel = match request {
+        RtmpEndpointRequest::ListenForPublishers {
+            message_channel, ..
+        } => {
+            message_channel
+                .send(RtmpEndpointPublisherMessage::PublisherRegistrationFailed)
+                .expect("Failed to send registration response");
+
+            message_channel
+        }
+
+        request => panic!("Unexpected rtmp request seen: {:?}", request),
+    };
+
+    context.step_context.execute_pending_notifications().await;
+
+    let status = context.step_context.step.get_status();
+    match status {
+        StepStatus::Error { message: _ } => (),
+        _ => panic!("Unexpected status: {:?}", status),
+    }
+}
+
+#[tokio::test]
+async fn registration_success_sets_status_to_active() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let request = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
+    let _channel = match request {
+        RtmpEndpointRequest::ListenForPublishers {
+            message_channel, ..
+        } => {
+            message_channel
+                .send(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful)
+                .expect("Failed to send registration response");
+
+            message_channel
+        }
+
+        request => panic!("Unexpected rtmp request seen: {:?}", request),
+    };
+
+    context.step_context.execute_pending_notifications().await;
+
+    let status = context.step_context.step.get_status();
+    match status {
+        StepStatus::Active => (),
+        _ => panic!("Unexpected status: {:?}", status),
+    }
 }
 
 #[tokio::test]
 async fn stream_started_notification_raised_when_publisher_connects() {
-    let (mut step, futures, message_channel) = create_ready_step().await;
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-        stream_id: StreamId("stream-id".to_string()),
-        connection_id: ConnectionId("conn-id".to_string()),
-        stream_key: "stream_key".to_string(),
-        reactor_update_channel: None,
-    });
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+    let channel = context.accept_registration().await;
 
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs
-        .notifications
-        .push(get_pending_future_result(futures).await);
+    channel
+        .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
+            stream_id: StreamId("test".to_string()),
+            stream_key: "abc".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            reactor_update_channel: None,
+        })
+        .expect("Failed to send publisher connected message");
 
-    step.execute(&mut inputs, &mut outputs);
-
-    assert_eq!(
-        step.get_status(),
-        &StepStatus::Active,
-        "Unexpected step status"
-    );
-    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
-
-    let media = outputs.media.remove(0);
-    assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
-
-    let stream_name = match media.content {
-        MediaNotificationContent::NewIncomingStream { stream_name } => stream_name,
-        content => panic!("Unexpected media notification: {:?}", content),
-    };
+    context.step_context.execute_pending_notifications().await;
 
     assert_eq!(
-        stream_name,
-        "stream_key".to_string(),
-        "Unexpected stream name"
+        context.step_context.media_outputs.len(),
+        1,
+        "Unexpected number of media outputs"
     );
 
-    assert!(outputs.futures.len() > 0,
-            "Expected at least one future to be returned for more endpoint notifications, but none were seen")
+    let media = &context.step_context.media_outputs[0];
+    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
+
+    match &media.content {
+        MediaNotificationContent::NewIncomingStream { stream_name } => {
+            assert_eq!(stream_name, "abc", "Unexpected stream name");
+        }
+
+        content => panic!("Unexpected media content: {:?}", content),
+    }
 }
 
 #[tokio::test]
 async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
-    let stream_id = StreamId("stream-id".to_string());
-    let connection_id = ConnectionId("conn-id".to_string());
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+    let channel = context.accept_registration().await;
 
-    let (mut step, futures, message_channel) = create_ready_step().await;
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-        stream_id: stream_id.clone(),
-        connection_id: connection_id.clone(),
-        stream_key: "stream_key".to_string(),
-        reactor_update_channel: None,
-    });
+    channel
+        .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
+            stream_id: StreamId("test".to_string()),
+            stream_key: "abc".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            reactor_update_channel: None,
+        })
+        .expect("Failed to send publisher connected message");
 
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs
-        .notifications
-        .push(get_pending_future_result(futures).await);
+    context.step_context.execute_pending_notifications().await;
+    context.step_context.media_outputs.clear();
 
-    step.execute(&mut inputs, &mut outputs);
+    channel
+        .send(RtmpEndpointPublisherMessage::PublishingStopped {
+            connection_id: ConnectionId("connection".to_string()),
+        })
+        .expect("Failed to send disconnected message");
 
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::PublishingStopped { connection_id });
-
-    let notification = get_pending_future_result(outputs.futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
-
-    step.execute(&mut inputs, &mut outputs);
+    context.step_context.execute_pending_notifications().await;
 
     assert_eq!(
-        step.get_status(),
-        &StepStatus::Active,
-        "Unexpected step status"
+        context.step_context.media_outputs.len(),
+        1,
+        "Unexpected number of media outputs"
     );
-    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = outputs.media.remove(0);
-    assert_eq!(media.stream_id, stream_id);
+    let media = &context.step_context.media_outputs[0];
+    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
 
-    match media.content {
+    match &media.content {
         MediaNotificationContent::StreamDisconnected => (),
-        content => panic!("Unexpected media notification: {:?}", content),
+        content => panic!("Unexpected media content: {:?}", content),
     }
-
-    assert!(outputs.futures.len() > 0,
-            "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
 #[tokio::test]
 async fn metadata_notification_raised_when_publisher_sends_one() {
-    let stream_id = StreamId("stream-id".to_string());
-    let connection_id = ConnectionId("conn-id".to_string());
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+    let channel = context.accept_registration().await;
 
-    let (mut step, futures, message_channel) = create_ready_step().await;
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-        stream_id: stream_id.clone(),
-        connection_id: connection_id.clone(),
-        stream_key: "stream_key".to_string(),
-        reactor_update_channel: None,
-    });
+    channel
+        .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
+            stream_id: StreamId("test".to_string()),
+            stream_key: "abc".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            reactor_update_channel: None,
+        })
+        .expect("Failed to send publisher connected message");
 
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs
-        .notifications
-        .push(get_pending_future_result(futures).await);
+    context.step_context.execute_pending_notifications().await;
 
-    step.execute(&mut inputs, &mut outputs);
+    let mut metadata = StreamMetadata::new();
+    metadata.video_width = Some(1920);
 
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::StreamMetadataChanged {
-        publisher: connection_id,
-        metadata: StreamMetadata::new(),
-    });
+    channel
+        .send(RtmpEndpointPublisherMessage::StreamMetadataChanged {
+            metadata,
+            publisher: ConnectionId("connection".to_string()),
+        })
+        .expect("Failed to send metadata message");
 
-    let notification = get_pending_future_result(outputs.futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
-
-    step.execute(&mut inputs, &mut outputs);
+    context.step_context.execute_pending_notifications().await;
 
     assert_eq!(
-        step.get_status(),
-        &StepStatus::Active,
-        "Unexpected step status"
+        context.step_context.media_outputs.len(),
+        1,
+        "Unexpected number of media outputs"
     );
-    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = outputs.media.remove(0);
-    assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
+    let media = &context.step_context.media_outputs[0];
+    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
 
-    match media.content {
-        MediaNotificationContent::Metadata { data: _ } => (),
-        content => panic!("Unexpected media notification: {:?}", content),
+    match &media.content {
+        MediaNotificationContent::Metadata { data } => {
+            assert_eq!(
+                data.get("width"),
+                Some(&"1920".to_string()),
+                "Unexpected width"
+            );
+        }
+
+        content => panic!("Unexpected media content: {:?}", content),
     }
-
-    assert!(outputs.futures.len() > 0,
-            "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
 #[tokio::test]
 async fn video_notification_received_when_publisher_sends_video() {
-    let stream_id = StreamId("stream-id".to_string());
-    let connection_id = ConnectionId("conn-id".to_string());
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+    let channel = context.accept_registration().await;
 
-    let (mut step, futures, message_channel) = create_ready_step().await;
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-        stream_id: stream_id.clone(),
-        connection_id: connection_id.clone(),
-        stream_key: "stream_key".to_string(),
-        reactor_update_channel: None,
-    });
+    channel
+        .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
+            stream_id: StreamId("test".to_string()),
+            stream_key: "abc".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            reactor_update_channel: None,
+        })
+        .expect("Failed to send publisher connected message");
 
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs
-        .notifications
-        .push(get_pending_future_result(futures).await);
+    context.step_context.execute_pending_notifications().await;
 
-    step.execute(&mut inputs, &mut outputs);
+    channel
+        .send(RtmpEndpointPublisherMessage::NewVideoData {
+            publisher: ConnectionId("connection".to_string()),
+            data: Bytes::from(vec![1, 2, 3]),
+            codec: VideoCodec::H264,
+            timestamp: RtmpTimestamp::new(5),
+            is_keyframe: true,
+            is_sequence_header: true,
+        })
+        .expect("Failed to send video message");
 
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewVideoData {
-        publisher: connection_id,
-        is_sequence_header: true,
-        is_keyframe: true,
-        codec: VideoCodec::H264,
-        data: Bytes::from(vec![3_u8, 4_u8]),
-        timestamp: RtmpTimestamp::new(53),
-    });
-
-    let notification = get_pending_future_result(outputs.futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
-
-    step.execute(&mut inputs, &mut outputs);
+    context.step_context.execute_pending_notifications().await;
 
     assert_eq!(
-        step.get_status(),
-        &StepStatus::Active,
-        "Unexpected step status"
+        context.step_context.media_outputs.len(),
+        1,
+        "Unexpected number of media outputs"
     );
-    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
 
-    let media = outputs.media.remove(0);
-    assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
+    let media = &context.step_context.media_outputs[0];
+    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
 
-    match media.content {
+    match &media.content {
         MediaNotificationContent::Video {
-            is_sequence_header,
-            is_keyframe,
-            codec,
-            timestamp,
             data,
+            timestamp,
+            codec,
+            is_keyframe,
+            is_sequence_header,
         } => {
-            assert!(is_keyframe, "Expected is keyframe to be true");
+            assert_eq!(data, &vec![1, 2, 3], "Unexpected video data");
+            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+            assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
+            assert!(is_keyframe, "Expected is_keyframe to be true");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
-            assert_eq!(codec, VideoCodec::H264, "Expected codec to be h264");
-            assert_eq!(timestamp, Duration::from_millis(53), "Unexpected timestamp");
-            assert_eq!(data.len(), 2, "Expected 2 bytes of data");
-            assert_eq!(data[0], 3, "Expected first byte to be a 3");
-            assert_eq!(data[1], 4, "Expected second byte to be a 4");
         }
 
-        content => panic!("Unexpected media notification: {:?}", content),
+        content => panic!("Unexpected media content: {:?}", content),
     }
-
-    assert!(outputs.futures.len() > 0,
-            "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
 #[tokio::test]
 async fn audio_notification_received_when_publisher_sends_audio() {
-    let stream_id = StreamId("stream-id".to_string());
-    let connection_id = ConnectionId("conn-id".to_string());
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+    let channel = context.accept_registration().await;
 
-    let (mut step, futures, message_channel) = create_ready_step().await;
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-        stream_id: stream_id.clone(),
-        connection_id: connection_id.clone(),
-        stream_key: "stream_key".to_string(),
-        reactor_update_channel: None,
-    });
+    channel
+        .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
+            stream_id: StreamId("test".to_string()),
+            stream_key: "abc".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            reactor_update_channel: None,
+        })
+        .expect("Failed to send publisher connected message");
 
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs
-        .notifications
-        .push(get_pending_future_result(futures).await);
+    context.step_context.execute_pending_notifications().await;
 
-    step.execute(&mut inputs, &mut outputs);
+    channel
+        .send(RtmpEndpointPublisherMessage::NewAudioData {
+            publisher: ConnectionId("connection".to_string()),
+            data: Bytes::from(vec![1, 2, 3]),
+            codec: AudioCodec::Aac,
+            timestamp: RtmpTimestamp::new(5),
+            is_sequence_header: true,
+        })
+        .expect("Failed to send audio message");
 
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::NewAudioData {
-        publisher: connection_id,
-        is_sequence_header: true,
-        codec: AudioCodec::Aac,
-        data: Bytes::from(vec![3_u8, 4_u8]),
-        timestamp: RtmpTimestamp::new(53),
-    });
-
-    let notification = get_pending_future_result(outputs.futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
-
-    step.execute(&mut inputs, &mut outputs);
+    context.step_context.execute_pending_notifications().await;
 
     assert_eq!(
-        step.get_status(),
-        &StepStatus::Active,
-        "Unexpected step status"
+        context.step_context.media_outputs.len(),
+        1,
+        "Unexpected number of media outputs"
     );
 
-    assert_eq!(outputs.media.len(), 1, "Unexpected number of output media");
+    let media = &context.step_context.media_outputs[0];
+    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
 
-    let media = outputs.media.remove(0);
-    assert_eq!(media.stream_id, StreamId("stream-id".to_string()));
-
-    match media.content {
+    match &media.content {
         MediaNotificationContent::Audio {
-            is_sequence_header,
-            codec,
-            timestamp,
             data,
+            timestamp,
+            codec,
+            is_sequence_header,
         } => {
+            assert_eq!(data, &vec![1, 2, 3], "Unexpected video data");
+            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+            assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
-            assert_eq!(codec, AudioCodec::Aac, "Expected codec to be aac");
-            assert_eq!(timestamp, Duration::from_millis(53), "Unexpected timestamp");
-            assert_eq!(data.len(), 2, "Expected 2 bytes of data");
-            assert_eq!(data[0], 3, "Expected first byte to be a 3");
-            assert_eq!(data[1], 4, "Expected second byte to be a 4");
         }
 
-        content => panic!("Unexpected media notification: {:?}", content),
+        content => panic!("Unexpected media content: {:?}", content),
     }
-
-    assert!(outputs.futures.len() > 0,
-            "Expected at least one future to be returned for more endpoint notifications, but none were seen")
 }
 
-#[tokio::test]
-async fn media_input_does_not_get_passed_through() {
-    let (mut step, _futures, _message_channel) = create_ready_step().await;
-    let (mut inputs, mut outputs) = create_step_parameters();
+#[test]
+fn stream_started_notification_passed_as_input_does_not_get_passed_as_output() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let mut outputs = StepOutputs::new();
+    let mut inputs = StepInputs::new();
     inputs.media.push(MediaNotification {
-        stream_id: StreamId("a".to_string()),
-        content: MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
-            data: Bytes::new(),
-            is_keyframe: true,
-            timestamp: Duration::from_millis(0),
-            is_sequence_header: true,
+        stream_id: StreamId("test".to_string()),
+        content: MediaNotificationContent::NewIncomingStream {
+            stream_name: "name".to_string(),
         },
     });
 
+    context.step_context.step.execute(&mut inputs, &mut outputs);
+
+    assert!(
+        outputs.media.is_empty(),
+        "Expected media outputs to be empty"
+    );
+    assert!(
+        outputs.futures.is_empty(),
+        "Expected future outputs to be empty"
+    );
+}
+
+#[test]
+fn stream_disconnected_notification_passed_as_input_does_not_get_passed_as_output() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let mut outputs = StepOutputs::new();
+    let mut inputs = StepInputs::new();
     inputs.media.push(MediaNotification {
-        stream_id: StreamId("b".to_string()),
-        content: MediaNotificationContent::Audio {
-            is_sequence_header: true,
-            codec: AudioCodec::Aac,
-            data: Bytes::new(),
-            timestamp: Duration::from_millis(0),
-        },
+        stream_id: StreamId("test".to_string()),
+        content: StreamDisconnected,
     });
 
+    context.step_context.step.execute(&mut inputs, &mut outputs);
+
+    assert!(
+        outputs.media.is_empty(),
+        "Expected media outputs to be empty"
+    );
+    assert!(
+        outputs.futures.is_empty(),
+        "Expected future outputs to be empty"
+    );
+}
+
+#[test]
+fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let mut outputs = StepOutputs::new();
+    let mut inputs = StepInputs::new();
     inputs.media.push(MediaNotification {
-        stream_id: StreamId("c".to_string()),
+        stream_id: StreamId("test".to_string()),
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
         },
     });
 
+    context.step_context.step.execute(&mut inputs, &mut outputs);
+
+    assert!(
+        outputs.media.is_empty(),
+        "Expected media outputs to be empty"
+    );
+    assert!(
+        outputs.futures.is_empty(),
+        "Expected future outputs to be empty"
+    );
+}
+
+#[test]
+fn video_notification_passed_as_input_does_not_get_passed_as_output() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let mut outputs = StepOutputs::new();
+    let mut inputs = StepInputs::new();
     inputs.media.push(MediaNotification {
-        stream_id: StreamId("d".to_string()),
-        content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "something".to_string(),
+        stream_id: StreamId("test".to_string()),
+        content: MediaNotificationContent::Video {
+            data: Bytes::from(vec![1, 2]),
+            codec: VideoCodec::H264,
+            timestamp: Duration::from_millis(5),
+            is_keyframe: true,
+            is_sequence_header: true,
         },
     });
 
+    context.step_context.step.execute(&mut inputs, &mut outputs);
+
+    assert!(
+        outputs.media.is_empty(),
+        "Expected media outputs to be empty"
+    );
+    assert!(
+        outputs.futures.is_empty(),
+        "Expected future outputs to be empty"
+    );
+}
+
+#[test]
+fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
+    let definition = DefinitionBuilder::new().build();
+    let mut context = TestContext::new(definition);
+
+    let mut outputs = StepOutputs::new();
+    let mut inputs = StepInputs::new();
     inputs.media.push(MediaNotification {
-        stream_id: StreamId("e".to_string()),
-        content: MediaNotificationContent::StreamDisconnected,
+        stream_id: StreamId("test".to_string()),
+        content: MediaNotificationContent::Audio {
+            data: Bytes::from(vec![1, 2]),
+            codec: AudioCodec::Aac,
+            timestamp: Duration::from_millis(5),
+            is_sequence_header: true,
+        },
     });
 
-    step.execute(&mut inputs, &mut outputs);
+    context.step_context.step.execute(&mut inputs, &mut outputs);
 
-    assert_eq!(outputs.media.len(), 0, "Expected media outputs to be empty");
-    assert_eq!(
-        outputs.futures.len(),
-        0,
-        "Expected futures output to be empty"
-    )
+    assert!(
+        outputs.media.is_empty(),
+        "Expected media outputs to be empty"
+    );
+    assert!(
+        outputs.futures.is_empty(),
+        "Expected future outputs to be empty"
+    );
 }
 
-fn create_initialized_step() -> (
-    Box<dyn WorkflowStep>,
-    Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
-    UnboundedSender<RtmpEndpointPublisherMessage>,
-) {
-    let definition = create_definition(TEST_PORT, TEST_APP, TEST_KEY);
-    let (sender, mut receiver) = unbounded_channel();
-    let (reactor_sender, _reactor_receiver) = unbounded_channel();
-
-    let (step, init_results) = RtmpReceiverStepGenerator::new(sender, reactor_sender)
-        .generate(definition)
-        .expect("Error returned when creating rtmp receive step");
-
-    let message = receiver
-        .try_recv()
-        .expect("Unexpected error reading from the receiver");
-
-    let message_channel = match message {
+#[tokio::test]
+async fn approval_required_requested_when_reactor_specified() {
+    let definition = DefinitionBuilder::new().reactor_name("abc").build();
+    let mut context = TestContext::new(definition);
+    let request = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
+    match request {
         RtmpEndpointRequest::ListenForPublishers {
-            message_channel, ..
-        } => message_channel,
+            requires_registrant_approval,
+            ..
+        } => {
+            assert!(
+                requires_registrant_approval,
+                "Expected requires approval to be true"
+            );
+        }
 
-        message => panic!("Unexpected endpoint request received: {:?}", message),
+        request => panic!("Unexpected rtmp request seen: {:?}", request),
     };
-
-    (step, init_results, message_channel)
 }
 
-async fn create_ready_step() -> (
-    Box<dyn WorkflowStep>,
-    Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
-    UnboundedSender<RtmpEndpointPublisherMessage>,
-) {
-    let (mut step, futures, message_channel) = create_initialized_step();
-    let _ = message_channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful);
+#[tokio::test]
+async fn reactor_queried_for_stream_key_when_approval_required() {
+    let definition = DefinitionBuilder::new().reactor_name("abc").build();
+    let mut context = TestContext::new(definition);
+    let publish_channel = context.accept_registration().await;
 
-    let notification = get_pending_future_result(futures).await;
-    let (mut inputs, mut outputs) = create_step_parameters();
-    inputs.notifications.push(notification);
+    let (sender, _receiver) = channel();
+    publish_channel
+        .send(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+            stream_key: "ab123".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            response_channel: sender,
+        })
+        .expect("Failed to send publisher message");
 
-    step.execute(&mut inputs, &mut outputs);
+    context.step_context.execute_pending_notifications().await;
 
-    (step, outputs.futures, message_channel)
+    let request = test_utils::expect_mpsc_response(&mut context.reactor_manager).await;
+    match request {
+        ReactorManagerRequest::CreateWorkflowForStreamName {
+            reactor_name,
+            stream_name,
+            ..
+        } => {
+            assert_eq!(&reactor_name, "abc", "Unexpected reactor name");
+            assert_eq!(&stream_name, "ab123", "Unexpected stream name");
+        }
+
+        request => panic!("Unexpected request received: {:?}", request),
+    }
 }
 
-fn create_definition(port: u16, app: &str, key: &str) -> WorkflowStepDefinition {
-    let mut definition = WorkflowStepDefinition {
-        step_type: WorkflowStepType("rtmp_receive".to_string()),
-        parameters: HashMap::new(),
-    };
+#[tokio::test]
+async fn rejection_sent_when_reactor_says_stream_is_not_valid() {
+    let definition = DefinitionBuilder::new().reactor_name("reactor").build();
+    let mut context = TestContext::new(definition);
+    let publish_channel = context.accept_registration().await;
 
-    definition
-        .parameters
-        .insert(PORT_PROPERTY_NAME.to_string(), Some(port.to_string()));
-    definition
-        .parameters
-        .insert(APP_PROPERTY_NAME.to_string(), Some(app.to_string()));
-    definition
-        .parameters
-        .insert(STREAM_KEY_PROPERTY_NAME.to_string(), Some(key.to_string()));
+    let (sender, receiver) = channel();
+    publish_channel
+        .send(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+            stream_key: "ab123".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            response_channel: sender,
+        })
+        .expect("Failed to send publisher message");
 
-    definition
+    context.step_context.execute_pending_notifications().await;
+    let reactor_channel = context.get_reactor_channel().await;
+
+    reactor_channel
+        .send(ReactorWorkflowUpdate {
+            is_valid: false,
+            routable_workflow_names: HashSet::new(),
+        })
+        .expect("Failed to send reactor response");
+
+    context.step_context.execute_pending_notifications().await;
+
+    let response = test_utils::expect_oneshot_response(receiver).await;
+    match response {
+        ValidationResponse::Reject => (),
+        response => panic!("Unexpected response: {:?}", response),
+    }
+}
+
+#[tokio::test]
+async fn approval_sent_when_reactor_says_stream_is_valid() {
+    let definition = DefinitionBuilder::new().reactor_name("reactor").build();
+    let mut context = TestContext::new(definition);
+    let publish_channel = context.accept_registration().await;
+
+    let (sender, receiver) = channel();
+    publish_channel
+        .send(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
+            stream_key: "ab123".to_string(),
+            connection_id: ConnectionId("connection".to_string()),
+            response_channel: sender,
+        })
+        .expect("Failed to send publisher message");
+
+    context.step_context.execute_pending_notifications().await;
+    let reactor_channel = context.get_reactor_channel().await;
+
+    reactor_channel
+        .send(ReactorWorkflowUpdate {
+            is_valid: true,
+            routable_workflow_names: HashSet::new(),
+        })
+        .expect("Failed to send reactor response");
+
+    context.step_context.execute_pending_notifications().await;
+
+    let response = test_utils::expect_oneshot_response(receiver).await;
+    match response {
+        ValidationResponse::Approve { .. } => (),
+        response => panic!("Unexpected response: {:?}", response),
+    }
 }
