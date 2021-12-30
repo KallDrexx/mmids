@@ -284,7 +284,7 @@ pub struct RtmpEndpointMediaMessage {
 }
 
 /// New media data that should be sent to watchers
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RtmpEndpointMediaData {
     NewStreamMetaData {
         metadata: StreamMetadata,

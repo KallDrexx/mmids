@@ -61,7 +61,7 @@ impl DefinitionBuilder {
 
     fn build(self) -> WorkflowStepDefinition {
         let mut definition = WorkflowStepDefinition {
-            step_type: WorkflowStepType("rtmp_receive".to_string()),
+            step_type: WorkflowStepType("rtmp_watch".to_string()),
             parameters: HashMap::new(),
         };
 

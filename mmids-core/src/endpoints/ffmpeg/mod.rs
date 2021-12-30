@@ -77,7 +77,7 @@ pub enum FfmpegEndpointStartError {
 }
 
 /// H264 presets
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum H264Preset {
     UltraFast,
     SuperFast,
@@ -91,21 +91,21 @@ pub enum H264Preset {
 }
 
 /// Video transcode instructions
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum VideoTranscodeParams {
     Copy,
     H264 { preset: H264Preset },
 }
 
 /// Audio transcode instructions
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AudioTranscodeParams {
     Copy,
     Aac,
 }
 
 /// Where should ffmpeg send the media
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TargetParams {
     /// Send the media stream to an RTMP server
     Rtmp { url: String },
@@ -125,14 +125,14 @@ pub enum TargetParams {
 }
 
 /// The dimensions video should be scaled to
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VideoScale {
     pub width: u16,
     pub height: u16,
 }
 
 /// Parameters to pass to the ffmpeg process
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FfmpegParams {
     pub read_in_real_time: bool,
     pub input: String,

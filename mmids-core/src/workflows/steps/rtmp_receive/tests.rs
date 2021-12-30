@@ -616,28 +616,17 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition);
 
-    let mut outputs = StepOutputs::new();
-    let mut inputs = StepInputs::new();
-    inputs.media.push(MediaNotification {
-        stream_id: StreamId("test".to_string()),
-        content: MediaNotificationContent::Audio {
-            data: Bytes::from(vec![1, 2]),
-            codec: AudioCodec::Aac,
-            timestamp: Duration::from_millis(5),
-            is_sequence_header: true,
-        },
-    });
-
-    context.step_context.step.execute(&mut inputs, &mut outputs);
-
-    assert!(
-        outputs.media.is_empty(),
-        "Expected media outputs to be empty"
-    );
-    assert!(
-        outputs.futures.is_empty(),
-        "Expected future outputs to be empty"
-    );
+    context
+        .step_context
+        .assert_media_not_passed_through(MediaNotification {
+            stream_id: StreamId("test".to_string()),
+            content: MediaNotificationContent::Audio {
+                data: Bytes::from(vec![1, 2]),
+                codec: AudioCodec::Aac,
+                timestamp: Duration::from_millis(5),
+                is_sequence_header: true,
+            },
+        });
 }
 
 #[tokio::test]

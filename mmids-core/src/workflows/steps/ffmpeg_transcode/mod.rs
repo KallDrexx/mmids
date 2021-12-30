@@ -11,6 +11,9 @@
 //! passed along to the next step.  When the step receives transcoded media it will then pass those
 //! to the next step.
 
+#[cfg(test)]
+mod tests;
+
 use crate::endpoints::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams,
     H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
