@@ -347,6 +347,8 @@ impl RtmpWatchStep {
     }
 
     fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
+        outputs.media.push(media.clone());
+
         if self.status == StepStatus::Active {
             match &media.content {
                 MediaNotificationContent::NewIncomingStream { stream_name } => {
@@ -474,8 +476,6 @@ impl RtmpWatchStep {
                 }
             }
         }
-
-        outputs.media.push(media);
     }
 }
 

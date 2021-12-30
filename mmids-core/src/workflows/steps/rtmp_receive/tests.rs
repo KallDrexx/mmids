@@ -554,25 +554,14 @@ fn stream_started_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition);
 
-    let mut outputs = StepOutputs::new();
-    let mut inputs = StepInputs::new();
-    inputs.media.push(MediaNotification {
-        stream_id: StreamId("test".to_string()),
-        content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "name".to_string(),
-        },
-    });
-
-    context.step_context.step.execute(&mut inputs, &mut outputs);
-
-    assert!(
-        outputs.media.is_empty(),
-        "Expected media outputs to be empty"
-    );
-    assert!(
-        outputs.futures.is_empty(),
-        "Expected future outputs to be empty"
-    );
+    context
+        .step_context
+        .assert_media_not_passed_through(MediaNotification {
+            stream_id: StreamId("test".to_string()),
+            content: MediaNotificationContent::NewIncomingStream {
+                stream_name: "name".to_string(),
+            },
+        });
 }
 
 #[test]
@@ -580,23 +569,12 @@ fn stream_disconnected_notification_passed_as_input_does_not_get_passed_as_outpu
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition);
 
-    let mut outputs = StepOutputs::new();
-    let mut inputs = StepInputs::new();
-    inputs.media.push(MediaNotification {
-        stream_id: StreamId("test".to_string()),
-        content: StreamDisconnected,
-    });
-
-    context.step_context.step.execute(&mut inputs, &mut outputs);
-
-    assert!(
-        outputs.media.is_empty(),
-        "Expected media outputs to be empty"
-    );
-    assert!(
-        outputs.futures.is_empty(),
-        "Expected future outputs to be empty"
-    );
+    context
+        .step_context
+        .assert_media_not_passed_through(MediaNotification {
+            stream_id: StreamId("test".to_string()),
+            content: StreamDisconnected,
+        });
 }
 
 #[test]
@@ -604,25 +582,14 @@ fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition);
 
-    let mut outputs = StepOutputs::new();
-    let mut inputs = StepInputs::new();
-    inputs.media.push(MediaNotification {
-        stream_id: StreamId("test".to_string()),
-        content: MediaNotificationContent::Metadata {
-            data: HashMap::new(),
-        },
-    });
-
-    context.step_context.step.execute(&mut inputs, &mut outputs);
-
-    assert!(
-        outputs.media.is_empty(),
-        "Expected media outputs to be empty"
-    );
-    assert!(
-        outputs.futures.is_empty(),
-        "Expected future outputs to be empty"
-    );
+    context
+        .step_context
+        .assert_media_not_passed_through(MediaNotification {
+            stream_id: StreamId("test".to_string()),
+            content: MediaNotificationContent::Metadata {
+                data: HashMap::new(),
+            },
+        });
 }
 
 #[test]
@@ -630,29 +597,18 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition);
 
-    let mut outputs = StepOutputs::new();
-    let mut inputs = StepInputs::new();
-    inputs.media.push(MediaNotification {
-        stream_id: StreamId("test".to_string()),
-        content: MediaNotificationContent::Video {
-            data: Bytes::from(vec![1, 2]),
-            codec: VideoCodec::H264,
-            timestamp: Duration::from_millis(5),
-            is_keyframe: true,
-            is_sequence_header: true,
-        },
-    });
-
-    context.step_context.step.execute(&mut inputs, &mut outputs);
-
-    assert!(
-        outputs.media.is_empty(),
-        "Expected media outputs to be empty"
-    );
-    assert!(
-        outputs.futures.is_empty(),
-        "Expected future outputs to be empty"
-    );
+    context
+        .step_context
+        .assert_media_not_passed_through(MediaNotification {
+            stream_id: StreamId("test".to_string()),
+            content: MediaNotificationContent::Video {
+                data: Bytes::from(vec![1, 2]),
+                codec: VideoCodec::H264,
+                timestamp: Duration::from_millis(5),
+                is_keyframe: true,
+                is_sequence_header: true,
+            },
+        });
 }
 
 #[test]

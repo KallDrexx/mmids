@@ -154,7 +154,7 @@ impl StepTestContext {
         }
     }
 
-    fn execute_media(&mut self, media: MediaNotification) {
+    fn execute_with_media(&mut self, media: MediaNotification) {
         let mut outputs = StepOutputs::new();
         let mut inputs = StepInputs::new();
         inputs.media.push(media);
@@ -196,38 +196,21 @@ impl StepTestContext {
             self.media_outputs = outputs.media;
         }
     }
-}
 
-#[cfg(test)]
-mod test_utils {
-    use super::*;
-    use futures::stream::FuturesUnordered;
-    use futures::StreamExt;
-    use std::time::Duration;
-    use tokio::time::timeout;
+    fn assert_media_passed_through(&mut self, media: MediaNotification) {
+        self.execute_with_media(media.clone());
 
-    pub async fn get_pending_future_result(
-        futures: Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
-    ) -> Box<dyn StepFutureResult> {
-        let mut awaitable_futures = FuturesUnordered::new();
-        awaitable_futures.extend(futures);
-
-        match timeout(Duration::from_millis(10), awaitable_futures.next()).await {
-            Ok(Some(result)) => result,
-            _ => panic!("Message channel future didn't resolve as expected"),
-        }
+        assert_eq!(
+            self.media_outputs.len(),
+            1,
+            "Unexpected number of media outputs"
+        );
+        assert_eq!(self.media_outputs[0], media, "Unexpected media message");
     }
 
-    pub fn create_step_parameters() -> (StepInputs, StepOutputs) {
-        (
-            StepInputs {
-                media: Vec::new(),
-                notifications: Vec::new(),
-            },
-            StepOutputs {
-                media: Vec::new(),
-                futures: Vec::new(),
-            },
-        )
+    fn assert_media_not_passed_through(&mut self, media: MediaNotification) {
+        self.execute_with_media(media.clone());
+
+        assert!(self.media_outputs.is_empty(), "Expected no media outputs");
     }
 }

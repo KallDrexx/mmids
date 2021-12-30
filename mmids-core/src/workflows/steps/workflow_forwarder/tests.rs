@@ -103,7 +103,7 @@ async fn new_stream_message_sent_to_global_workflow() {
     let mut context = TestContext::new(Some("test"), None).await;
     context.send_workflow_started_event("test", None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
@@ -130,7 +130,7 @@ async fn new_stream_message_sent_to_global_workflow() {
 #[tokio::test]
 async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
@@ -162,7 +162,7 @@ async fn no_message_passed_if_workflow_has_different_name_than_global_name() {
     let mut context = TestContext::new(Some("test"), None).await;
     context.send_workflow_started_event("test2", None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
@@ -178,7 +178,7 @@ async fn no_message_passed_if_workflow_stopped_before_media_sent() {
     context.send_workflow_started_event("test", None).await;
     context.send_workflow_stopped_event("test").await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
@@ -192,14 +192,14 @@ async fn no_message_passed_if_workflow_stopped_before_media_sent() {
 async fn no_message_passed_if_stream_disconnected_before_workflow_started() {
     let mut context = TestContext::new(Some("test"), None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
         },
     });
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::StreamDisconnected,
     });
@@ -212,7 +212,7 @@ async fn no_message_passed_if_stream_disconnected_before_workflow_started() {
 async fn new_stream_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
@@ -241,7 +241,7 @@ async fn new_stream_media_passed_as_output_immediately() {
 async fn stream_disconnected_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::StreamDisconnected,
     });
@@ -266,7 +266,7 @@ async fn stream_disconnected_media_passed_as_output_immediately() {
 async fn video_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
@@ -309,7 +309,7 @@ async fn video_media_passed_as_output_immediately() {
 async fn audio_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await;
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2, 3]),
@@ -352,7 +352,7 @@ async fn metadata_media_passed_as_output_immediately() {
     let mut metadata = HashMap::new();
     metadata.insert("a".to_string(), "b".to_string());
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Metadata {
             data: metadata.clone(),
@@ -380,14 +380,14 @@ async fn metadata_media_passed_as_output_immediately() {
 #[tokio::test]
 async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
         },
     });
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
@@ -425,14 +425,14 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 #[tokio::test]
 async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
         },
     });
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
@@ -462,14 +462,14 @@ async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_wo
 #[tokio::test]
 async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
         },
     });
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2, 3]),
@@ -506,14 +506,14 @@ async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 #[tokio::test]
 async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
         },
     });
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2, 3]),
@@ -542,14 +542,14 @@ async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_wo
 #[tokio::test]
 async fn metadata_not_sent_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
         },
     });
 
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
@@ -575,7 +575,7 @@ async fn metadata_not_sent_when_received_before_workflow_starts() {
 #[tokio::test]
 async fn new_stream_triggers_reactor_query() {
     let mut context = TestContext::new(None, Some("test")).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
@@ -600,7 +600,7 @@ async fn new_stream_triggers_reactor_query() {
 #[tokio::test]
 async fn new_stream_passed_to_all_specified_routable_workflow() {
     let mut context = TestContext::new(None, Some("test")).await;
-    context.step_context.execute_media(MediaNotification {
+    context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: "def".to_string(),
