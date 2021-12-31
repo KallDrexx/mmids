@@ -1,4 +1,4 @@
-mmids-app/logs
+cargo.lock
 perf.data*
 
 # Remove intellij files
