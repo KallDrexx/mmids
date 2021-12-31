@@ -712,4 +712,15 @@ settings {
 ";
         parse(content).unwrap();
     }
+
+    #[test]
+    fn comments_can_have_back_ticks() {
+        let content = "\
+settings {
+    # `test `
+}
+";
+
+        parse(content).unwrap();
+    }
 }
