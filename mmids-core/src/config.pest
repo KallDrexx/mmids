@@ -22,6 +22,6 @@ quoted_string = _{ "\"" ~ quoted_string_value ~ "\"" }
 quoted_string_value = { (whitespace | character)* }
 word = _{ character+ }
 trailing_eol = _{ whitespace* ~ comment? ~ NEWLINE }
-comment = _{ whitespace* ~ "#" ~ (whitespace | character | "{" | "}" | "#" | "\"" | "," | "(" | ")" | "=")* }
+comment = _{ whitespace* ~ "#" ~ (whitespace | character | "{" | "}" | "#" | "\"" | "," | "(" | ")" | "=" | ">" | "<")* }
 whitespace = _{ " " | "\t" }
 character = _{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "-" | "_" |  "/" | "\\" | "*" | "." | ":" | "," }

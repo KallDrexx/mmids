@@ -702,4 +702,14 @@ workflow name routed_by_reactor {
             "Expected routed by workflow to be true"
         );
     }
+
+    #[test]
+    fn comments_can_have_greater_than_or_less_than_signs() {
+        let content = "
+settings {
+  # <test>
+}
+";
+        parse(content).unwrap();
+    }
 }
