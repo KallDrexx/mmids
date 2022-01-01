@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "mmids-core",
+    "mmids-app",
     "reactor-test-server",
     "validators/echo-server",
     "validators/ffmpeg-runner",

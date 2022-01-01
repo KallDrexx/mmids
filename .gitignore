@@ -1,4 +1,7 @@
 cargo.lock
+mmids-app/logs
+!mmids-app/cargo.lock
+
 perf.data*
 
 # Remove intellij files
@@ -12,3 +15,4 @@ target/
 cmake-build-debug/
 
 CMakeLists\.txt
+

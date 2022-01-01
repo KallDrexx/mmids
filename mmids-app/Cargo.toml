@@ -1,0 +1,15 @@
+[package]
+name = "mmids-app"
+version = "0.0.1"
+edition = "2018"
+
+[dependencies]
+mmids-core = {path = "../mmids-core"}
+tokio = { version = "1.15", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.2", features = ["json"] }
+tracing-futures = "0.2.5"
+tracing-appender = "0.2.0"
+native-tls = "0.2"
+hyper = { version = "0.14", features = ["full"] }
+async-trait = "0.1.51"
