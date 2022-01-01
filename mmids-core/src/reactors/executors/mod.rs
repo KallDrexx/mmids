@@ -5,10 +5,20 @@ use futures::future::BoxFuture;
 use std::collections::HashMap;
 use thiserror::Error;
 
+/// Contains the result from a reactor execution request about a stream
+pub struct ReactorExecutionResult {
+    /// Was the stream the reactor queried about valid
+    pub stream_is_valid: bool,
+
+    /// If the stream was valid, what workflows were defined. it's valid for a stream to be valid
+    /// without any workflows.
+    pub workflows_returned: Vec<WorkflowDefinition>,
+}
+
 /// Performs a request for workflow information on behalf of a reactor
 pub trait ReactorExecutor {
     /// Requests the definition of a workflow based on a stream name
-    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Vec<WorkflowDefinition>>;
+    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult>;
 }
 
 /// Allows generating a reactor executor using parameters from a reactor definition
@@ -33,6 +43,22 @@ pub enum RegistrationError {
 pub enum GenerationError {
     #[error("No generators have been registered for the executor name '{0}'")]
     NoRegisteredGenerator(String),
+}
+
+impl ReactorExecutionResult {
+    pub fn invalid() -> Self {
+        ReactorExecutionResult {
+            stream_is_valid: false,
+            workflows_returned: Vec::new(),
+        }
+    }
+
+    pub fn valid(workflows: Vec<WorkflowDefinition>) -> Self {
+        ReactorExecutionResult {
+            stream_is_valid: true,
+            workflows_returned: workflows,
+        }
+    }
 }
 
 impl ReactorExecutorFactory {

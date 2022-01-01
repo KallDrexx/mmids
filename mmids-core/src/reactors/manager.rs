@@ -208,7 +208,9 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorManagerRequest>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reactors::executors::{ReactorExecutor, ReactorExecutorGenerator};
+    use crate::reactors::executors::{
+        ReactorExecutionResult, ReactorExecutor, ReactorExecutorGenerator,
+    };
     use crate::test_utils;
     use crate::workflows::definitions::WorkflowDefinition;
     use std::error::Error;
@@ -461,16 +463,13 @@ mod tests {
     }
 
     impl ReactorExecutor for TestExecutor {
-        fn get_workflow(
-            &self,
-            _stream_name: String,
-        ) -> BoxFuture<'static, Vec<WorkflowDefinition>> {
+        fn get_workflow(&self, _stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
             async {
-                vec![WorkflowDefinition {
+                ReactorExecutionResult::valid(vec![WorkflowDefinition {
                     name: "test".to_string(),
                     routed_by_reactor: false,
                     steps: Vec::new(),
-                }]
+                }])
             }
             .boxed()
         }

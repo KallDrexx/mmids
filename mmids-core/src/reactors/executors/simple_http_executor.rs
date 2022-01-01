@@ -1,6 +1,7 @@
 use crate::config::MmidsConfig;
-use crate::reactors::executors::{ReactorExecutor, ReactorExecutorGenerator};
-use crate::workflows::definitions::WorkflowDefinition;
+use crate::reactors::executors::{
+    ReactorExecutionResult, ReactorExecutor, ReactorExecutorGenerator,
+};
 use async_recursion::async_recursion;
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -24,7 +25,7 @@ pub struct SimpleHttpExecutor {
 }
 
 impl ReactorExecutor for SimpleHttpExecutor {
-    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Vec<WorkflowDefinition>> {
+    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
         execute_simple_http_executor(self.url.clone(), stream_name).boxed()
     }
 }
@@ -52,14 +53,15 @@ impl ReactorExecutorGenerator for SimpleHttpExecutorGenerator {
 }
 
 #[instrument]
-async fn execute_simple_http_executor(url: String, stream_name: String) -> Vec<WorkflowDefinition> {
+async fn execute_simple_http_executor(url: String, stream_name: String) -> ReactorExecutionResult {
     info!("Querying {} for workflow for stream '{}'", url, stream_name);
     let mut config = match execute_with_retry(&url, &stream_name, 0).await {
         Ok(config) => config,
-        Err(_) => return Vec::new(),
+        Err(_) => return ReactorExecutionResult::invalid(),
     };
 
-    config.workflows.drain().map(|kvp| kvp.1).collect()
+    let workflows = config.workflows.drain().map(|kvp| kvp.1).collect();
+    ReactorExecutionResult::valid(workflows)
 }
 
 fn build_request(url: &String, stream_name: &String) -> Result<Request<Body>, ()> {

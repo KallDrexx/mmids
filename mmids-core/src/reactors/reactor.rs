@@ -1,5 +1,5 @@
 use crate::event_hub::{SubscriptionRequest, WorkflowManagerEvent};
-use crate::reactors::executors::ReactorExecutor;
+use crate::reactors::executors::{ReactorExecutionResult, ReactorExecutor};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use futures::future::BoxFuture;
@@ -60,7 +60,7 @@ enum FutureResult {
     RequestReceived(ReactorRequest, UnboundedReceiver<ReactorRequest>),
     ExecutorResponseReceived {
         stream_name: String,
-        workflow: Vec<WorkflowDefinition>,
+        result: ReactorExecutionResult,
     },
 
     WorkflowManagerEventReceived(
@@ -154,7 +154,7 @@ impl Actor {
 
                 FutureResult::ExecutorResponseReceived {
                     stream_name,
-                    workflow,
+                    result: workflow,
                 } => {
                     self.handle_executor_response(stream_name, workflow);
                 }
@@ -223,14 +223,10 @@ impl Actor {
         }
     }
 
-    fn handle_executor_response(
-        &mut self,
-        stream_name: String,
-        workflows: Vec<WorkflowDefinition>,
-    ) {
+    fn handle_executor_response(&mut self, stream_name: String, result: ReactorExecutionResult) {
         if let Some(channels) = self.stream_response_channels.get(&stream_name) {
-            let is_valid = !workflows.is_empty();
-            let routed_workflow_names = workflows
+            let routed_workflow_names = result
+                .workflows_returned
                 .iter()
                 .filter(|w| w.routed_by_reactor)
                 .map(|w| w.name.clone())
@@ -238,13 +234,13 @@ impl Actor {
 
             info!(
                 stream_name = %stream_name,
-                workflow_count = %workflows.len(),
+                workflow_count = %result.workflows_returned.len(),
                 routed_count = %routed_workflow_names.len(),
                 "Executor returned {} workflows ({} routed) for the stream '{}'",
-                workflows.len(), routed_workflow_names.len(), stream_name,
+                result.workflows_returned.len(), routed_workflow_names.len(), stream_name,
             );
 
-            if workflows.is_empty() {
+            if !result.stream_is_valid {
                 if let Some(cache) = self.cached_workflows_for_stream_name.remove(&stream_name) {
                     // Since we had some workflows cached, and now the external service isn't giving us
                     // any workflows, that means this stream name is no longer valid.
@@ -273,7 +269,7 @@ impl Actor {
 
                 // Upsert all returned workflows
                 if let Some(manager) = &self.workflow_manager {
-                    for workflow in &workflows {
+                    for workflow in &result.workflows_returned {
                         let _ = manager.send(WorkflowManagerRequest {
                             request_id: format!(
                                 "reactor_{}_stream_{}_update",
@@ -286,14 +282,16 @@ impl Actor {
                     }
                 }
 
-                let current_workflow_names = workflows
+                let current_workflow_names = result
+                    .workflows_returned
                     .iter()
                     .map(|w| w.name.clone())
                     .collect::<HashSet<_>>();
 
                 let new_cache = CachedWorkflows {
-                    definitions: workflows,
+                    definitions: result.workflows_returned,
                 };
+
                 if let Some(old_cache) = self
                     .cached_workflows_for_stream_name
                     .insert(stream_name.clone(), new_cache)
@@ -319,7 +317,7 @@ impl Actor {
 
             for channel in channels {
                 let _ = channel.send(ReactorWorkflowUpdate {
-                    is_valid,
+                    is_valid: result.stream_is_valid,
                     routable_workflow_names: routed_workflow_names.clone(),
                 });
             }
@@ -407,12 +405,12 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorRequest>) -> Fu
 
 async fn wait_for_executor_response(
     stream_name: String,
-    future: BoxFuture<'static, Vec<WorkflowDefinition>>,
+    future: BoxFuture<'static, ReactorExecutionResult>,
 ) -> FutureResult {
     let result = future.await;
     FutureResult::ExecutorResponseReceived {
         stream_name,
-        workflow: result,
+        result: result,
     }
 }
 
@@ -490,16 +488,16 @@ mod tests {
     }
 
     impl ReactorExecutor for TestExecutor {
-        fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, Vec<WorkflowDefinition>> {
+        fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
             let future = if self.expected_name == stream_name {
                 let workflows = self.workflows.clone();
                 async {
-                    return workflows;
+                    return ReactorExecutionResult::valid(workflows);
                 }
                 .boxed()
             } else {
                 async {
-                    return Vec::new();
+                    return ReactorExecutionResult::invalid();
                 }
                 .boxed()
             };
