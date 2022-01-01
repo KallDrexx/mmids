@@ -1,0 +1,42 @@
+site_name: mmids
+nav:
+  - About: index.md
+  - Quick Start: user-guide/quick-start.md
+  - Components: user-guide/components.md
+  - Configuration: user-guide/configuration.md
+  - HTTP API: user-guide/http-api.md
+  - Reactors: user-guide/reactors.md
+
+  - Workflow Steps: 
+    - ffmpeg HLS: user-guide/steps/ffmpeg_hls.md
+    - ffmpeg Pull: user-guide/steps/ffmpeg_pull.md
+    - ffmpeg Push: user-guide/steps/ffmpeg_push.md
+    - ffmpeg Transcode: user-guide/steps/ffmpeg_transcode.md
+    - Rtmp Receive: user-guide/steps/rtmp_receive.md
+    - Rtmp Watch: user-guide/steps/rtmp_watch.md
+    - Workflow Forwarder: user-guide/steps/workflow_forwarder.md
+
+  - Example Scenarios:
+    - Simple Publish / Playback: user-guide/scenarios/simple.md
+    - Restricted Publish / Playback By Stream Key: user-guide/scenarios/key_restricted.md
+    - Network Restricted Publish: user-guide/scenarios/network_restricted.md
+    - Complex Multi-Streaming: user-guide/scenarios/complex_multistream.md
+    - HLS Publishing: user-guide/scenarios/hls_publishing.md
+    - Per Publisher Workflows: user-guide/scenarios/per_publisher.md 
+    - Simple RTMP Load Balancing: user-guide/scenarios/simple_rtmp_load_balancing.md
+    - Dynamic RTMP Load Balancing: user-guide/scenarios/smart_rtmp_load_balancing.md
+
+  - Developer Guide:
+    - Something: dev-guide/something.md
+
+theme: 
+  name: readthedocs
+  highlightjs: true
+  hljs_languages:
+    - nginx
+
+markdown_extensions:
+    - admonition
+
+plugins:
+  - mermaid2
