@@ -1,4 +1,5 @@
 site_name: mmids
+site_url: https://kalldrexx.github.io/mmids
 repo_url: https://github.com/KallDrexx/mmids
 repo_name: KallDrexx/mmids
 
@@ -31,6 +32,7 @@ nav:
       - Dynamic RTMP Load Balancing: user-guide/scenarios/smart_rtmp_load_balancing.md
 
   - Developer guide:
+    - Useful Links: dev-guide/summary.md
     - Architecture: dev-guide/architecture.md
     - Building A Custom Distribution: dev-guide/custom-distribution.md
 

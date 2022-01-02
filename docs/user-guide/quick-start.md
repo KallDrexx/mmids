@@ -2,7 +2,7 @@
 
 ## Download mmids application
 
-Official releases of the mmids server can be downloaded from the [official releases page](https://github.com/KallDrexx/mmids-app/releases).
+Official releases of the mmids server can be downloaded from the [official releases page](https://github.com/KallDrexx/mmids/releases).
 
 Extract the files in the whatever directory you wish to run it from, e.g. c:\mmids.
 
