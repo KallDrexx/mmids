@@ -1,4 +1,4 @@
-name: Rust
+name: All Tests
 
 on:
   push:
@@ -20,3 +20,6 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Formatting validations
+      run: cargo fmt -- --check
+      
