@@ -13,8 +13,7 @@ build:
 
 python:
   install:
-    - method: pip
-      path: mkdocs-mermaid2-plugin
+    - requirements: docs/requirements.txt
 
 mkdocs:
   configuration: mkdocs.yml
