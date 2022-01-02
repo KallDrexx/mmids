@@ -7,7 +7,7 @@
 <meta content="width=device-width,initial-scale=1" name="viewport"/>
 <link href="../../assets/images/favicon.png" rel="icon"/>
 <meta content="mkdocs-1.2.3, mkdocs-material-8.1.3" name="generator"/>
-<title>Components - mmids</title>
+<title>Building A Custom Distribution - mmids</title>
 <link href="../../assets/stylesheets/main.edf004c2.min.css" rel="stylesheet"/>
 <link href="../../assets/stylesheets/palette.e6a45f82.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
@@ -20,7 +20,7 @@
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
 <div data-md-component="skip">
-<a class="md-skip" href="#components">
+<a class="md-skip" href="#custom-distribution">
           Skip to content
         </a>
 </div>
@@ -44,7 +44,7 @@
 <div class="md-header__topic" data-md-component="header-topic">
 <span class="md-ellipsis">
             
-              Components
+              Building A Custom Distribution
             
           </span>
 </div>
@@ -100,12 +100,12 @@
     </a>
 </li>
 <li class="md-tabs__item">
-<a class="md-tabs__link md-tabs__link--active" href="../quick-start/">
+<a class="md-tabs__link" href="../../user-guide/quick-start/">
         User Guide
       </a>
 </li>
 <li class="md-tabs__item">
-<a class="md-tabs__link" href="../../dev-guide/architecture/">
+<a class="md-tabs__link md-tabs__link--active" href="../architecture/">
         Developer guide
       </a>
 </li>
@@ -142,8 +142,8 @@
         Home
       </a>
 </li>
-<li class="md-nav__item md-nav__item--active md-nav__item--nested">
-<input checked="" class="md-nav__toggle md-toggle" data-md-toggle="__nav_2" id="__nav_2" type="checkbox"/>
+<li class="md-nav__item md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" data-md-state="indeterminate" data-md-toggle="__nav_2" id="__nav_2" type="checkbox"/>
 <label class="md-nav__link" for="__nav_2">
           User Guide
           <span class="md-nav__icon md-icon"></span>
@@ -155,60 +155,27 @@
         </label>
 <ul class="md-nav__list" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="../quick-start/">
+<a class="md-nav__link" href="../../user-guide/quick-start/">
         Quick Start
       </a>
 </li>
-<li class="md-nav__item md-nav__item--active">
-<input class="md-nav__toggle md-toggle" data-md-toggle="toc" id="__toc" type="checkbox"/>
-<label class="md-nav__link md-nav__link--active" for="__toc">
-          Components
-          <span class="md-nav__icon md-icon"></span>
-</label>
-<a class="md-nav__link md-nav__link--active" href="./">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/components/">
         Components
       </a>
-<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
-<label class="md-nav__title" for="__toc">
-<span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#workflow-steps">
-    Workflow Steps
-  </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#workflows">
-    Workflows
-  </a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#web-based-api">
-    Web Based API
-  </a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reactors">
-    Reactors
-  </a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../configuration/">
+<a class="md-nav__link" href="../../user-guide/configuration/">
         Configuration
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../http-api/">
+<a class="md-nav__link" href="../../user-guide/http-api/">
         HTTP API
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../reactors/">
+<a class="md-nav__link" href="../../user-guide/reactors/">
         Reactors
       </a>
 </li>
@@ -225,37 +192,37 @@
         </label>
 <ul class="md-nav__list" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/ffmpeg_hls/">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_hls/">
         ffmpeg HLS
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/ffmpeg_pull/">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_pull/">
         ffmpeg Pull
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/ffmpeg_push/">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_push/">
         ffmpeg Push
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/ffmpeg_transcode/">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_transcode/">
         ffmpeg Transcode
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/rtmp_receive/">
+<a class="md-nav__link" href="../../user-guide/steps/rtmp_receive/">
         Rtmp Receive
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/rtmp_watch/">
+<a class="md-nav__link" href="../../user-guide/steps/rtmp_watch/">
         Rtmp Watch
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../steps/workflow_forwarder/">
+<a class="md-nav__link" href="../../user-guide/steps/workflow_forwarder/">
         Workflow Forwarder
       </a>
 </li>
@@ -275,42 +242,42 @@
         </label>
 <ul class="md-nav__list" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/simple/">
+<a class="md-nav__link" href="../../user-guide/scenarios/simple/">
         Simple Publish / Playback
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/key_restricted/">
+<a class="md-nav__link" href="../../user-guide/scenarios/key_restricted/">
         Restricted Publish / Playback By Stream Key
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/network_restricted/">
+<a class="md-nav__link" href="../../user-guide/scenarios/network_restricted/">
         Network Restricted Publish
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/complex_multistream/">
+<a class="md-nav__link" href="../../user-guide/scenarios/complex_multistream/">
         Complex Multi-Streaming
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/hls_publishing/">
+<a class="md-nav__link" href="../../user-guide/scenarios/hls_publishing/">
         HLS Publishing
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/per_publisher/">
+<a class="md-nav__link" href="../../user-guide/scenarios/per_publisher/">
         Per Publisher Workflows
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/simple_rtmp_load_balancing/">
+<a class="md-nav__link" href="../../user-guide/scenarios/simple_rtmp_load_balancing/">
         Simple RTMP Load Balancing
       </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../scenarios/smart_rtmp_load_balancing/">
+<a class="md-nav__link" href="../../user-guide/scenarios/smart_rtmp_load_balancing/">
         Dynamic RTMP Load Balancing
       </a>
 </li>
@@ -320,8 +287,8 @@
 </ul>
 </nav>
 </li>
-<li class="md-nav__item md-nav__item--nested">
-<input checked="" class="md-nav__toggle md-toggle" data-md-state="indeterminate" data-md-toggle="__nav_3" id="__nav_3" type="checkbox"/>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" id="__nav_3" type="checkbox"/>
 <label class="md-nav__link" for="__nav_3">
           Developer guide
           <span class="md-nav__icon md-icon"></span>
@@ -333,12 +300,13 @@
         </label>
 <ul class="md-nav__list" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="../../dev-guide/architecture/">
+<a class="md-nav__link" href="../architecture/">
         Architecture
       </a>
 </li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../../dev-guide/custom-distribution/">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" data-md-toggle="toc" id="__toc" type="checkbox"/>
+<a class="md-nav__link md-nav__link--active" href="./">
         Building A Custom Distribution
       </a>
 </li>
@@ -354,72 +322,61 @@
 <div class="md-sidebar__scrollwrap">
 <div class="md-sidebar__inner">
 <nav aria-label="Table of contents" class="md-nav md-nav--secondary">
-<label class="md-nav__title" for="__toc">
-<span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#workflow-steps">
-    Workflow Steps
-  </a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#workflows">
-    Workflows
-  </a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#web-based-api">
-    Web Based API
-  </a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reactors">
-    Reactors
-  </a>
-</li>
-</ul>
 </nav>
 </div>
 </div>
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<a class="md-content__button md-icon" href="https://github.com/KallDrexx/mmids/edit/master/docs/user-guide/components.md" title="Edit this page">
+<a class="md-content__button md-icon" href="https://github.com/KallDrexx/mmids/edit/master/docs/dev-guide/custom-distribution.md" title="Edit this page">
 <svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20.71 7.04c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.37-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.93l-3.75-3.75L3 17.25z"></path></svg>
 </a>
-<h1 id="components">Components</h1>
-<p>Mmids is based around several core components</p>
-<h2 id="workflow-steps">Workflow Steps</h2>
-<p>A workflow step is a process that is instructed to ingest, distribute, or manipulate media.  Some examples of functionality enabled by different workflow steps are:</p>
+<h1 id="custom-distribution">Custom Distribution</h1>
+<p>When creating custom components, or wanting to cut down on available functionality in mmids for specific purposes, you will need to create your own mmids application.  </p>
+<p>The mmids application is responsible for creating the tokio runtime, creating all actors that are desired to be run, defining any HTTP routes, then letting the application run until it is desired to exit (e.g. exit on <code>ctrl+c</code>).  </p>
+<p>You can use <a href="https://github.com/KallDrexx/mmids/blob/master/mmids-app/src/main.rs">the official mmids application</a> as a guide, but the general order of operations are:</p>
 <ul>
-<li>Receive RTMP video from publishers on specific stream keys</li>
-<li>Split media off to other workflows</li>
-<li>Instruct ffmpeg to transcode video to a new resolution</li>
-<li>Push media out to other servers via RTMP</li>
+<li>Start logging infrastructure<ul>
+<li>Mmids uses the <a href="https://github.com/tokio-rs/tracing">tracing crate</a> for logging</li>
 </ul>
-<h2 id="workflows">Workflows</h2>
-<p>A workflow is a media pipeline defined by a linear sequence of workflow steps.  When media is received by a workflow step, the media will be handed to the step defined afterwards for processing.  </p>
-<p>There is no limit on the number of steps a single workflow can contain.</p>
-<h2 id="web-based-api">Web Based API</h2>
-<p>Mmids contains a web based API that can be used to query information about running workflows, as well as starting, stopping, and updating workflows on the fly.  </p>
-<p>The web based API is the main way to make updates to a running mmids instance on a proactive (e.g. "push") basis.  </p>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p>Any change to workflows made via the web based API will not be saved. To persist workflow changes after a restart you will either need to update the mmids.config file, or re-send your workflow updates via the web API after restart.</p>
-</div>
-<h2 id="reactors">Reactors</h2>
-<p>A reactor is a system which different workflow steps can ask about the validity of a stream, and request workflows to be created for that specific stream.  When a reactor gets a query for a stream name, it will reach out to the configured external service to ask what workflows are valid for the specified stream name.  </p>
-<p>If no workflows are returned then the reactor assumes the stream name is not valid and will send a response stating such.</p>
-<p>If at least one workflow is returned, then the reactor will create the specified workflows and tell the system that made the query that the stream name is valid, and which workflows it should route media on that stream to.</p>
+</li>
+<li>Start all required endpoints<ul>
+<li>Since most workflow steps will need to interact with endpoints, they will need a reference to the already created channels at the time of their creation to function</li>
+<li>This will also include starting the TCP socket manager if an endpoint is created that needs it.</li>
+</ul>
+</li>
+<li>Start the event hub<ul>
+<li>A lot of different components will require the event hub, and thus it needs to be started early on</li>
+</ul>
+</li>
+<li>Start reactor manager<ul>
+<li>First a <code>mmids_core::reactors::executors::ReactorExecutorFactory</code> needs to be created, and any executors you wish to have available should be registered.</li>
+<li>Then the reactor manager can be started</li>
+<li>Finally, you can use the reactor manager's channel to create all the reactors that are desired to be created</li>
+</ul>
+</li>
+<li>Register available steps<ul>
+<li>Create a <code>mmids_core::workflows::steps::factory::WorkflowStepFactory</code>, and then register all workflow steps that should be included.  </li>
+<li>Once all steps have been registered, wrap the factory in an <code>Arc</code>, to ensure it can be passed around as needed.</li>
+</ul>
+</li>
+<li>Create workflow manager and initial workflows<ul>
+<li>Now the workflow manager can be created, and the provided channel can be used to start any workflows that should be started immediately.</li>
+</ul>
+</li>
+<li>Start the HTTP Api<ul>
+<li>Now start the HTTP API.</li>
+</ul>
+</li>
+</ul>
+<p>With those steps, everything should be ready to go.</p>
 </article>
 </div>
 </div>
 </main>
 <footer class="md-footer">
 <nav aria-label="Footer" class="md-footer__inner md-grid">
-<a aria-label="Previous: Quick Start" class="md-footer__link md-footer__link--prev" href="../quick-start/" rel="prev">
+<a aria-label="Previous: Architecture" class="md-footer__link md-footer__link--prev" href="../architecture/" rel="prev">
 <div class="md-footer__button md-icon">
 <svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"></path></svg>
 </div>
@@ -428,21 +385,8 @@
 <span class="md-footer__direction">
                 Previous
               </span>
-              Quick Start
+              Architecture
             </div>
-</div>
-</a>
-<a aria-label="Next: Configuration" class="md-footer__link md-footer__link--next" href="../configuration/" rel="next">
-<div class="md-footer__title">
-<div class="md-ellipsis">
-<span class="md-footer__direction">
-                Next
-              </span>
-              Configuration
-            </div>
-</div>
-<div class="md-footer__button md-icon">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"></path></svg>
 </div>
 </a>
 </nav>
