@@ -1,0 +1,578 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<link href="../../assets/images/favicon.png" rel="icon"/>
+<meta content="mkdocs-1.2.3, mkdocs-material-8.1.3" name="generator"/>
+<title>Building A Custom Distribution - mmids</title>
+<link href="../../assets/stylesheets/main.edf004c2.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.e6a45f82.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,400,400i,700%7CRoboto+Mono&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("../..",location),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="none" data-md-color-primary="none" data-md-color-scheme="" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#architecture">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--lifted" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="mmids" class="md-header__button md-logo" data-md-component="logo" href="../.." title="mmids">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54z"></path></svg>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            mmids
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Building A Custom Distribution
+            
+          </span>
+</div>
+</div>
+</div>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/KallDrexx/mmids/" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 496 512" xmlns="http://www.w3.org/2000/svg"><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"></path></svg>
+</div>
+<div class="md-source__repository">
+    KallDrexx/mmids
+  </div>
+</a>
+</div>
+</nav>
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-tabs__inner md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+      About
+    </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../user-guide/quick-start/">
+        User Guide
+      </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link md-tabs__link--active" href="./">
+        Developer guide
+      </a>
+</li>
+</ul>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="mmids" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="mmids">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54z"></path></svg>
+</a>
+    mmids
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/KallDrexx/mmids/" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 496 512" xmlns="http://www.w3.org/2000/svg"><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"></path></svg>
+</div>
+<div class="md-source__repository">
+    KallDrexx/mmids
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+        About
+      </a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" data-md-state="indeterminate" data-md-toggle="__nav_2" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2">
+          User Guide
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-label="User Guide" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+          User Guide
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/quick-start/">
+        Quick Start
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/components/">
+        Components
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/configuration/">
+        Configuration
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/http-api/">
+        HTTP API
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/reactors/">
+        Reactors
+      </a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" data-md-state="indeterminate" data-md-toggle="__nav_2_6" id="__nav_2_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2_6">
+          Workflow Steps
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-label="Workflow Steps" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_2_6">
+<span class="md-nav__icon md-icon"></span>
+          Workflow Steps
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_hls/">
+        ffmpeg HLS
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_pull/">
+        ffmpeg Pull
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_push/">
+        ffmpeg Push
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/ffmpeg_transcode/">
+        ffmpeg Transcode
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/rtmp_receive/">
+        Rtmp Receive
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/rtmp_watch/">
+        Rtmp Watch
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/steps/workflow_forwarder/">
+        Workflow Forwarder
+      </a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" data-md-state="indeterminate" data-md-toggle="__nav_2_7" id="__nav_2_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2_7">
+          Example Scenarios
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-label="Example Scenarios" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_2_7">
+<span class="md-nav__icon md-icon"></span>
+          Example Scenarios
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/simple/">
+        Simple Publish / Playback
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/key_restricted/">
+        Restricted Publish / Playback By Stream Key
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/network_restricted/">
+        Network Restricted Publish
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/complex_multistream/">
+        Complex Multi-Streaming
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/hls_publishing/">
+        HLS Publishing
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/per_publisher/">
+        Per Publisher Workflows
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/simple_rtmp_load_balancing/">
+        Simple RTMP Load Balancing
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/scenarios/smart_rtmp_load_balancing/">
+        Dynamic RTMP Load Balancing
+      </a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3">
+          Developer guide
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-label="Developer guide" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+          Developer guide
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="./">
+        Architecture
+      </a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" data-md-toggle="toc" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+          Building A Custom Distribution
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+        Building A Custom Distribution
+      </a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#components">
+    Components
+  </a>
+<nav aria-label="Components" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#endpoints">
+    Endpoints
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow-manager">
+    Workflow Manager
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflows">
+    Workflows
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow-steps">
+    Workflow Steps
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#reactor-manager">
+    Reactor Manager
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#reactors">
+    Reactors
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#event-hub">
+    Event Hub
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#http-api">
+    HTTP API
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tcp-socket-manager">
+    TCP Socket Manager
+  </a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#components">
+    Components
+  </a>
+<nav aria-label="Components" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#endpoints">
+    Endpoints
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow-manager">
+    Workflow Manager
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflows">
+    Workflows
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow-steps">
+    Workflow Steps
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#reactor-manager">
+    Reactor Manager
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#reactors">
+    Reactors
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#event-hub">
+    Event Hub
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#http-api">
+    HTTP API
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tcp-socket-manager">
+    TCP Socket Manager
+  </a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<a class="md-content__button md-icon" href="https://github.com/KallDrexx/mmids/edit/master/docs/dev-guide/architecture.md" title="Edit this page">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20.71 7.04c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.37-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.93l-3.75-3.75L3 17.25z"></path></svg>
+</a>
+<h1 id="architecture">Architecture</h1>
+<p>Mmids is built in the Rust programming language.  There are two main projects that are relevant to developers:</p>
+<ul>
+<li><code>mmids-app</code> contains the code that the official mmids distribution is built from.  It is a good starting point for developers to see how all the components can be used together.</li>
+<li><code>mmids-core</code> is the crate that contains the bulk of the logic and systems that mmids deploys.  It is available on crates.io as a library TODO: add link.</li>
+</ul>
+<p>The code heavily relies on the <a href="https://tokio.rs">tokio asynchronous runtime</a>.</p>
+<h2 id="components">Components</h2>
+<p>Almost every component that makes up mmids s designed to be independent asynchronous actors.  Each actor manages it's own state and different actors only talk to each other through message channels (usually <code>UnboundedSender&lt;T&gt;</code> channels).  </p>
+<p>Replacing (or mocking) any component is usually a matter of creating custom code that can respond to incoming messages to the channel.</p>
+<div class="mermaid">graph TD
+
+eh[Event Hub]
+wm[Workflow Manager]
+rm[Reactor Manager]
+r[Reactors]
+w[Workflows]
+ws[Workflow Steps]
+sm[TCP Socket Manager]
+ep[Endpoints]
+http[HTTP Api]
+
+wm --&gt; eh
+rm --&gt; eh
+ws --&gt; eh
+wm --&gt; w
+w --&gt; ws
+ws --&gt; ep
+ws --&gt; rm
+ep --&gt; sm
+http --&gt; wm
+rm --&gt; r
+r --&gt; wm
+r --&gt; eh
+
+</div>
+<h3 id="endpoints">Endpoints</h3>
+<p>Endpoints are actors which are abstract external communications for workflow steps.  Most networking protocols and external system communication that would be shared between different workflow steps would be implemented as their own endpoints.  This keeps the logic of workflow steps focused on the business logic for processing media, and the complexities of network protocols and process handling in a centralized location.  For example, implementing an SRT server, creating HLS playlists, or managing outbound RTMP connections would all be implemented as endpoints.</p>
+<p>Mmids officially implements two endpoints:
+* Rtmp Server Endpoint - Allows opening ports and managing incoming RTMP client connection based on instructions by workflow steps.  It handles managing the RTMP sessions, passing media it receives to the proper workflow steps, and receiving media from workflow steps and giving it to RTMP publish clients.
+* Ffmpeg endpoint - Allows creating ffmpeg processes with specific parameters, restarting the processes if they unexpectedly shut down, and shutting them down as requested.</p>
+<h3 id="workflow-manager">Workflow Manager</h3>
+<p>The workflow manager is a central actor which holds a reference to all running workflows.  Requests to start, stop, or update workflows usually goes to the workflow manager, as it's unlikely other components have a direct reference to the different workflow specific messaging channels.  The workflow manager is also in charge of knowing when a workflow needs to be started and when an existing one needs to be updated instead.</p>
+<p>It is expected that any mmids system only has one workflow manager, as one workflow manager won't necessarily know about the workflows managed by the other.  This can lead to some complicated scenarios, especially when workflow started events start being raised (e.g. other systems won't know which workflow manager to contact about a workflow).</p>
+<p>The workflow manager is started by calling the <code>mmids_core::workflows::manager::start_workflow_manager()</code> function.</p>
+<h3 id="workflows">Workflows</h3>
+<p>A workflow actor is started by the workflow manager by passing in a <code>WorkflowDefinition</code> value.  This definition contains instructions for the workflow on what steps it should maintain.  The workflow will create the workflow steps that are contained in the workflow definition and place them in pending status.  Once all pending workflow steps change their state to active, all pending steps become active steps and the workflow will start flowing media from one step to the next.  </p>
+<p>If a workflow step ever transitions to an error state, the whole workflow will transition to an error state and all workflow steps will be shut down.  The workflow will be restarted if it receives a request to update with a new workflow definition.</p>
+<h3 id="workflow-steps">Workflow Steps</h3>
+<p>Workflow steps are the only components that are <strong>not asynchronous</strong>.  They are meant to be called synchronously by a workflow.  If a workflow step requires an asynchronous action, it will create a boxed future with the asynchronous operation and return it as an output.  The workflow that is in charge of hte step will track the future, and once the future has completed the result will be passed as an input to the workflow step.  </p>
+<p>All workflow steps are expected to create an <code>enum</code> which represents the results of any future that the workflow step will need completed.  This enum should implement the <code>StepFutureResult</code> trait, which allows the enum to be casted down from a <code>StepFutureResult</code> into the step specific enum.  </p>
+<h3 id="reactor-manager">Reactor Manager</h3>
+<p>The reactor manager is a central actor which keeps references and manages all known reactors.  When a workflow step needs to make a request to a specific reactor, it reaches out to the reactor manager to send the reques to the correct reactor.</p>
+<p>It is expected that only one reactor manager is active. </p>
+<p>The reactor manager is started by calling the <code>mmids_core::reactors::manager::start_reactor_manager()</code> function.</p>
+<h3 id="reactors">Reactors</h3>
+<p>Each reactor is a separate actor which knows how to communicate with a single external system.  When it executes a query for a stream name, and the external system responds with some workflows, the reactor will ensure that the workflows it created are shut down when the stream is over.  If the reactor has been set with an update interval, it will continually re-execute queries against the external system for the stream name to ensure it's always managing the latest versions of the workflow that are expected for that stream.</p>
+<p>Each reactor contains a Reactor Executor, which is a <code>struct</code> that implements the <code>mmids_core::reactors::executors::ReactorExecutor</code> trait.  The executor object is responsible for actually performing requests to the external systems on behalf of the reactor.  Mmids only officially supports a <code>simple_http</code> executor, which is documented <a href="../../user-guide/reactors/">in the reactor section</a>.</p>
+<p>When implementing a custom executor, the executor itself should handle retries as it sees fit, as the reactor has no retry logic in it.  Either the executor returns a result that says it's valid, or a result that says it's invalid.</p>
+<h3 id="event-hub">Event Hub</h3>
+<p>Event hub is a central actor that allows components to subscribe to events, and publish their own events.  Currently this is mostly used for a workflow manager to raise a notification when it goes live (so the reactor manager knows how to contact it), and when workflows start and stop (so workflow forwarders know how to forward media to different workflows).  </p>
+<p>It is expected that only a single event hub actor is running at any given time.</p>
+<h3 id="http-api">HTTP API</h3>
+<p>Mmids uses <a href="https://hyper.rs/">hyper</a> to power its HTTP API.  The core library does not do any routing, but instead it defines the <code>mmids_core::http_api::routing::RouteHandler</code> trait.  Each implementation of a route handler represents a single set of logic that should be used to resolve a web request.  Route handlers utilize the <a href="https://crates.io/crates/async-trait">async_trait crate</a> to provide an async return type.</p>
+<p>To utilize these routes, a <code>mmids_core::http_api::routing::RoutingTable</code> is created and route handler instances are registered with it for specific url paths.  This allows for libraries to contain the route handlers logic in a central place, but allowing the final distribution to figure out what urls and HTTP methods should expose which route handlers (and which should not be enabled).</p>
+<p>This isn't a perfect abstraction though.  Route URLs are defined as a <code>Vec</code> of <code>PathPart</code> values, where some path parts are representing a parameter instead of a strict value.  So for example, <code>/workflows/&lt;name&gt;</code> woulc be built as </p>
+<pre><code class="language-rust">vec![
+    PathPart::Exact {
+        value: "workflows".to_string(),
+    },
+    PathPart::Parameter {
+        name: "workflow".to_string(),
+    },
+]
+</code></pre>
+<p>This specifies that the 2nd value is a parameter named <code>workflow</code>, and the route handler will be looking for a path parameter with that exact name.  So any URL that this route handler is tied to <em>must</em> have at least one path part as a parameter named <code>workflow</code>.</p>
+<h3 id="tcp-socket-manager">TCP Socket Manager</h3>
+<p>The TCP socket manager is an actor to abstract the handling of TCP listeners.  Systems can request that ports be opened for raw TCP connections or TLS connections, and it will handle letting the caller know when any connections connect.  </p>
+</article>
+</div>
+</div>
+</main>
+<footer class="md-footer">
+<nav aria-label="Footer" class="md-footer__inner md-grid">
+<a aria-label="Previous: Architecture" class="md-footer__link md-footer__link--prev" href="./" rel="prev">
+<div class="md-footer__button md-icon">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"></path></svg>
+</div>
+<div class="md-footer__title">
+<div class="md-ellipsis">
+<span class="md-footer__direction">
+                Previous
+              </span>
+              Architecture
+            </div>
+</div>
+</a>
+</nav>
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.expand"], "translations": {"clipboard.copy": "Copy to clipboard", "clipboard.copied": "Copied to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.placeholder": "Type to start searching", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "search": "../../assets/javascripts/workers/search.0bbba5b5.min.js"}</script>
+<script src="../../assets/javascripts/bundle.e1a181d9.min.js"></script>
+<script src="https://unpkg.com/mermaid@8.8.0/dist/mermaid.min.js"></script><script>mermaid.initialize({});</script></body>
+</html>
