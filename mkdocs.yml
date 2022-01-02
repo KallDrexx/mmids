@@ -31,11 +31,6 @@ nav:
   - Developer guide:
     - Architecture: dev-guide/architecture.md
     - Building A Custom Distribution: dev-guide/architecture.md
-    - Creating Workflow Steps: dev-guide/custom_workflow_steps.md
-    - Creating Custom Endpoints: dev-guide/custom_endpoints.md
-    - Using the RTMP Endpoint: dev-guide/rtmp_endpoint.md
-    - Using the ffmpeg Endpoint: dev-guide/ffmpeg_endpoint.md
-    - Using the Tcp Socket Manager: dev-guide/socket_manager.md
 
 theme: 
   name: readthedocs
