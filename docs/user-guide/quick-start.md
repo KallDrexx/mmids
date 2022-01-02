@@ -17,7 +17,6 @@ Navigate to the directory the mmids release was extracted to and create a new fi
 
 ```
 settings {
-  log_path logs
   http_api_port 9011
   
   # Replace <path-to-ffmpeg.exe> with the path to the ffmpeg downloaded

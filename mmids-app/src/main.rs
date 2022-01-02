@@ -34,6 +34,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::{channel, Sender};
 use tracing::{info, warn};
+use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt, layer::SubscriberExt};
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
@@ -51,9 +52,8 @@ struct Endpoints {
 
 #[tokio::main]
 pub async fn main() {
-    let config = read_config();
-    let log_dir = get_log_directory(&config);
-
+    // Start logging
+    let log_dir = get_log_directory();
     let mut app_log_path = PathBuf::from(log_dir.clone());
     app_log_path.push("application");
 
@@ -63,11 +63,13 @@ pub async fn main() {
     let subscriber = tracing_subscriber::registry()
         .with(fmt::Layer::new().with_writer(std::io::stdout).pretty())
         .with(fmt::Layer::new().with_writer(non_blocking).json());
+
     tracing::subscriber::set_global_default(subscriber).expect("Unable to set a global collector");
 
     info!("mmmids {} started", env!("CARGO_PKG_VERSION"));
     info!("Logging to {}", app_log_path.display().to_string());
 
+    let config = read_config();
     let tls_options = load_tls_options(&config).await;
     let endpoints = start_endpoints(&config, tls_options, log_dir);
     let (pub_sender, sub_sender) = start_event_hub();
@@ -91,14 +93,8 @@ fn read_config() -> MmidsConfig {
     return parse_config_file(contents.as_str()).expect("Failed to parse config file");
 }
 
-fn get_log_directory(config: &MmidsConfig) -> String {
-    let log_dir = config
-        .settings
-        .get("log_path")
-        .expect("No log_path setting found")
-        .as_ref()
-        .expect("No log_path value specified");
-
+fn get_log_directory() -> String {
+    let log_dir = "logs";
     let mut log_path = PathBuf::from(log_dir);
     if log_path.is_relative() {
         log_path = std::env::current_dir().expect("Failed to get current directory");

@@ -21,7 +21,6 @@ Any line can contain comments by placing a number sign (#) and the comments afte
 Only one setting node is allowed, and the node itself has no arguments.  Inside the setting node, each setting should be specified followed by a single optional (depending on the setting being specified) argument.  Valid settings are:
 
 * `ffmpeg_path` - This is the relative or absolute path to the ffmpeg executable.  This setting is required for mmids to run.
-* `log_path` - This is the relative or absolute path to where mmids should write logs.  This setting is required for mmids to run.
 * `http_api_port` - This is the port that the HTTP API will run on.  If not specified than the HTTP API will be disabled
 * `tls_cert_path` - This is the relative or absolute path to where a pfx certificate can be found. This certificate will be used for RTMPS connections.  If not specified than RTMPS support will be disabled.
 * `tls_cert_password` - This is the password that can be used to open the pfx certificate.  If not specified than RTMPS support will be disabled
@@ -31,7 +30,6 @@ An example settings configuration would be
 ```
 settings {
     ffmpeg_path c:\tools\ffmpeg\bin\ffmpeg.exe
-    log_path logs
     tls_cert_path cert.pfx
     tls_cert_password abcd
     http_api_port 9011

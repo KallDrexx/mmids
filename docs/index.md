@@ -27,7 +27,6 @@ The power of mmids comes from how all these type of systems can be composed toge
 ```nginx
 settings {
     ffmpeg_path c:\ffmpeg\bin\ffmpeg.exe    # location of ffmpeg executable
-    log_path logs                           # place logs in a 'logs' subfolder 
     tls_cert_path cert.pfx                  # The certificate to use for rtmps
     tls_cert_password abcd                  # password for the certificate
     http_api_port 9011                      # port for the HTTP api
