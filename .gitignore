@@ -1,6 +1,7 @@
 cargo.lock
 mmids-app/logs
 !mmids-app/cargo.lock
+site/
 
 perf.data*
 
@@ -15,4 +16,5 @@ target/
 cmake-build-debug/
 
 CMakeLists\.txt
+
 

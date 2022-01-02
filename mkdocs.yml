@@ -1,8 +1,9 @@
 site_name: mmids
 repo_url: https://github.com/KallDrexx/mmids
+repo_name: KallDrexx/mmids
 
 nav:
-  - About: index.md
+  - Home: index.md
   - User Guide:
     - Quick Start: user-guide/quick-start.md
     - Components: user-guide/components.md
@@ -31,16 +32,24 @@ nav:
 
   - Developer guide:
     - Architecture: dev-guide/architecture.md
-    - Building A Custom Distribution: dev-guide/architecture.md
+    - Building A Custom Distribution: dev-guide/custom-distribution.md
 
 theme: 
   name: material
   highlightjs: true
   hljs_languages:
     - nginx
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.expand
+  icon:
+    repo: fontawesome/brands/github
 
 markdown_extensions:
     - admonition
 
 plugins:
   - mermaid2
+  - search
+
