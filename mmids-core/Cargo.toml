@@ -6,7 +6,6 @@ version = "0.1.0"
 edition = "2018"
 repository = "https://github.com/KallDrexx/mmids"
 license = "MIT"
-license-file = "../LICENSE"
 readme = "Readme.md"
 documentation = "https://kalldrexx.github.io/mmids/"
 
