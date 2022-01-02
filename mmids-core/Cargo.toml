@@ -1,7 +1,14 @@
 [package]
 name = "mmids-core"
+description = "Powerful and user friendly live video server"
+authors = ["Matthew Shapiro <me@mshapiro.net>"]
 version = "0.1.0"
 edition = "2018"
+repository = "https://github.com/KallDrexx/mmids"
+license = "MIT"
+license-file = "../LICENSE"
+readme = "Readme.md"
+documentation = "https://kalldrexx.github.io/mmids/"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
