@@ -380,7 +380,11 @@
 <p>Certain workflow steps have the (optional) ability to request that a reactor create workflows for a given stream name.  The current workflow steps that support this so far are the <a href="../steps/rtmp_receive/">RTMP receive</a>, <a href="../steps/rtmp_watch/">RTMP watch</a>, and the <a href="../steps/workflow_forwarder/">Workflow forwarder</a> steps.</p>
 <p>When a reactor receives a request to create workflows for a specific stream name, the reactor will make a call to an external system based on how that reactor was configured.  </p>
 <h2 id="request-execution">Request Execution</h2>
-<p>The method that reactors call external systems are called <code>Reactor Executors</code>.  The official mmids distribution only contains a single executor, called <code>simple_http</code>.  This executor will make an HTTP <code>POST</code> call to the url set in the reactor's configuration.  The HTTP request will have a content type of <code>text/plain</code> and the body will only contain the name of the stream being queried.</p>
+<p>The method that reactors call external systems are called <code>Reactor Executors</code>.  The official mmids distribution only contains a single executor, called <code>simple_http</code>.  This executor will make an HTTP <code>POST</code> call to the url set in the reactor's configuration.  The HTTP request will have a content type of <code>application/json</code> and the body will only contain the following json payload:</p>
+<pre><code class="language-json">{
+    "stream_name"": "&lt;stream_name&gt;"
+}
+</code></pre>
 <p>The <code>simple_http</code> executor expects the server to respond with:</p>
 <ul>
 <li><code>404</code> - The stream name is not valid or allowed</li>
