@@ -5,7 +5,9 @@ use crate::reactors::executors::{
 use async_recursion::async_recursion;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use hyper::http::HeaderValue;
 use hyper::{Body, Client, Method, Request, StatusCode};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::Duration;
@@ -16,10 +18,13 @@ const MAX_RETRIES: u64 = 3;
 const RETRY_DELAY: u64 = 5;
 
 /// Attempts to query for a workflow definition by performing a simple HTTP POST request to the
-/// configured URL. The request will contain a body with just a string of the stream name to look
+/// configured URL. The request will contain a body with a json object containing the stream name to look
 /// up the workflow for. It's expecting a response of either 404 (denoting that no workflow exists
-/// for the stream name) or a 200. When a 200 is returned we are expecting a workflow definition
-/// in the standard mmids configuration format.
+/// for the stream name) or a 200. When a 200 is returned we are expecting definitions for one or
+/// more workflows in the standard mmids configuration format.
+///
+/// Zero workflows are allowed in a 200 status code.  This represents that the stream name is valid
+/// (and should be allowed) but it does not have an specific workflows tied to it.
 pub struct SimpleHttpExecutor {
     url: String,
 }
@@ -36,6 +41,11 @@ pub struct SimpleHttpExecutorGenerator {}
 pub enum SimpleHttpExecutorError {
     #[error("The required parameter 'url' was not provided")]
     UrlParameterNotProvided,
+}
+
+#[derive(Serialize)]
+struct RequestContent {
+    stream_name: String,
 }
 
 impl ReactorExecutorGenerator for SimpleHttpExecutorGenerator {
@@ -65,10 +75,24 @@ async fn execute_simple_http_executor(url: String, stream_name: String) -> React
 }
 
 fn build_request(url: &String, stream_name: &String) -> Result<Request<Body>, ()> {
+    let content = match serde_json::to_string_pretty(&RequestContent {
+        stream_name: stream_name.clone(),
+    }) {
+        Ok(json) => json,
+        Err(error) => {
+            error!("Failed to serialize stream name to json: {:?}", error);
+            return Err(());
+        }
+    };
+
     let request = Request::builder()
         .method(Method::POST)
         .uri(url.to_string())
-        .body(Body::from(stream_name.clone()));
+        .header(
+            hyper::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )
+        .body(Body::from(content));
 
     match request {
         Ok(request) => Ok(request),

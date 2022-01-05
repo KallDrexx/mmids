@@ -8,7 +8,13 @@ When a reactor receives a request to create workflows for a specific stream name
 
 ## Request Execution
 
-The method that reactors call external systems are called `Reactor Executors`.  The official mmids distribution only contains a single executor, called `simple_http`.  This executor will make an HTTP `POST` call to the url set in the reactor's configuration.  The HTTP request will have a content type of `text/plain` and the body will only contain the name of the stream being queried.
+The method that reactors call external systems are called `Reactor Executors`.  The official mmids distribution only contains a single executor, called `simple_http`.  This executor will make an HTTP `POST` call to the url set in the reactor's configuration.  The HTTP request will have a content type of `application/json` and the body will only contain the following json payload:
+
+```json
+{
+    "stream_name"": "<stream_name>"
+}
+```
 
 The `simple_http` executor expects the server to respond with:
 

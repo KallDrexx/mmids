@@ -5,7 +5,7 @@ Mmids (Multi-Media Ingestion and Distribution System) is a powerful, user friend
 * **User Friendly**
     * Complex video workflows can be easily configured by non-developers
 * **Observable**
-    * Logging with an emphasis on corelations.  Easily pinpoint logs relevant to a single stream on a busy server
+    * Logging with an emphasis on correlations.  Easily pinpoint logs relevant to a single stream on a busy server
 * **Developer Friendly**
     * Trivially add new workflow logic, new network protocols, etc... all with your own open-source or proprietary components
 * **Fully Dynamic**
