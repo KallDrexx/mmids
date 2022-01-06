@@ -1,10 +1,10 @@
 [package]
 name = "mmids-app"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2018"
 
 [dependencies]
-mmids-core = {path = "../mmids-core"}
+mmids-core = { path = "../mmids-core" }
 tokio = { version = "1.15", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.2", features = ["json"] }
