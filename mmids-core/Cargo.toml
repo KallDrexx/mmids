@@ -2,21 +2,19 @@
 name = "mmids-core"
 description = "Powerful and user friendly live video server"
 authors = ["Matthew Shapiro <me@mshapiro.net>"]
-version = "1.1.0"
+version = "1.1.1"
 edition = "2018"
 repository = "https://github.com/KallDrexx/mmids"
 license = "MIT"
 readme = "Readme.md"
 documentation = "https://kalldrexx.github.io/mmids/"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 tokio = { version = "1.15", features = ["full"] }
 futures = "0.3"
 bytes = "1"
 uuid = { version = "0.8", features = ["v4"] }
-rml_rtmp = "0.6.0"
+rml_rtmp = "0.6.1"
 downcast-rs = "1.2.0"
 thiserror = "1.0"
 pest = "2.1"
