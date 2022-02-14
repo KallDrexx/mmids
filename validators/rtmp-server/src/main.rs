@@ -143,6 +143,7 @@ pub async fn main() {
                         is_keyframe,
                         is_sequence_header,
                         codec,
+                        composition_time_offset,
                     } => {
                         if announce_video_data {
                             info!("Connection {} sent video data", publisher);
@@ -165,6 +166,7 @@ pub async fn main() {
                                 codec,
                                 is_sequence_header,
                                 is_keyframe,
+                                composition_time_offset,
                             },
                         });
                     }

@@ -21,7 +21,7 @@ use crate::workflows::steps::{
 use crate::reactors::manager::ReactorManagerRequest;
 use crate::reactors::ReactorWorkflowUpdate;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::StreamId;
+use crate::{StreamId, VideoTimestamp};
 use futures::FutureExt;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -344,6 +344,7 @@ impl RtmpReceiverStep {
                 codec,
                 is_sequence_header,
                 is_keyframe,
+                composition_time_offset,
             } => match self.connection_details.get(&publisher) {
                 None => (),
                 Some(connection) => {
@@ -354,7 +355,10 @@ impl RtmpReceiverStep {
                             is_sequence_header,
                             data,
                             codec,
-                            timestamp: Duration::from_millis(timestamp.value as u64),
+                            timestamp: VideoTimestamp::from_rtmp_data(
+                                timestamp,
+                                composition_time_offset,
+                            ),
                         },
                     });
                 }

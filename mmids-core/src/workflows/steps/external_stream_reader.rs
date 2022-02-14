@@ -381,9 +381,9 @@ mod tests {
     use super::*;
     use crate::codecs::{AudioCodec, VideoCodec};
     use crate::endpoints::rtmp_server::RtmpEndpointMediaData;
-    use crate::test_utils;
     use crate::utils::hash_map_to_stream_metadata;
     use crate::workflows::steps::StreamHandlerFutureResult;
+    use crate::{test_utils, VideoTimestamp};
     use bytes::Bytes;
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
@@ -627,12 +627,15 @@ mod tests {
         let mut context = TestContext::new();
         let mut outputs = StepOutputs::new();
 
+        let video_timestamp =
+            VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
+
         let media = MediaNotification {
             stream_id: StreamId("abc".to_string()),
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2, 3]),
                 codec: VideoCodec::H264,
-                timestamp: Duration::from_millis(5),
+                timestamp: video_timestamp.clone(),
                 is_keyframe: true,
                 is_sequence_header: true,
             },
@@ -648,15 +651,15 @@ mod tests {
             MediaNotificationContent::Video {
                 data,
                 codec,
-                timestamp,
                 is_sequence_header,
                 is_keyframe,
+                timestamp,
             } => {
                 assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
                 assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-                assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
                 assert!(is_sequence_header, "Expected sequence header");
                 assert!(is_keyframe, "Expected key frame");
+                assert_eq!(timestamp, &video_timestamp, "Unexpected video timestamp");
             }
 
             content => panic!("Expected NewIncomingStream, got {:?}", content),
@@ -815,6 +818,9 @@ mod tests {
         let mut context = TestContext::new();
         let mut media_receiver = context.accept_stream().await;
 
+        let video_timestamp =
+            VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
+
         let media = MediaNotification {
             stream_id: StreamId("abc".to_string()),
             content: MediaNotificationContent::Video {
@@ -822,7 +828,7 @@ mod tests {
                 is_keyframe: true,
                 is_sequence_header: true,
                 codec: VideoCodec::H264,
-                timestamp: Duration::from_millis(5),
+                timestamp: video_timestamp.clone(),
             },
         };
 
@@ -841,12 +847,21 @@ mod tests {
                 codec,
                 is_sequence_header,
                 is_keyframe,
+                composition_time_offset,
             } => {
                 assert_eq!(data, &vec![1, 2, 3, 4], "Unexpected bytes");
-                assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
+                assert_eq!(
+                    timestamp,
+                    &RtmpTimestamp::new(video_timestamp.dts.as_millis() as u32),
+                    "Unexpected timestamp"
+                );
                 assert!(is_sequence_header, "Expected sequence header to be true");
                 assert!(is_keyframe, "Expected key frame to be true");
                 assert_eq!(codec, &VideoCodec::H264, "Expected h264 codec");
+                assert_eq!(
+                    composition_time_offset, &video_timestamp.pts_offset,
+                    "Unexpected composition time offset"
+                );
             }
 
             data => panic!("Unexpected media data: {:?}", data),

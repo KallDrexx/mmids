@@ -3,11 +3,13 @@ use rml_rtmp::sessions::{
     PublishMode, ServerSession, ServerSessionConfig, ServerSessionEvent, ServerSessionResult,
     StreamMetadata,
 };
+use std::io::Cursor;
 
 use super::RtmpEndpointPublisherMessage;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::rtmp_server::RtmpEndpointMediaData;
 use crate::net::tcp::OutboundPacket;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -116,6 +118,7 @@ struct UnwrappedVideo {
     is_keyframe: bool,
     is_sequence_header: bool,
     data: Bytes,
+    composition_time_in_ms: i32,
 }
 
 struct UnwrappedAudio {
@@ -617,6 +620,7 @@ impl RtmpServerConnectionHandler {
                     codec,
                     is_keyframe,
                     is_sequence_header: is_parameter_set,
+                    composition_time_in_ms,
                 } = unwrap_video_from_flv(data);
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
@@ -627,13 +631,14 @@ impl RtmpServerConnectionHandler {
                         is_sequence_header: is_parameter_set,
                         data,
                         timestamp,
+                        composition_time_offset: composition_time_in_ms,
                     },
                 );
             }
 
             _ => {
                 error!(
-                    "Conenction sent video data is not in a publishing state: {:?}",
+                    "Connection sent video data is not in a publishing state: {:?}",
                     self.state
                 );
 
@@ -946,10 +951,17 @@ impl RtmpServerConnectionHandler {
                 data,
                 timestamp,
                 is_keyframe,
-                is_sequence_header: _,
+                is_sequence_header,
                 codec,
+                composition_time_offset,
             } => {
-                let flv_video = match wrap_video_into_flv(data, codec, is_keyframe) {
+                let flv_video = match wrap_video_into_flv(
+                    data,
+                    codec,
+                    is_keyframe,
+                    is_sequence_header,
+                    composition_time_offset,
+                ) {
                     Ok(x) => x,
                     Err(()) => {
                         if !self.video_parse_error_raised {
@@ -1016,16 +1028,16 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
             is_keyframe: false,
             is_sequence_header: false,
             data,
+            composition_time_in_ms: 0,
         };
     }
 
-    // TODO: The FLV spec has the AVCPacketType and composition time as the first parts of the
-    // AVCPACKETTYPE.  It's unclear if these two fields are part of h264 or FLV specific.  For
-    // now assuming they are FLV specific
     let flv_tag = data.split_to(1);
+    let avc_header = data.split_to(4);
+
     let is_sequence_header;
     let codec = if flv_tag[0] & 0x07 == 0x07 {
-        is_sequence_header = data[0] == 0x00;
+        is_sequence_header = avc_header[0] == 0x00;
         VideoCodec::H264
     } else {
         is_sequence_header = false;
@@ -1034,21 +1046,44 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
 
     let is_keyframe = flv_tag[0] & 0x10 == 0x10;
 
+    let composition_time = Cursor::new(&avc_header).read_i24::<BigEndian>();
+
+    let composition_time = if let Ok(offset) = composition_time {
+        offset
+    } else {
+        error!("Failed to read composition time offset for some reason.  This shouldn't happen.  Assuming 0");
+        0
+    };
+
     UnwrappedVideo {
         codec,
         is_keyframe,
         is_sequence_header,
         data,
+        composition_time_in_ms: composition_time,
     }
 }
 
-fn wrap_video_into_flv(data: Bytes, codec: VideoCodec, is_keyframe: bool) -> Result<Bytes, ()> {
+fn wrap_video_into_flv(
+    data: Bytes,
+    codec: VideoCodec,
+    is_keyframe: bool,
+    is_sequence_header: bool,
+    composition_time_offset: i32,
+) -> Result<Bytes, ()> {
     match codec {
         VideoCodec::H264 => {
-            let mut wrapped = BytesMut::new();
             let flv_tag = if is_keyframe { 0x17 } else { 0x27 };
+            let avc_type = if is_sequence_header { 0 } else { 1 };
 
-            wrapped.put_u8(flv_tag);
+            let mut header = vec![flv_tag, avc_type];
+            if let Err(error) = header.write_i24::<BigEndian>(composition_time_offset) {
+                error!("Failed to write composition time offset: {error:?}");
+                return Err(());
+            }
+
+            let mut wrapped = BytesMut::new();
+            wrapped.extend(header);
             wrapped.extend(data);
 
             Ok(wrapped.freeze())

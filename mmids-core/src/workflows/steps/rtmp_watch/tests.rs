@@ -8,7 +8,7 @@ use crate::test_utils::expect_mpsc_response;
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::steps::StepTestContext;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::{test_utils, StreamId};
+use crate::{test_utils, StreamId, VideoTimestamp};
 use bytes::Bytes;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::{HashMap, HashSet};
@@ -338,7 +338,7 @@ async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
             data: Bytes::from(vec![3, 4]),
             is_keyframe: true,
             is_sequence_header: true,
-            timestamp: Duration::from_millis(1),
+            timestamp: VideoTimestamp::from_durations(Duration::new(0, 0), Duration::new(0, 0)),
         },
     });
 
@@ -365,7 +365,10 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
             data: Bytes::from(vec![3, 4]),
             is_keyframe: true,
             is_sequence_header: true,
-            timestamp: Duration::from_millis(1),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
         },
     });
 
@@ -379,12 +382,17 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
             timestamp,
             is_keyframe,
             is_sequence_header,
+            composition_time_offset,
         } => {
             assert_eq!(data, &vec![3, 4], "Unexpected video bytes");
             assert_eq!(codec, &VideoCodec::H264, "Unexpected video codec");
-            assert_eq!(timestamp, &RtmpTimestamp::new(1), "Unexpected timestamp");
+            assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
+            assert_eq!(
+                composition_time_offset, &10,
+                "Unexpected composition time offset"
+            );
         }
 
         _ => panic!("Unexpected media data: {:?}", media.data),
@@ -416,7 +424,10 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
             data: Bytes::from(vec![3, 4]),
             is_keyframe: true,
             is_sequence_header: true,
-            timestamp: Duration::from_millis(1),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
         },
     });
 
@@ -443,7 +454,10 @@ async fn video_packet_not_sent_to_media_channel_when_new_stream_is_for_different
             data: Bytes::from(vec![3, 4]),
             is_keyframe: true,
             is_sequence_header: true,
-            timestamp: Duration::from_millis(1),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
         },
     });
 
@@ -546,7 +560,10 @@ async fn media_message_uses_strict_stream_key_when_exact_key_registered() {
             data: Bytes::from(vec![3, 4]),
             is_keyframe: true,
             is_sequence_header: true,
-            timestamp: Duration::from_millis(1),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
         },
     });
 
@@ -599,7 +616,10 @@ async fn video_message_passed_as_output() {
                 data: Bytes::from(vec![3, 4]),
                 is_keyframe: true,
                 is_sequence_header: true,
-                timestamp: Duration::from_millis(1),
+                timestamp: VideoTimestamp::from_durations(
+                    Duration::from_millis(5),
+                    Duration::from_millis(15),
+                ),
             },
         });
 }

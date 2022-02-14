@@ -19,7 +19,7 @@ use crate::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::StreamId;
+use crate::{StreamId, VideoTimestamp};
 use futures::FutureExt;
 use std::time::Duration;
 use thiserror::Error;
@@ -287,13 +287,17 @@ impl FfmpegPullStep {
                 is_sequence_header,
                 timestamp,
                 codec,
+                composition_time_offset,
             } => {
                 if let Some(stream_id) = &self.active_stream_id {
                     outputs.media.push(MediaNotification {
                         stream_id: stream_id.clone(),
                         content: MediaNotificationContent::Video {
                             codec,
-                            timestamp: Duration::from_millis(timestamp.value as u64),
+                            timestamp: VideoTimestamp::from_rtmp_data(
+                                timestamp,
+                                composition_time_offset,
+                            ),
                             is_keyframe,
                             is_sequence_header,
                             data,

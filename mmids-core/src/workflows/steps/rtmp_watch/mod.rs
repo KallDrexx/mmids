@@ -444,7 +444,8 @@ impl RtmpWatchStep {
                             is_sequence_header: *is_sequence_header,
                             codec: codec.clone(),
                             data: data.clone(),
-                            timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                            timestamp: RtmpTimestamp::new(timestamp.dts.as_millis() as u32),
+                            composition_time_offset: timestamp.pts_offset,
                         },
                     };
 

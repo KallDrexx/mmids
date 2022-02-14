@@ -229,6 +229,7 @@ pub enum RtmpEndpointPublisherMessage {
         is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
+        composition_time_offset: i32,
     },
 
     /// An RTMP publisher has sent in new audio data
@@ -296,6 +297,7 @@ pub enum RtmpEndpointMediaData {
         is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
+        composition_time_offset: i32,
     },
 
     NewAudioData {

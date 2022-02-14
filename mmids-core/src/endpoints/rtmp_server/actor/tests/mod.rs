@@ -877,7 +877,7 @@ async fn notification_raised_when_video_published() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![1, 2, 3, 4]);
+    let data = Bytes::from(vec![1, 2, 3, 4, 5, 6, 7]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -893,6 +893,7 @@ async fn notification_raised_when_video_published() {
             is_sequence_header: _,
             codec: _,
             is_keyframe: _,
+            composition_time_offset: _,
         } => {
             assert_eq!(
                 publisher.0,
@@ -902,8 +903,8 @@ async fn notification_raised_when_video_published() {
 
             assert_eq!(event_timestamp, timestamp, "Unexpected timestamp");
 
-            // First byte is the flv-tag and is stripped out of the notification
-            assert_eq!(event_data, data[1..], "Unexpected video data");
+            // Should contain flv tag and avc video packet header stripped out
+            assert_eq!(event_data, data[5..], "Unexpected video data");
         }
 
         message => panic!("Unexpected publisher message: {:?}", message),
@@ -915,7 +916,7 @@ async fn published_video_detects_h264_codec_when_first_byte_masks_to_0x07() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x07, 2, 3, 4]);
+    let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -931,6 +932,7 @@ async fn published_video_detects_h264_codec_when_first_byte_masks_to_0x07() {
             is_sequence_header: _,
             codec,
             is_keyframe: _,
+            composition_time_offset: _,
         } => {
             assert_eq!(codec, VideoCodec::H264, "Unexpected video codec");
         }
@@ -944,7 +946,7 @@ async fn published_video_detects_unknown_codec_when_first_byte_does_not_mask_to_
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x08, 2, 3, 4]);
+    let data = Bytes::from(vec![0x08, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -960,6 +962,7 @@ async fn published_video_detects_unknown_codec_when_first_byte_does_not_mask_to_
             is_sequence_header: _,
             codec,
             is_keyframe: _,
+            composition_time_offset: _,
         } => {
             assert_eq!(codec, VideoCodec::Unknown, "Unexpected video codec");
         }
@@ -973,7 +976,7 @@ async fn published_video_sequence_header_when_h264_and_second_byte_is_zero() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x07, 0, 3, 4]);
+    let data = Bytes::from(vec![0x07, 0, 0, 0, 0, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -989,6 +992,7 @@ async fn published_video_sequence_header_when_h264_and_second_byte_is_zero() {
             is_sequence_header,
             codec: _,
             is_keyframe: _,
+            composition_time_offset: _,
         } => {
             assert!(is_sequence_header, "Unexpected sequence header value");
         }
@@ -1002,7 +1006,7 @@ async fn published_video_not_sequence_header_when_h264_and_second_byte_is_not_ze
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x07, 1, 3, 4]);
+    let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 1, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -1018,6 +1022,7 @@ async fn published_video_not_sequence_header_when_h264_and_second_byte_is_not_ze
             is_sequence_header,
             codec: _,
             is_keyframe: _,
+            composition_time_offset: _,
         } => {
             assert!(!is_sequence_header, "Unexpected sequence header value");
         }
@@ -1031,7 +1036,7 @@ async fn published_video_not_key_frame_when_first_4_half_octet_is_not_one() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x27, 2, 3, 4]);
+    let data = Bytes::from(vec![0x27, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -1047,6 +1052,7 @@ async fn published_video_not_key_frame_when_first_4_half_octet_is_not_one() {
             is_sequence_header: _,
             codec: _,
             is_keyframe,
+            composition_time_offset: _,
         } => {
             assert!(!is_keyframe, "Unexpected sequence header value");
         }
@@ -1060,7 +1066,7 @@ async fn published_video_key_frame_when_first_4_half_octet_is_one() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x17, 2, 3, 4]);
+    let data = Bytes::from(vec![0x17, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context
         .client
@@ -1076,6 +1082,7 @@ async fn published_video_key_frame_when_first_4_half_octet_is_one() {
             is_sequence_header: _,
             codec: _,
             is_keyframe,
+            composition_time_offset: _,
         } => {
             assert!(is_keyframe, "Unexpected sequence header value");
         }
@@ -1393,6 +1400,7 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_non_keyframe() {
                 is_sequence_header: false,
                 is_keyframe: false,
                 timestamp: sent_timestamp.clone(),
+                composition_time_offset: 0,
             },
         }) {
         Ok(_) => (),
@@ -1407,7 +1415,11 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_non_keyframe() {
 
     match event {
         ClientSessionEvent::VideoDataReceived { data, timestamp } => {
-            assert_eq!(&data, &vec![0x27, 1, 2, 3, 4], "Unexpected bytes");
+            assert_eq!(
+                &data,
+                &vec![0x27, 1, 0, 0, 0, 1, 2, 3, 4],
+                "Unexpected bytes"
+            );
             assert_eq!(timestamp, sent_timestamp, "Unexpected timestamp");
         }
 
@@ -1435,6 +1447,7 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
                 is_sequence_header: false,
                 is_keyframe: true,
                 timestamp: sent_timestamp.clone(),
+                composition_time_offset: 0,
             },
         }) {
         Ok(_) => (),
@@ -1449,7 +1462,11 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
 
     match event {
         ClientSessionEvent::VideoDataReceived { data, timestamp } => {
-            assert_eq!(&data, &vec![0x17, 1, 2, 3, 4], "Unexpected bytes");
+            assert_eq!(
+                &data,
+                &vec![0x17, 1, 0, 0, 0, 1, 2, 3, 4],
+                "Unexpected bytes"
+            );
             assert_eq!(timestamp, sent_timestamp, "Unexpected timestamp");
         }
 
@@ -1477,6 +1494,7 @@ async fn watcher_does_not_receive_non_h264_video() {
                 is_sequence_header: false,
                 is_keyframe: false,
                 timestamp: sent_timestamp.clone(),
+                composition_time_offset: 0,
             },
         }) {
         Ok(_) => (),

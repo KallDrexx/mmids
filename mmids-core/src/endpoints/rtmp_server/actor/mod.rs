@@ -1208,6 +1208,7 @@ fn handle_connection_request_watch(
             is_keyframe: true,
             data: sequence_header.data.clone(),
             timestamp: RtmpTimestamp::new(0),
+            composition_time_offset: 0,
         });
     }
 

@@ -1,8 +1,8 @@
 use super::*;
 use crate::codecs::{AudioCodec, VideoCodec};
-use crate::test_utils;
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::steps::StepTestContext;
+use crate::{test_utils, VideoTimestamp};
 use bytes::Bytes;
 use std::time::Duration;
 
@@ -271,7 +271,10 @@ async fn video_media_passed_as_output_immediately() {
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
-            timestamp: Duration::from_millis(5),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
             is_keyframe: true,
             is_sequence_header: true,
         },
@@ -296,7 +299,8 @@ async fn video_media_passed_as_output_immediately() {
         } => {
             assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
             assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+            assert_eq!(timestamp.dts(), Duration::from_millis(5), "Unexpected dts");
+            assert_eq!(timestamp.pts_offset(), 10, "Unexpected pts offset");
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
         }
@@ -392,7 +396,10 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
-            timestamp: Duration::from_millis(5),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
             is_keyframe: true,
             is_sequence_header: true,
         },
@@ -437,7 +444,10 @@ async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_wo
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
-            timestamp: Duration::from_millis(5),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(5),
+                Duration::from_millis(15),
+            ),
             is_keyframe: true,
             is_sequence_header: false,
         },

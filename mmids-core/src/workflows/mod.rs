@@ -13,7 +13,7 @@ pub use runner::{start_workflow, WorkflowRequest, WorkflowRequestOperation, Work
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::rtmp_server::RtmpEndpointMediaData;
 use crate::utils::hash_map_to_stream_metadata;
-use crate::StreamId;
+use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
@@ -53,7 +53,7 @@ pub enum MediaNotificationContent {
         is_sequence_header: bool,
         is_keyframe: bool,
         data: Bytes,
-        timestamp: Duration,
+        timestamp: VideoTimestamp,
     },
 
     /// Audio content
@@ -84,14 +84,15 @@ impl MediaNotificationContent {
                 codec,
                 is_keyframe,
                 is_sequence_header,
-                timestamp,
                 data,
+                timestamp,
             } => Some(RtmpEndpointMediaData::NewVideoData {
                 data: data.clone(),
                 codec: codec.clone(),
                 is_keyframe: *is_keyframe,
                 is_sequence_header: *is_sequence_header,
-                timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                timestamp: RtmpTimestamp::new(timestamp.dts.as_millis() as u32),
+                composition_time_offset: timestamp.pts_offset,
             }),
 
             MediaNotificationContent::Audio {

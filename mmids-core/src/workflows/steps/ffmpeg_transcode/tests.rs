@@ -15,7 +15,7 @@ use crate::workflows::steps::ffmpeg_transcode::{
 };
 use crate::workflows::steps::{StepStatus, StepTestContext};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::{test_utils, StreamId};
+use crate::{test_utils, StreamId, VideoTimestamp};
 use bytes::Bytes;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
@@ -653,9 +653,12 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2]),
                 codec: VideoCodec::H264,
-                timestamp: Duration::from_millis(5),
                 is_keyframe: true,
                 is_sequence_header: true,
+                timestamp: VideoTimestamp::from_durations(
+                    Duration::from_millis(0),
+                    Duration::from_millis(0),
+                ),
             },
         });
 }
@@ -699,7 +702,10 @@ async fn video_packet_sent_to_watcher_media_channel() {
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2]),
             codec: VideoCodec::H264,
-            timestamp: Duration::from_millis(5),
+            timestamp: VideoTimestamp::from_durations(
+                Duration::from_millis(0),
+                Duration::from_millis(0),
+            ),
             is_keyframe: true,
             is_sequence_header: true,
         },
@@ -809,7 +815,7 @@ async fn video_packet_with_other_stream_id_not_sent_to_watcher_media_channel() {
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2]),
             codec: VideoCodec::H264,
-            timestamp: Duration::from_millis(5),
+            timestamp: VideoTimestamp::from_durations(Duration::new(0, 0), Duration::new(0, 0)),
             is_keyframe: true,
             is_sequence_header: true,
         },
@@ -844,6 +850,7 @@ async fn video_packet_from_publisher_passed_as_media_output() {
             timestamp: RtmpTimestamp::new(5),
             is_keyframe: true,
             is_sequence_header: true,
+            composition_time_offset: 123,
         })
         .expect("Failed to send video message");
 
@@ -871,7 +878,8 @@ async fn video_packet_from_publisher_passed_as_media_output() {
         } => {
             assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
             assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+            assert_eq!(timestamp.dts, Duration::from_millis(5), "Unexpected dts");
+            assert_eq!(timestamp.pts_offset, 123, "Unexpected pts offset");
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
         }

@@ -461,6 +461,7 @@ async fn video_notification_received_when_publisher_sends_video() {
             timestamp: RtmpTimestamp::new(5),
             is_keyframe: true,
             is_sequence_header: true,
+            composition_time_offset: 123,
         })
         .expect("Failed to send video message");
 
@@ -484,7 +485,8 @@ async fn video_notification_received_when_publisher_sends_video() {
             is_sequence_header,
         } => {
             assert_eq!(data, &vec![1, 2, 3], "Unexpected video data");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
+            assert_eq!(timestamp.dts(), Duration::from_millis(5), "Unexpected dts");
+            assert_eq!(timestamp.pts_offset(), 123, "Unexpected pts offset");
             assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
@@ -604,7 +606,7 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2]),
                 codec: VideoCodec::H264,
-                timestamp: Duration::from_millis(5),
+                timestamp: VideoTimestamp::from_durations(Duration::new(0, 0), Duration::new(0, 0)),
                 is_keyframe: true,
                 is_sequence_header: true,
             },
