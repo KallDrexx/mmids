@@ -2,7 +2,7 @@
 name = "mmids-core"
 description = "Powerful and user friendly live video server"
 authors = ["Matthew Shapiro <me@mshapiro.net>"]
-version = "1.1.1"
+version = "2.0.0-dev.0"
 edition = "2018"
 repository = "https://github.com/KallDrexx/mmids"
 license = "MIT"
