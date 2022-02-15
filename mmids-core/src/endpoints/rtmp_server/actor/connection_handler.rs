@@ -1046,8 +1046,7 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
 
     let is_keyframe = flv_tag[0] & 0x10 == 0x10;
 
-    let composition_time = Cursor::new(&avc_header).read_i24::<BigEndian>();
-
+    let composition_time = Cursor::new(&avc_header[1..]).read_i24::<BigEndian>();
     let composition_time = if let Ok(offset) = composition_time {
         offset
     } else {
