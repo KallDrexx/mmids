@@ -70,6 +70,14 @@ impl VideoTimestamp {
         }
     }
 
+    /// Creates a video timestamp at zero
+    pub fn from_zero() -> Self {
+        VideoTimestamp {
+            dts: Duration::new(0, 0),
+            pts_offset: 0,
+        }
+    }
+
     /// Gets the decoding time stamp for this video packet
     pub fn dts(&self) -> Duration {
         self.dts

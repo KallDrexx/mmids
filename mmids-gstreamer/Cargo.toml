@@ -12,6 +12,7 @@ tokio = "1.16.1"
 bytes = "1.1.0"
 anyhow = "1.0.53"
 thiserror = "1.0.30"
+tracing = { version = "0.1", features = ["log"] }
 
 gstreamer = "0.18.3"
 gstreamer-app = "0.18.0"
