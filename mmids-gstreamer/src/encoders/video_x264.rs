@@ -39,10 +39,10 @@ impl X264Encoder {
         parameters: &HashMap<String, Option<String>>,
         pipeline: &Pipeline,
     ) -> Result<X264Encoder> {
-        let height = get_number(&parameters, "video_height");
-        let width = get_number(&parameters, "video_width");
-        let preset = parameters.get("video_preset").unwrap_or(&None);
-        let fps = get_number(&parameters, "video_fps");
+        let height = get_number(&parameters, "height");
+        let width = get_number(&parameters, "width");
+        let preset = parameters.get("preset").unwrap_or(&None);
+        let fps = get_number(&parameters, "fps");
 
         let appsrc = create_gst_element("appsrc")?;
         let queue = create_gst_element("queue")?;
