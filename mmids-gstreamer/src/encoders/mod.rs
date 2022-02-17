@@ -1,5 +1,7 @@
 mod audio_copy;
+mod audio_drop;
 mod video_copy;
+mod video_drop;
 mod video_x264;
 
 use anyhow::{Context, Result};
@@ -14,7 +16,10 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub use audio_copy::AudioCopyEncoderGenerator;
+pub use audio_drop::AudioDropEncoderGenerator;
+
 pub use video_copy::VideoCopyEncoderGenerator;
+pub use video_drop::VideoDropEncoderGenerator;
 pub use video_x264::X264EncoderGenerator;
 
 pub trait VideoEncoder {
