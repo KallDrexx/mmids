@@ -1,15 +1,35 @@
-use std::collections::HashMap;
+use crate::encoders::{SampleResult, VideoEncoder, VideoEncoderGenerator};
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use gstreamer::{Buffer, Caps, Element, ElementFactory, FlowError, FlowSuccess, Fraction, Pipeline};
 use gstreamer::prelude::*;
+use gstreamer::{
+    Buffer, Caps, ClockTime, Element, ElementFactory, FlowError, FlowSuccess, Fraction, Pipeline,
+};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
+use mmids_core::codecs::VideoCodec;
+use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::VideoTimestamp;
+use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
-use mmids_core::codecs::VideoCodec;
-use mmids_core::VideoTimestamp;
-use mmids_core::workflows::MediaNotificationContent;
-use crate::encoders::{SampleResult, VideoEncoder};
+use crate::utils::{create_gst_element, get_codec_data_from_element};
+
+pub struct X264EncoderGenerator {}
+
+impl VideoEncoderGenerator for X264EncoderGenerator {
+    fn create(
+        &self,
+        pipeline: &Pipeline,
+        parameters: &HashMap<String, Option<String>>,
+        media_sender: UnboundedSender<MediaNotificationContent>,
+    ) -> Result<Box<dyn VideoEncoder>> {
+        Ok(Box::new(X264Encoder::new(
+            media_sender,
+            parameters,
+            pipeline,
+        )?))
+    }
+}
 
 struct X264Encoder {
     source: AppSrc,
@@ -18,23 +38,23 @@ struct X264Encoder {
 impl X264Encoder {
     fn new(
         media_sender: UnboundedSender<MediaNotificationContent>,
-        parameters: HashMap<String, Option<String>>,
+        parameters: &HashMap<String, Option<String>>,
         pipeline: &Pipeline,
     ) -> Result<X264Encoder> {
         let height = get_number(&parameters, "video_height");
         let width = get_number(&parameters, "video_width");
-        let preset = parameters.get("video_preset") .unwrap_or(&None);
+        let preset = parameters.get("video_preset").unwrap_or(&None);
         let fps = get_number(&parameters, "video_fps");
 
-        let appsrc = create_element("appsrc")?;
-        let queue = create_element("queue")?;
-        let decoder = create_element("decodebin")?;
-        let scale = create_element("videoscale")?;
-        let rate_changer = create_element("videorate")?;
-        let capsfilter = create_element("capsfilter")?;
-        let encoder = create_element("x264enc")?;
-        let output_parser = create_element("h264parse")?;
-        let appsink = create_element("appsink")?;
+        let appsrc = create_gst_element("appsrc")?;
+        let queue = create_gst_element("queue")?;
+        let decoder = create_gst_element("decodebin")?;
+        let scale = create_gst_element("videoscale")?;
+        let rate_changer = create_gst_element("videorate")?;
+        let capsfilter = create_gst_element("capsfilter")?;
+        let encoder = create_gst_element("x264enc")?;
+        let output_parser = create_gst_element("h264parse")?;
+        let appsink = create_gst_element("appsink")?;
 
         pipeline
             .add_many(&[
@@ -46,21 +66,31 @@ impl X264Encoder {
                 &capsfilter,
                 &encoder,
                 &output_parser,
-                &appsink
+                &appsink,
             ])
-            .with_context(|| "Failed to add elements to pipeline")?;
+            .with_context(|| "Failed to add x264 encoder's elements to pipeline")?;
 
         Element::link_many(&[&appsrc, &queue, &decoder])
             .with_context(|| "Failed to link appsrc -> queue -> decoder")?;
 
-        Element::link_many(&[&scale, &rate_changer, &capsfilter, &encoder, &output_parser, &appsink])
-            .with_context(|| "Failed to link scale to sink")?;
+        Element::link_many(&[
+            &scale,
+            &rate_changer,
+            &capsfilter,
+            &encoder,
+            &output_parser,
+            &appsink,
+        ])
+        .with_context(|| "Failed to link scale to sink")?;
 
         // decodebin's video pad is added dynamically
         decoder.connect_pad_added(move |src, src_pad| {
             match src.link_pads(Some(&src_pad.name()), &scale.clone(), None) {
                 Ok(_) => (),
-                Err(_) => error!("Failed to link `decodebin`'s {} pad to scaler element", src_pad.name()),
+                Err(_) => error!(
+                    "Failed to link `decodebin`'s {} pad to scaler element",
+                    src_pad.name()
+                ),
             }
         });
 
@@ -84,15 +114,20 @@ impl X264Encoder {
             encoder.set_property_from_str("speed-preset", preset.as_str());
         }
 
-        let cloned_pipeline = pipeline.clone();
-        let appsink = appsink.dynamic_cast::<AppSink>()
-            .or_else(|_| Err(anyhow::anyhow!("appsink could not be cast to 'AppSink'")))?;
+        let appsink = appsink
+            .dynamic_cast::<AppSink>()
+            .or_else(|_| Err(anyhow!("appsink could not be cast to 'AppSink'")))?;
 
         let mut sent_codec_data = false;
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    match sample_received(sink, &mut sent_codec_data, &output_parser, media_sender.clone()) {
+                    match sample_received(
+                        sink,
+                        &mut sent_codec_data,
+                        &output_parser,
+                        media_sender.clone(),
+                    ) {
                         Ok(_) => Ok(FlowSuccess::Ok),
                         Err(error) => {
                             error!("new_sample callback error received: {:?}", error);
@@ -103,24 +138,39 @@ impl X264Encoder {
                 .build(),
         );
 
-        let appsrc = appsrc.dynamic_cast::<AppSrc>()
-            .or_else(|_| Err(anyhow::anyhow!("source element could not be cast to 'Appsrc'")))?;
+        let appsrc = appsrc
+            .dynamic_cast::<AppSrc>()
+            .or_else(|_| Err(anyhow!("source element could not be cast to 'Appsrc'")))?;
 
-        Ok(X264Encoder {
-            source: appsrc,
-        })
+        Ok(X264Encoder { source: appsrc })
     }
 }
 
 impl VideoEncoder for X264Encoder {
-    fn push_data(&mut self, data: Bytes, timestamp: VideoTimestamp, is_sequence_header: bool) -> anyhow::Result<()> {
-        todo!()
-    }
-}
+    fn push_data(
+        &mut self,
+        codec: VideoCodec,
+        data: Bytes,
+        timestamp: VideoTimestamp,
+        is_sequence_header: bool,
+    ) -> Result<()> {
+        let buffer = crate::utils::set_gst_buffer(
+            data,
+            Some(timestamp.dts()),
+            Some(timestamp.pts()),
+        ).with_context(|| "Failed to set buffer")?;
 
-fn create_element(name: &str) -> Result<Element> {
-    ElementFactory::make(name, None)
-        .with_context(|| format!("Failed to create element '{}'", name))
+        if is_sequence_header {
+            crate::utils::set_source_video_sequence_header(&self.source, codec, buffer)
+                .with_context(|| "Failed to set sequence header for x264 encoder")?;
+        } else {
+            self.source
+                .push_buffer(buffer)
+                .with_context(|| "Failed to push the buffer into video source")?;
+        }
+
+        Ok(())
+    }
 }
 
 fn get_number(parameters: &HashMap<String, Option<String>>, key: &str) -> Option<u32> {
@@ -144,34 +194,20 @@ fn sample_received(
 ) -> Result<()> {
     if !*codec_data_sent {
         // Pull the codec_data/sequence header out from the output parser
-        let pad = output_parser.static_pad("src")
-            .with_context(|| "Failed to get src pad of the output parser")?;
-
-        let caps = pad.caps()
-            .with_context(|| "No caps on output parser pad")?;
-
-        let structure = caps.structure(0)
-            .with_context(|| "output parser caps had no structure")?;
-
-        let codec_data = structure.get::<Buffer>("codec_data")
-            .with_context(|| "output parser had no codec data in its caps")?;
-
-        let map = codec_data.map_readable()
-            .with_context(|| "Could no make codec data buffer readable")?;
+        let codec_data = get_codec_data_from_element(&output_parser)?;
 
         let _ = media_sender.send(MediaNotificationContent::Video {
             codec: VideoCodec::H264,
             timestamp: VideoTimestamp::from_zero(),
             is_sequence_header: true,
             is_keyframe: false,
-            data: Bytes::copy_from_slice(map.as_slice()),
+            data: Bytes::copy_from_slice(codec_data.as_slice()),
         });
 
         *codec_data_sent = true;
     }
 
-    let sample = SampleResult::from_sink(sink)
-        .with_context(|| "Failed to get x264enc sample")?;
+    let sample = SampleResult::from_sink(sink).with_context(|| "Failed to get x264enc sample")?;
 
     let _ = media_sender.send(MediaNotificationContent::Video {
         codec: VideoCodec::H264,

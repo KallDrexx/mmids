@@ -8,11 +8,15 @@ use anyhow::{Context, Result};
 use gstreamer::{GenericFormattedValue, Pipeline};
 use gstreamer_app::AppSink;
 use tokio::sync::mpsc::UnboundedSender;
+use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::workflows::MediaNotificationContent;
+
+pub use video_x264::X264EncoderGenerator;
 
 pub trait VideoEncoder {
     fn push_data(
         &mut self,
+        codec: VideoCodec,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
@@ -22,6 +26,7 @@ pub trait VideoEncoder {
 pub trait AudioEncoder {
     fn push_data(
         &mut self,
+        codec: AudioCodec,
         data: Bytes,
         timestamp: Duration,
         is_sequence_header: bool,
@@ -49,7 +54,7 @@ pub trait VideoEncoderGenerator {
     fn create(
         &self,
         pipeline: &Pipeline,
-        parameters: HashMap<String, Option<String>>,
+        parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> anyhow::Result<Box<dyn VideoEncoder>>;
 }
@@ -111,7 +116,7 @@ impl EncoderFactory {
         &self,
         name: String,
         pipeline: &Pipeline,
-        parameters: HashMap<String, Option<String>>,
+        parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn VideoEncoder>, EncoderFactoryCreationError> {
         let generator = match self.video_encoders.get(name.as_str()) {
