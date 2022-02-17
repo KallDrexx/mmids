@@ -1,10 +1,9 @@
 use crate::encoders::{SampleResult, VideoEncoder, VideoEncoderGenerator};
+use crate::utils::{create_gst_element, get_codec_data_from_element};
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use gstreamer::prelude::*;
-use gstreamer::{
-    Buffer, Caps, ClockTime, Element, ElementFactory, FlowError, FlowSuccess, Fraction, Pipeline,
-};
+use gstreamer::{Caps, Element, FlowError, FlowSuccess, Fraction, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
 use mmids_core::codecs::VideoCodec;
 use mmids_core::workflows::MediaNotificationContent;
@@ -12,7 +11,6 @@ use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
-use crate::utils::{create_gst_element, get_codec_data_from_element};
 
 pub struct X264EncoderGenerator {}
 
@@ -148,17 +146,15 @@ impl X264Encoder {
 
 impl VideoEncoder for X264Encoder {
     fn push_data(
-        &mut self,
+        &self,
         codec: VideoCodec,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
     ) -> Result<()> {
-        let buffer = crate::utils::set_gst_buffer(
-            data,
-            Some(timestamp.dts()),
-            Some(timestamp.pts()),
-        ).with_context(|| "Failed to set buffer")?;
+        let buffer =
+            crate::utils::set_gst_buffer(data, Some(timestamp.dts()), Some(timestamp.pts()))
+                .with_context(|| "Failed to set buffer")?;
 
         if is_sequence_header {
             crate::utils::set_source_video_sequence_header(&self.source, codec, buffer)
@@ -201,7 +197,7 @@ fn sample_received(
             timestamp: VideoTimestamp::from_zero(),
             is_sequence_header: true,
             is_keyframe: false,
-            data: Bytes::copy_from_slice(codec_data.as_slice()),
+            data: codec_data,
         });
 
         *codec_data_sent = true;

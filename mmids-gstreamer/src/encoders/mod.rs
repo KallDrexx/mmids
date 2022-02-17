@@ -1,22 +1,22 @@
 mod video_copy;
 mod video_x264;
 
-use std::collections::HashMap;
-use std::time::Duration;
-use bytes::Bytes;
-use mmids_core::VideoTimestamp;
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use gstreamer::{GenericFormattedValue, Pipeline};
 use gstreamer_app::AppSink;
-use tokio::sync::mpsc::UnboundedSender;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::VideoTimestamp;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub use video_x264::X264EncoderGenerator;
 
 pub trait VideoEncoder {
     fn push_data(
-        &mut self,
+        &self,
         codec: VideoCodec,
         data: Bytes,
         timestamp: VideoTimestamp,
@@ -26,7 +26,7 @@ pub trait VideoEncoder {
 
 pub trait AudioEncoder {
     fn push_data(
-        &mut self,
+        &self,
         codec: AudioCodec,
         data: Bytes,
         timestamp: Duration,
@@ -133,13 +133,12 @@ impl EncoderFactory {
 
 impl SampleResult {
     pub fn from_sink(sink: &AppSink) -> Result<SampleResult> {
-        let sample = sink.pull_sample()
-            .with_context(|| "Sink had no sample")?;
+        let sample = sink.pull_sample().with_context(|| "Sink had no sample")?;
 
-        let buffer = sample.buffer()
-            .with_context(|| "Sample had no buffer")?;
+        let buffer = sample.buffer().with_context(|| "Sample had no buffer")?;
 
-        let map = buffer.map_readable()
+        let map = buffer
+            .map_readable()
             .with_context(|| "Sample's buffer could not be mapped as readable")?;
 
         let mut dts = buffer.dts();
@@ -153,13 +152,17 @@ impl SampleResult {
             // sync errors may occur.  When this happens the sample will have a segment, and that
             // segment can be used to adjust the pts and dts times to be from 00:00:00
             if let Some(original) = dts {
-                if let GenericFormattedValue::Time(Some(adjusted)) = segment.to_running_time(original) {
+                if let GenericFormattedValue::Time(Some(adjusted)) =
+                    segment.to_running_time(original)
+                {
                     dts = Some(adjusted);
                 }
             }
 
             if let Some(original) = pts {
-                if let GenericFormattedValue::Time(Some(adjusted)) = segment.to_running_time(original) {
+                if let GenericFormattedValue::Time(Some(adjusted)) =
+                    segment.to_running_time(original)
+                {
                     pts = Some(adjusted);
                 }
             }
