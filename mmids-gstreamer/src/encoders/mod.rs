@@ -1,3 +1,4 @@
+mod audio_copy;
 mod video_copy;
 mod video_x264;
 
@@ -12,6 +13,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+pub use audio_copy::AudioCopyEncoderGenerator;
+pub use video_copy::VideoCopyEncoderGenerator;
 pub use video_x264::X264EncoderGenerator;
 
 pub trait VideoEncoder {
@@ -76,7 +79,8 @@ pub struct EncoderFactory {
 
 pub struct SampleResult {
     content: Bytes,
-    timestamp: VideoTimestamp,
+    dts: Option<Duration>,
+    pts: Option<Duration>,
 }
 
 impl EncoderFactory {
@@ -134,7 +138,6 @@ impl EncoderFactory {
 impl SampleResult {
     pub fn from_sink(sink: &AppSink) -> Result<SampleResult> {
         let sample = sink.pull_sample().with_context(|| "Sink had no sample")?;
-
         let buffer = sample.buffer().with_context(|| "Sample had no buffer")?;
 
         let map = buffer
@@ -168,25 +171,22 @@ impl SampleResult {
             }
         }
 
-        let timestamp = if let Some(dts) = dts {
-            if let Some(pts) = pts {
-                VideoTimestamp::from_durations(
-                    Duration::from_millis(dts.mseconds()),
-                    Duration::from_millis(pts.mseconds()),
-                )
-            } else {
-                VideoTimestamp::from_durations(
-                    Duration::from_millis(dts.mseconds()),
-                    Duration::from_millis(0),
-                )
-            }
-        } else {
-            VideoTimestamp::from_zero()
-        };
+        let dts = dts.map(|x| Duration::from_millis(x.mseconds()));
+        let pts = pts.map(|x| Duration::from_millis(x.mseconds()));
 
         Ok(SampleResult {
-            timestamp,
             content: Bytes::copy_from_slice(map.as_slice()),
+            dts,
+            pts,
         })
+    }
+
+    pub fn to_video_timestamp(&self) -> VideoTimestamp {
+        match (&self.dts, &self.pts) {
+            (None, None) => VideoTimestamp::from_zero(),
+            (Some(dts), Some(pts)) => VideoTimestamp::from_durations(*dts, *pts),
+            (Some(dts), None) => VideoTimestamp::from_durations(*dts, Duration::from_millis(0)),
+            (None, Some(pts)) => VideoTimestamp::from_durations(*pts, Duration::from_millis(0)),
+        }
     }
 }

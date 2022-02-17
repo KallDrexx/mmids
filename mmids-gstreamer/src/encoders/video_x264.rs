@@ -207,7 +207,7 @@ fn sample_received(
 
     let _ = media_sender.send(MediaNotificationContent::Video {
         codec: VideoCodec::H264,
-        timestamp: sample.timestamp,
+        timestamp: sample.to_video_timestamp(),
         is_sequence_header: false,
         is_keyframe: false, // TODO, figure out how to compute this
         data: sample.content,

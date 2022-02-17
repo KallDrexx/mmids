@@ -1,48 +1,48 @@
-use crate::encoders::{SampleResult, VideoEncoder, VideoEncoderGenerator};
-use crate::utils::create_gst_element;
+use crate::encoders::{AudioEncoder, AudioEncoderGenerator, SampleResult};
+use crate::utils::{create_gst_element, set_gst_buffer};
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::VideoCodec;
+use mmids_core::codecs::AudioCodec;
 use mmids_core::workflows::MediaNotificationContent;
-use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
 
-pub struct VideoCopyEncoderGenerator {}
+pub struct AudioCopyEncoderGenerator {}
 
-impl VideoEncoderGenerator for VideoCopyEncoderGenerator {
+impl AudioEncoderGenerator for AudioCopyEncoderGenerator {
     fn create(
         &self,
         pipeline: &Pipeline,
-        _parameters: &HashMap<String, Option<String>>,
+        _parameters: HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> Result<Box<dyn VideoEncoder>> {
-        Ok(Box::new(VideoCopyEncoder::new(media_sender, pipeline)?))
+    ) -> Result<Box<dyn AudioEncoder>> {
+        Ok(Box::new(AudioCopyEncoder::new(media_sender, pipeline)?))
     }
 }
 
 struct CodecInfo {
-    codec: VideoCodec,
+    codec: AudioCodec,
     sequence_header: Bytes,
 }
 
-struct VideoCopyEncoder {
+struct AudioCopyEncoder {
     source: AppSrc,
     codec_data: Arc<Mutex<Option<CodecInfo>>>,
 }
 
-impl VideoCopyEncoder {
+impl AudioCopyEncoder {
     fn new(
         media_sender: UnboundedSender<MediaNotificationContent>,
         pipeline: &Pipeline,
-    ) -> Result<VideoCopyEncoder> {
+    ) -> Result<AudioCopyEncoder> {
         // While we won't be mutating the stream, we want to pass it through a gstreamer pipeline
-        // so the packets will be synchronized with audio in case of transcoding delay.
+        // so the packets will be synchronized with possibly transcoded video delay.
 
         let appsrc = create_gst_element("appsrc")?;
         let queue = create_gst_element("queue")?;
@@ -50,20 +50,20 @@ impl VideoCopyEncoder {
 
         pipeline
             .add_many(&[&appsrc, &queue, &appsink])
-            .with_context(|| "Failed to add video copy encoder's elements to the pipeline")?;
+            .with_context(|| "Failed to add audio copy encoder's elements to the pipeline")?;
 
         Element::link_many(&[&appsrc, &queue, &appsink])
-            .with_context(|| "Failed to link video copy encoder's elements together")?;
+            .with_context(|| "Failed to link audio copy encoder's elements together")?;
 
         let appsink = appsink
             .dynamic_cast::<AppSink>()
-            .or_else(|_| Err(anyhow!("Video copy encoder's appsink could not be casted")))?;
+            .or_else(|_| Err(anyhow!("Audio copy encoder's appsink could not be casted")))?;
 
         let codec_data: Arc<Mutex<Option<CodecInfo>>> = Arc::new(Mutex::new(None));
         let copy_of_codec_data = codec_data.clone();
         let mut sent_codec_data = false;
         let mut codec_data_error_raised = false;
-        let mut codec = VideoCodec::Unknown;
+        let mut codec = AudioCodec::Unknown;
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -81,11 +81,10 @@ impl VideoCopyEncoder {
                         };
 
                         if let Some(info) = &*data {
-                            let _ = media_sender.send(MediaNotificationContent::Video {
+                            let _ = media_sender.send(MediaNotificationContent::Audio {
                                 codec: info.codec.clone(),
                                 data: info.sequence_header.clone(),
-                                timestamp: VideoTimestamp::from_zero(),
-                                is_keyframe: false,
+                                timestamp: Duration::new(0, 0),
                                 is_sequence_header: true,
                             });
 
@@ -102,57 +101,54 @@ impl VideoCopyEncoder {
                     let sample = SampleResult::from_sink(sink)
                         .or_else(|_| Err(FlowError::CustomError))?;
 
-                    let timestamp = sample.to_video_timestamp();
-                    let _ = media_sender.send(MediaNotificationContent::Video {
+                    let _ = media_sender.send(MediaNotificationContent::Audio {
                         codec,
                         data: sample.content,
-                        timestamp,
+                        timestamp: sample.dts.unwrap_or(Duration::new(0, 0)),
                         is_sequence_header: false,
-                        is_keyframe: false, // TODO: preserve this somehow
                     });
 
                     Ok(FlowSuccess::Ok)
                 })
-            .build(),
+                .build(),
         );
 
         let appsrc = appsrc
             .dynamic_cast::<AppSrc>()
-            .or_else(|_| Err(anyhow!("Video copy encoder's appsrc could not be casted")))?;
+            .or_else(|_| Err(anyhow!("Audio copy encoder's appsrc could not be casted")))?;
 
-        Ok(VideoCopyEncoder {
+        Ok(AudioCopyEncoder {
             source: appsrc,
             codec_data,
         })
     }
 }
 
-impl VideoEncoder for VideoCopyEncoder {
+impl AudioEncoder for AudioCopyEncoder {
     fn push_data(
         &self,
-        codec: VideoCodec,
+        codec: AudioCodec,
         data: Bytes,
-        timestamp: VideoTimestamp,
+        timestamp: Duration,
         is_sequence_header: bool,
     ) -> Result<()> {
         if is_sequence_header {
             let mut codec_data = self
                 .codec_data
                 .lock()
-                .or_else(|_| Err(anyhow!("Video copy encoder's lock was poisoned")))?;
+                .or_else(|_| Err(anyhow!("Audio copy encoder's lock was poisoned")))?;
 
             *codec_data = Some(CodecInfo {
                 codec,
                 sequence_header: data,
             })
         } else {
-            let buffer =
-                crate::utils::set_gst_buffer(data, Some(timestamp.dts()), Some(timestamp.pts()))
-                    .with_context(|| "Failed to set buffer")?;
+            let buffer = set_gst_buffer(data, Some(timestamp), None)
+                .with_context(|| "Failed to set audio buffer")?;
 
             self.source
                 .push_buffer(buffer)
-                .with_context(|| "Could not push buffer into copy encoder's source")?;
+                .with_context(|| "Could not push buffer into audio copy encoder's source")?;
         }
 
         Ok(())
