@@ -72,7 +72,7 @@ pub trait AudioEncoderGenerator {
     fn create(
         &self,
         pipeline: &Pipeline,
-        parameters: HashMap<String, Option<String>>,
+        parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> anyhow::Result<Box<dyn AudioEncoder>>;
 }
@@ -130,6 +130,23 @@ impl EncoderFactory {
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn VideoEncoder>, EncoderFactoryCreationError> {
         let generator = match self.video_encoders.get(name.as_str()) {
+            Some(generator) => generator,
+            None => return Err(EncoderFactoryCreationError::NoEncoderWithName(name)),
+        };
+
+        let encoder = generator.create(&pipeline, parameters, media_sender)?;
+
+        Ok(encoder)
+    }
+
+    pub fn get_audio_encoder(
+        &self,
+        name: String,
+        pipeline: &Pipeline,
+        parameters: &HashMap<String, Option<String>>,
+        media_sender: UnboundedSender<MediaNotificationContent>,
+    ) -> Result<Box<dyn AudioEncoder>, EncoderFactoryCreationError> {
+        let generator = match self.audio_encoders.get(name.as_str()) {
             Some(generator) => generator,
             None => return Err(EncoderFactoryCreationError::NoEncoderWithName(name)),
         };

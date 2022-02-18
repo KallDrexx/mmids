@@ -14,7 +14,7 @@ impl AudioEncoderGenerator for AudioDropEncoderGenerator {
     fn create(
         &self,
         _pipeline: &Pipeline,
-        _parameters: HashMap<String, Option<String>>,
+        _parameters: &HashMap<String, Option<String>>,
         _media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn AudioEncoder>> {
         Ok(Box::new(AudioDropEncoder {}))

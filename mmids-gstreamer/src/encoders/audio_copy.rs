@@ -19,7 +19,7 @@ impl AudioEncoderGenerator for AudioCopyEncoderGenerator {
     fn create(
         &self,
         pipeline: &Pipeline,
-        _parameters: HashMap<String, Option<String>>,
+        _parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn AudioEncoder>> {
         Ok(Box::new(AudioCopyEncoder::new(media_sender, pipeline)?))
