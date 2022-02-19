@@ -26,6 +26,12 @@ use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoderStepGenerato
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
 use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
+use mmids_gstreamer::encoders::{
+    AudioCopyEncoderGenerator, AudioDropEncoderGenerator, EncoderFactory,
+    VideoCopyEncoderGenerator, VideoDropEncoderGenerator, X264EncoderGenerator,
+};
+use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
+use mmids_gstreamer::steps::BasicTranscodeStepGenerator;
 use native_tls::Identity;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,9 +41,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::{channel, Sender};
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt};
-use mmids_gstreamer::encoders::{AudioCopyEncoderGenerator, AudioDropEncoderGenerator, EncoderFactory, VideoCopyEncoderGenerator, VideoDropEncoderGenerator, X264EncoderGenerator};
-use mmids_gstreamer::endpoints::gst_transcoder::{GstTranscoderRequest, start_gst_transcoder};
-use mmids_gstreamer::steps::BasicTranscodeStepGenerator;
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
@@ -192,9 +195,7 @@ fn register_steps(
     step_factory
         .register(
             WorkflowStepType(BASIC_TRANSCODE_STEP.to_string()),
-            Box::new(BasicTranscodeStepGenerator::new(
-                endpoints.gst_transcoder
-            )),
+            Box::new(BasicTranscodeStepGenerator::new(endpoints.gst_transcoder)),
         )
         .expect("Failed to register the basic transcoder step");
 
@@ -260,23 +261,28 @@ fn start_endpoints(
         .expect("Failed to start ffmpeg endpoint");
 
     let mut encoder_factory = EncoderFactory::new();
-    encoder_factory.register_video_encoder("drop", Box::new(VideoDropEncoderGenerator {}))
+    encoder_factory
+        .register_video_encoder("drop", Box::new(VideoDropEncoderGenerator {}))
         .expect("Failed to add video drop encoder");
 
-    encoder_factory.register_video_encoder("copy", Box::new(VideoCopyEncoderGenerator {}))
+    encoder_factory
+        .register_video_encoder("copy", Box::new(VideoCopyEncoderGenerator {}))
         .expect("Failed to add video copy encoder");
 
-    encoder_factory.register_video_encoder("x264", Box::new(X264EncoderGenerator {}))
+    encoder_factory
+        .register_video_encoder("x264", Box::new(X264EncoderGenerator {}))
         .expect("Failed to add the x264 encoder");
 
-    encoder_factory.register_audio_encoder("drop", Box::new(AudioDropEncoderGenerator {}))
+    encoder_factory
+        .register_audio_encoder("drop", Box::new(AudioDropEncoderGenerator {}))
         .expect("Failed to add the audio drop encoder");
 
-    encoder_factory.register_audio_encoder("copy", Box::new(AudioCopyEncoderGenerator {}))
+    encoder_factory
+        .register_audio_encoder("copy", Box::new(AudioCopyEncoderGenerator {}))
         .expect("Failed to add the audio copy encoder");
 
-    let gst_transcoder = start_gst_transcoder(Arc::new(encoder_factory))
-        .expect("Failed to start gst transcoder");
+    let gst_transcoder =
+        start_gst_transcoder(Arc::new(encoder_factory)).expect("Failed to start gst transcoder");
 
     Endpoints {
         rtmp: rtmp_endpoint,

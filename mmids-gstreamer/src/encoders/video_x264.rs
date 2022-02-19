@@ -84,7 +84,11 @@ impl X264Encoder {
         // decodebin's video pad is added dynamically
         let link_destination = scale.clone();
         decoder.connect_pad_added(move |src, src_pad| {
-            match src.link_pads(Some(&src_pad.name()), &link_destination.clone(), Some("sink")) {
+            match src.link_pads(
+                Some(&src_pad.name()),
+                &link_destination.clone(),
+                Some("sink"),
+            ) {
                 Ok(_) => (),
                 Err(_) => error!(
                     src_caps = ?src_pad.caps(),
@@ -169,7 +173,6 @@ impl VideoEncoder for X264Encoder {
                 .push_buffer(buffer)
                 .with_context(|| "Failed to push the buffer into video source")?;
         }
-
 
         Ok(())
     }

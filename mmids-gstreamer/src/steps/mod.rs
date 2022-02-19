@@ -1,14 +1,18 @@
-use std::collections::HashMap;
+use crate::endpoints::gst_transcoder::{
+    GstTranscoderNotification, GstTranscoderRequest, GstTranscoderStoppedCause,
+};
 use futures::FutureExt;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::{
+    StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
+};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::StreamId;
+use std::collections::HashMap;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
-use mmids_core::StreamId;
-use mmids_core::workflows::definitions::WorkflowStepDefinition;
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
-use mmids_core::workflows::steps::factory::StepGenerator;
-use mmids_core::workflows::steps::{StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep};
-use crate::endpoints::gst_transcoder::{GstTranscoderNotification, GstTranscoderRequest, GstTranscoderStoppedCause};
 
 pub const VIDEO_ENCODER: &'static str = "video";
 pub const AUDIO_ENCODER: &'static str = "audio";
@@ -68,9 +72,7 @@ impl BasicTranscodeStepGenerator {
     pub fn new(
         transcode_endpoint: UnboundedSender<GstTranscoderRequest>,
     ) -> BasicTranscodeStepGenerator {
-        BasicTranscodeStepGenerator {
-            transcode_endpoint,
-        }
+        BasicTranscodeStepGenerator { transcode_endpoint }
     }
 }
 
@@ -91,17 +93,11 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         let mut video_params = HashMap::new();
         for (key, value) in &definition.parameters {
             if key.starts_with(VIDEO_PARAM_PREFIX) && key.len() > VIDEO_PARAM_PREFIX.len() {
-                video_params.insert(
-                    key[VIDEO_PARAM_PREFIX.len()..].to_string(),
-                    value.clone(),
-                );
+                video_params.insert(key[VIDEO_PARAM_PREFIX.len()..].to_string(), value.clone());
             }
 
             if key.starts_with(AUDIO_PARAM_PREFIX) && key.len() > AUDIO_PARAM_PREFIX.len() {
-                audio_params.insert(
-                    key[AUDIO_PARAM_PREFIX.len()..].to_string(),
-                    value.clone(),
-                );
+                audio_params.insert(key[AUDIO_PARAM_PREFIX.len()..].to_string(), value.clone());
             }
         }
 
@@ -116,9 +112,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
             audio_parameters: audio_params,
         };
 
-        let futures = vec![
-            notify_on_transcoder_gone(self.transcode_endpoint.clone()).boxed(),
-        ];
+        let futures = vec![notify_on_transcoder_gone(self.transcode_endpoint.clone()).boxed()];
 
         Ok((Box::new(step), futures))
     }
@@ -126,7 +120,8 @@ impl StepGenerator for BasicTranscodeStepGenerator {
 
 impl BasicTranscodeStep {
     fn stop_all_transcodes(&mut self) {
-        let stream_ids = self.active_transcodes
+        let stream_ids = self
+            .active_transcodes
             .keys()
             .map(|k| k.clone())
             .collect::<Vec<_>>();
@@ -141,7 +136,8 @@ impl BasicTranscodeStep {
         if let Some(transcode) = self.active_transcodes.remove(&stream_id) {
             info!("Stopping transcode");
 
-            let _ = self.transcoder_endpoint
+            let _ = self
+                .transcoder_endpoint
                 .send(GstTranscoderRequest::StopTranscoding {
                     id: transcode.transcode_process_id.clone(),
                 });
@@ -156,7 +152,9 @@ impl BasicTranscodeStep {
         outputs: &mut StepOutputs,
     ) {
         if self.active_transcodes.contains_key(&stream_id) {
-            warn!("Attempted to start transcode for stream that already has a transcode in progress");
+            warn!(
+                "Attempted to start transcode for stream that already has a transcode in progress"
+            );
             return;
         }
 
@@ -164,14 +162,21 @@ impl BasicTranscodeStep {
         let (notification_sender, notification_receiver) = unbounded_channel();
 
         let process_id = Uuid::new_v4();
-        self.active_transcodes.insert(stream_id.clone(), ActiveTranscode {
-            transcode_process_id: process_id.clone(),
-            media_sender,
-            stream_name: stream_name.clone(),
-        });
+        self.active_transcodes.insert(
+            stream_id.clone(),
+            ActiveTranscode {
+                transcode_process_id: process_id.clone(),
+                media_sender,
+                stream_name: stream_name.clone(),
+            },
+        );
 
-        info!("Starting transcode process id {} for stream {}", process_id, stream_name);
-        let _ = self.transcoder_endpoint
+        info!(
+            "Starting transcode process id {} for stream {}",
+            process_id, stream_name
+        );
+        let _ = self
+            .transcoder_endpoint
             .send(GstTranscoderRequest::StartTranscoding {
                 id: process_id,
                 notification_channel: notification_sender,
@@ -182,18 +187,15 @@ impl BasicTranscodeStep {
                 audio_parameters: self.audio_parameters.clone(),
             });
 
-        outputs.futures
+        outputs
+            .futures
             .push(notify_on_transcoder_notification(notification_receiver, stream_id).boxed());
     }
 
     fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
         match &media.content {
-            MediaNotificationContent::NewIncomingStream {stream_name} => {
-                self.start_transcode(
-                    media.stream_id.clone(),
-                    stream_name.clone(),
-                    outputs,
-                );
+            MediaNotificationContent::NewIncomingStream { stream_name } => {
+                self.start_transcode(media.stream_id.clone(), stream_name.clone(), outputs);
 
                 outputs.media.push(media);
             }
@@ -203,26 +205,25 @@ impl BasicTranscodeStep {
                 outputs.media.push(media);
             }
 
-            MediaNotificationContent::Video {..} => {
+            MediaNotificationContent::Video { .. } => {
                 if let Some(transcode) = self.active_transcodes.get(&media.stream_id) {
                     let _ = transcode.media_sender.send(media.content.clone());
                 }
             }
 
-            MediaNotificationContent::Audio {..} => {
+            MediaNotificationContent::Audio { .. } => {
                 if let Some(transcode) = self.active_transcodes.get(&media.stream_id) {
                     let _ = transcode.media_sender.send(media.content.clone());
                 }
             }
 
-            MediaNotificationContent::Metadata {..} => (),
+            MediaNotificationContent::Metadata { .. } => (),
         }
     }
 
     fn handle_transcode_notification(
         &mut self,
-        stream_id:
-        StreamId,
+        stream_id: StreamId,
         notification: GstTranscoderNotification,
         outputs: &mut StepOutputs,
     ) {
@@ -245,8 +246,9 @@ impl BasicTranscodeStep {
                 }
             }
 
-            GstTranscoderNotification::TranscodingStarted {output_media} => {
-                outputs.futures
+            GstTranscoderNotification::TranscodingStarted { output_media } => {
+                outputs
+                    .futures
                     .push(notify_on_transcoder_media(output_media, stream_id).boxed());
             }
         }
@@ -311,8 +313,9 @@ impl WorkflowStep for BasicTranscodeStep {
                     stream_id,
                     receiver,
                 } => {
-                    outputs.futures
-                        .push(notify_on_transcoder_notification(receiver, stream_id.clone()).boxed());
+                    outputs.futures.push(
+                        notify_on_transcoder_notification(receiver, stream_id.clone()).boxed(),
+                    );
                     self.handle_transcode_notification(stream_id, notification, outputs);
                 }
 
@@ -321,14 +324,14 @@ impl WorkflowStep for BasicTranscodeStep {
                     stream_id,
                     receiver,
                 } => {
-                    outputs.futures
+                    outputs
+                        .futures
                         .push(notify_on_transcoder_media(receiver, stream_id.clone()).boxed());
 
-                    outputs.media
-                        .push(MediaNotification {
-                            stream_id,
-                            content: media,
-                        });
+                    outputs.media.push(MediaNotification {
+                        stream_id,
+                        content: media,
+                    });
                 }
             }
         }
@@ -355,7 +358,7 @@ async fn notify_on_transcoder_notification(
         Some(notification) => FutureResult::TranscoderNotificationReceived {
             stream_id,
             notification,
-            receiver
+            receiver,
         },
 
         None => FutureResult::TranscoderNotificationSenderGone(stream_id),
@@ -369,7 +372,11 @@ async fn notify_on_transcoder_media(
     stream_id: StreamId,
 ) -> Box<dyn StepFutureResult> {
     let result = match receiver.recv().await {
-        Some(media) => FutureResult::TranscodedMediaReceived {stream_id, media, receiver},
+        Some(media) => FutureResult::TranscodedMediaReceived {
+            stream_id,
+            media,
+            receiver,
+        },
         None => FutureResult::TranscodedMediaChannelClosed(stream_id),
     };
 

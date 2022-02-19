@@ -102,10 +102,13 @@ impl EncoderFactory {
         encoder_generator: Box<dyn VideoEncoderGenerator>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
         if self.video_encoders.contains_key(name) {
-            return Err(EncoderFactoryRegistrationError::DuplicateName(name.to_string()));
+            return Err(EncoderFactoryRegistrationError::DuplicateName(
+                name.to_string(),
+            ));
         }
 
-        self.video_encoders.insert(name.to_string(), encoder_generator);
+        self.video_encoders
+            .insert(name.to_string(), encoder_generator);
         Ok(())
     }
 
@@ -115,10 +118,13 @@ impl EncoderFactory {
         encoder_generator: Box<dyn AudioEncoderGenerator>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
         if self.audio_encoders.contains_key(name) {
-            return Err(EncoderFactoryRegistrationError::DuplicateName(name.to_string()));
+            return Err(EncoderFactoryRegistrationError::DuplicateName(
+                name.to_string(),
+            ));
         }
 
-        self.audio_encoders.insert(name.to_string(), encoder_generator);
+        self.audio_encoders
+            .insert(name.to_string(), encoder_generator);
         Ok(())
     }
 
@@ -181,7 +187,7 @@ impl SampleResult {
                 // segment can be used to adjust the pts and dts times to be from 00:00:00
                 if let Some(original) = dts {
                     if let GenericFormattedValue::Time(Some(adjusted)) =
-                    segment.to_running_time(original)
+                        segment.to_running_time(original)
                     {
                         dts = Some(adjusted);
                     }
@@ -189,7 +195,7 @@ impl SampleResult {
 
                 if let Some(original) = pts {
                     if let GenericFormattedValue::Time(Some(adjusted)) =
-                    segment.to_running_time(original)
+                        segment.to_running_time(original)
                     {
                         pts = Some(adjusted);
                     }
