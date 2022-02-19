@@ -40,11 +40,13 @@ pub enum GstTranscoderNotification {
     TranscodingStopped(GstTranscoderStoppedCause),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum EncoderType {
     Video,
     Audio,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum GstTranscoderStoppedCause {
     InvalidEncoderName {
         encoder_type: EncoderType,

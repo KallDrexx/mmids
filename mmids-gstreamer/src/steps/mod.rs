@@ -1,14 +1,14 @@
 use std::collections::HashMap;
-use futures::channel::mpsc::UnboundedReceiver;
 use futures::FutureExt;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 use mmids_core::StreamId;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep};
-use crate::endpoints::gst_transcoder::{GstTranscoderNotification, GstTranscoderRequest};
+use crate::endpoints::gst_transcoder::{GstTranscoderNotification, GstTranscoderRequest, GstTranscoderStoppedCause};
 
 pub const VIDEO_ENCODER: &'static str = "video";
 pub const AUDIO_ENCODER: &'static str = "audio";
@@ -22,6 +22,7 @@ pub struct BasicTranscodeStepGenerator {
 struct ActiveTranscode {
     media_sender: UnboundedSender<MediaNotificationContent>,
     transcode_process_id: Uuid,
+    stream_name: String,
 }
 
 struct BasicTranscodeStep {
@@ -37,6 +38,7 @@ struct BasicTranscodeStep {
 
 enum FutureResult {
     TranscoderEndpointGone,
+    TranscoderNotificationSenderGone(StreamId),
     TranscoderNotificationReceived {
         stream_id: StreamId,
         notification: GstTranscoderNotification,
@@ -44,7 +46,11 @@ enum FutureResult {
     },
 
     TranscodedMediaChannelClosed(StreamId),
-    TranscodedMediaReceived(StreamId, MediaNotificationContent, UnboundedReceiver<MediaNotificationContent>),
+    TranscodedMediaReceived {
+        stream_id: StreamId,
+        media: MediaNotificationContent,
+        receiver: UnboundedReceiver<MediaNotificationContent>,
+    },
 }
 
 impl StepFutureResult for FutureResult {}
@@ -83,7 +89,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         // Split out audio and video specific parameters based on prefixes.
         let mut audio_params = HashMap::new();
         let mut video_params = HashMap::new();
-        for (key, value) in definition.parameters {
+        for (key, value) in &definition.parameters {
             if key.starts_with(VIDEO_PARAM_PREFIX) && key.len() > VIDEO_PARAM_PREFIX.len() {
                 video_params.insert(
                     key[VIDEO_PARAM_PREFIX.len()..].to_string(),
@@ -118,6 +124,135 @@ impl StepGenerator for BasicTranscodeStepGenerator {
     }
 }
 
+impl BasicTranscodeStep {
+    fn stop_all_transcodes(&mut self) {
+        let stream_ids = self.active_transcodes
+            .keys()
+            .map(|k| k.clone())
+            .collect::<Vec<_>>();
+
+        for stream_id in stream_ids {
+            self.stop_transcode(stream_id);
+        }
+    }
+
+    #[instrument(skip(self))]
+    fn stop_transcode(&mut self, stream_id: StreamId) {
+        if let Some(transcode) = self.active_transcodes.remove(&stream_id) {
+            info!("Stopping transcode");
+
+            let _ = self.transcoder_endpoint
+                .send(GstTranscoderRequest::StopTranscoding {
+                    id: transcode.transcode_process_id.clone(),
+                });
+        }
+    }
+
+    #[instrument(skip(self, outputs))]
+    fn start_transcode(
+        &mut self,
+        stream_id: StreamId,
+        stream_name: String,
+        outputs: &mut StepOutputs,
+    ) {
+        if self.active_transcodes.contains_key(&stream_id) {
+            warn!("Attempted to start transcode for stream that already has a transcode in progress");
+            return;
+        }
+
+        let (media_sender, media_receiver) = unbounded_channel();
+        let (notification_sender, notification_receiver) = unbounded_channel();
+
+        let process_id = Uuid::new_v4();
+        self.active_transcodes.insert(stream_id.clone(), ActiveTranscode {
+            transcode_process_id: process_id.clone(),
+            media_sender,
+            stream_name: stream_name.clone(),
+        });
+
+        info!("Starting transcode process id {} for stream {}", process_id, stream_name);
+        let _ = self.transcoder_endpoint
+            .send(GstTranscoderRequest::StartTranscoding {
+                id: process_id,
+                notification_channel: notification_sender,
+                input_media: media_receiver,
+                video_encoder_name: self.video_encoder_name.clone(),
+                video_parameters: self.video_parameters.clone(),
+                audio_encoder_name: self.audio_encoder_name.clone(),
+                audio_parameters: self.audio_parameters.clone(),
+            });
+
+        outputs.futures
+            .push(notify_on_transcoder_notification(notification_receiver, stream_id).boxed());
+    }
+
+    fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
+        match &media.content {
+            MediaNotificationContent::NewIncomingStream {stream_name} => {
+                self.start_transcode(
+                    media.stream_id.clone(),
+                    stream_name.clone(),
+                    outputs,
+                );
+
+                outputs.media.push(media);
+            }
+
+            MediaNotificationContent::StreamDisconnected => {
+                self.stop_transcode(media.stream_id.clone());
+                outputs.media.push(media);
+            }
+
+            MediaNotificationContent::Video {..} => {
+                if let Some(transcode) = self.active_transcodes.get(&media.stream_id) {
+                    let _ = transcode.media_sender.send(media.content.clone());
+                }
+            }
+
+            MediaNotificationContent::Audio {..} => {
+                if let Some(transcode) = self.active_transcodes.get(&media.stream_id) {
+                    let _ = transcode.media_sender.send(media.content.clone());
+                }
+            }
+
+            MediaNotificationContent::Metadata {..} => (),
+        }
+    }
+
+    fn handle_transcode_notification(
+        &mut self,
+        stream_id:
+        StreamId,
+        notification: GstTranscoderNotification,
+        outputs: &mut StepOutputs,
+    ) {
+        match notification {
+            GstTranscoderNotification::TranscodingStopped(cause) => {
+                let transcode = match self.active_transcodes.remove(&stream_id) {
+                    Some(transcode) => transcode,
+                    None => return,
+                };
+
+                if cause != GstTranscoderStoppedCause::StopRequested {
+                    warn!(
+                        stream_id = ?stream_id,
+                        cause = ?cause,
+                        "Transcoding unexpectedly stopped: {:?}", cause
+                    );
+
+                    // Since the stop wasn't requested, try restarting it
+                    self.start_transcode(stream_id, transcode.stream_name, outputs);
+                }
+            }
+
+            GstTranscoderNotification::TranscodingStarted {output_media} => {
+                outputs.futures
+                    .push(notify_on_transcoder_media(output_media, stream_id).boxed());
+            }
+        }
+    }
+}
+
 impl WorkflowStep for BasicTranscodeStep {
     fn get_status(&self) -> &StepStatus {
         &self.status
@@ -128,7 +263,75 @@ impl WorkflowStep for BasicTranscodeStep {
     }
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
-        todo!()
+        for media in inputs.media.drain(..) {
+            self.handle_media(media, outputs);
+        }
+
+        for future_result in inputs.notifications.drain(..) {
+            let future_result = match future_result.downcast::<FutureResult>() {
+                Ok(result) => result,
+                Err(_) => {
+                    error!("Received future result that could not be casted to the internal future result type");
+                    continue;
+                }
+            };
+
+            match *future_result {
+                FutureResult::TranscoderEndpointGone => {
+                    self.status = StepStatus::Error {
+                        message: "Transcoder endpoint went away".to_string(),
+                    };
+
+                    self.stop_all_transcodes();
+                    return;
+                }
+
+                FutureResult::TranscoderNotificationSenderGone(stream_id) => {
+                    error!(
+                        stream_id = ?stream_id,
+                        "Transcode notification sender for stream {:?} disappeared",
+                        stream_id,
+                    );
+
+                    self.stop_transcode(stream_id);
+                }
+
+                FutureResult::TranscodedMediaChannelClosed(stream_id) => {
+                    error!(
+                        stream_id = ?stream_id,
+                        "Sender of transcoded media for stream {:?} disappeared",
+                        stream_id,
+                    );
+
+                    self.stop_transcode(stream_id);
+                }
+
+                FutureResult::TranscoderNotificationReceived {
+                    notification,
+                    stream_id,
+                    receiver,
+                } => {
+                    outputs.futures
+                        .push(notify_on_transcoder_notification(receiver, stream_id.clone()).boxed());
+                    self.handle_transcode_notification(stream_id, notification, outputs);
+                }
+
+                FutureResult::TranscodedMediaReceived {
+                    media,
+                    stream_id,
+                    receiver,
+                } => {
+                    outputs.futures
+                        .push(notify_on_transcoder_media(receiver, stream_id.clone()).boxed());
+
+                    outputs.media
+                        .push(MediaNotification {
+                            stream_id,
+                            content: media,
+                        });
+                }
+            }
+        }
     }
 
     fn shutdown(&mut self) {
@@ -142,4 +345,33 @@ async fn notify_on_transcoder_gone(
     sender.closed().await;
 
     Box::new(FutureResult::TranscoderEndpointGone)
+}
+
+async fn notify_on_transcoder_notification(
+    mut receiver: UnboundedReceiver<GstTranscoderNotification>,
+    stream_id: StreamId,
+) -> Box<dyn StepFutureResult> {
+    let result = match receiver.recv().await {
+        Some(notification) => FutureResult::TranscoderNotificationReceived {
+            stream_id,
+            notification,
+            receiver
+        },
+
+        None => FutureResult::TranscoderNotificationSenderGone(stream_id),
+    };
+
+    Box::new(result)
+}
+
+async fn notify_on_transcoder_media(
+    mut receiver: UnboundedReceiver<MediaNotificationContent>,
+    stream_id: StreamId,
+) -> Box<dyn StepFutureResult> {
+    let result = match receiver.recv().await {
+        Some(media) => FutureResult::TranscodedMediaReceived {stream_id, media, receiver},
+        None => FutureResult::TranscodedMediaChannelClosed(stream_id),
+    };
+
+    Box::new(result)
 }
