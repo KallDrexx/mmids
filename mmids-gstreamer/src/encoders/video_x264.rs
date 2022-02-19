@@ -10,7 +10,7 @@ use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, warn};
+use tracing::{debug, error, info, warn};
 
 pub struct X264EncoderGenerator {}
 
@@ -82,11 +82,14 @@ impl X264Encoder {
         .with_context(|| "Failed to link scale to sink")?;
 
         // decodebin's video pad is added dynamically
+        let link_destination = scale.clone();
         decoder.connect_pad_added(move |src, src_pad| {
-            match src.link_pads(Some(&src_pad.name()), &scale.clone(), None) {
+            match src.link_pads(Some(&src_pad.name()), &link_destination.clone(), Some("sink")) {
                 Ok(_) => (),
                 Err(_) => error!(
-                    "Failed to link `decodebin`'s {} pad to scaler element",
+                    src_caps = ?src_pad.caps(),
+                    dest_caps = ?link_destination.static_pad("sink").unwrap().caps(),
+                    "Failed to link `decodebin`'s {} pad to videoscale element",
                     src_pad.name()
                 ),
             }
@@ -94,18 +97,20 @@ impl X264Encoder {
 
         let mut caps = Caps::builder("video/x-raw");
         if let Some(height) = height {
-            caps = caps.field("height", height);
+            caps = caps.field("height", height as i32);
         }
 
         if let Some(width) = width {
-            caps = caps.field("width", width);
+            caps = caps.field("width", width as i32);
         }
 
         if let Some(fps) = fps {
             caps = caps.field("framerate", Fraction::new(fps as i32, 1));
         }
 
-        capsfilter.set_property("caps", caps.build());
+        let caps = caps.build();
+        capsfilter.set_property("caps", caps);
+
         encoder.set_property_from_str("tune", "zerolatency");
 
         if let Some(preset) = preset {
@@ -164,6 +169,7 @@ impl VideoEncoder for X264Encoder {
                 .push_buffer(buffer)
                 .with_context(|| "Failed to push the buffer into video source")?;
         }
+
 
         Ok(())
     }

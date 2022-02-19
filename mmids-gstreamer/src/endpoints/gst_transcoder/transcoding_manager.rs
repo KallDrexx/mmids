@@ -7,7 +7,7 @@ use gstreamer::prelude::*;
 use gstreamer::{MessageView, Pipeline, State};
 use mmids_core::workflows::MediaNotificationContent;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
 pub enum TranscodeManagerRequest {
@@ -76,6 +76,7 @@ impl TranscodeManager {
         let futures = FuturesUnordered::new();
         futures.push(wait_for_request(receiver).boxed());
         futures.push(notify_on_outbound_media_closed(parameters.outbound_media).boxed());
+        futures.push(notify_on_inbound_media(parameters.inbound_media).boxed());
 
         TranscodeManager {
             termination_requested: false,
@@ -154,7 +155,7 @@ impl TranscodeManager {
                         gst_error = %error.error_description,
                         "GStreamer threw an error from element '{}': {} (debug: {})",
                         error.source_name, error.error_description,
-                        error.debug_info.unwrap_or("".to_string()),
+                        error.debug_info.as_ref().unwrap_or(&("".to_string())),
                     );
 
                     break;

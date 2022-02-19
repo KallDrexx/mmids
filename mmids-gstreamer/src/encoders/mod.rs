@@ -6,7 +6,7 @@ mod video_x264;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use gstreamer::{GenericFormattedValue, Pipeline};
+use gstreamer::{Format, GenericFormattedValue, Pipeline};
 use gstreamer_app::AppSink;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::workflows::MediaNotificationContent;
@@ -98,27 +98,27 @@ impl EncoderFactory {
 
     pub fn register_video_encoder(
         &mut self,
-        name: String,
+        name: &str,
         encoder_generator: Box<dyn VideoEncoderGenerator>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
-        if self.video_encoders.contains_key(name.as_str()) {
-            return Err(EncoderFactoryRegistrationError::DuplicateName(name));
+        if self.video_encoders.contains_key(name) {
+            return Err(EncoderFactoryRegistrationError::DuplicateName(name.to_string()));
         }
 
-        self.video_encoders.insert(name, encoder_generator);
+        self.video_encoders.insert(name.to_string(), encoder_generator);
         Ok(())
     }
 
     pub fn register_audio_encoder(
         &mut self,
-        name: String,
+        name: &str,
         encoder_generator: Box<dyn AudioEncoderGenerator>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
-        if self.audio_encoders.contains_key(name.as_str()) {
-            return Err(EncoderFactoryRegistrationError::DuplicateName(name));
+        if self.audio_encoders.contains_key(name) {
+            return Err(EncoderFactoryRegistrationError::DuplicateName(name.to_string()));
         }
 
-        self.audio_encoders.insert(name, encoder_generator);
+        self.audio_encoders.insert(name.to_string(), encoder_generator);
         Ok(())
     }
 
@@ -170,25 +170,29 @@ impl SampleResult {
         let mut pts = buffer.pts();
 
         if let Some(segment) = sample.segment() {
-            // Some encoders will have a dts and pts value that does not necessarily start at
-            // 00:00:00.  This is done for various reasons, but for instance the x264 gstreamer
-            // encoder will start at 1000:00:00 to better handle negative dts for B frames.  If we
-            // use the dts and pts values as is, then players will have weird times showing, and
-            // sync errors may occur.  When this happens the sample will have a segment, and that
-            // segment can be used to adjust the pts and dts times to be from 00:00:00
-            if let Some(original) = dts {
-                if let GenericFormattedValue::Time(Some(adjusted)) =
+            // Sometimes the segment has a format of Bytes.  Unsure what that means, but if we
+            // try to convert that to running time it will panic.
+            if segment.format() == Format::Time {
+                // Some encoders will have a dts and pts value that does not necessarily start at
+                // 00:00:00.  This is done for various reasons, but for instance the x264 gstreamer
+                // encoder will start at 1000:00:00 to better handle negative dts for B frames.  If we
+                // use the dts and pts values as is, then players will have weird times showing, and
+                // sync errors may occur.  When this happens the sample will have a segment, and that
+                // segment can be used to adjust the pts and dts times to be from 00:00:00
+                if let Some(original) = dts {
+                    if let GenericFormattedValue::Time(Some(adjusted)) =
                     segment.to_running_time(original)
-                {
-                    dts = Some(adjusted);
+                    {
+                        dts = Some(adjusted);
+                    }
                 }
-            }
 
-            if let Some(original) = pts {
-                if let GenericFormattedValue::Time(Some(adjusted)) =
+                if let Some(original) = pts {
+                    if let GenericFormattedValue::Time(Some(adjusted)) =
                     segment.to_running_time(original)
-                {
-                    pts = Some(adjusted);
+                    {
+                        pts = Some(adjusted);
+                    }
                 }
             }
         }
