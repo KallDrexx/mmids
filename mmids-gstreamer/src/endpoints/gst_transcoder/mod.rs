@@ -287,7 +287,7 @@ impl EndpointActor {
         };
 
         let audio_encoder = self.encoder_factory.get_audio_encoder(
-            audio_encoder_name,
+            audio_encoder_name.clone(),
             &pipeline,
             &audio_parameters,
             outbound_media_sender.clone(),
@@ -297,8 +297,8 @@ impl EndpointActor {
             Ok(encoder) => encoder,
             Err(error) => {
                 error!(
-                    "Failed to create the {} video encoder: {:?}",
-                    video_encoder_name, error,
+                    "Failed to create the {} audio encoder: {:?}",
+                    audio_encoder_name, error,
                 );
 
                 let _ = notification_channel.send(GstTranscoderNotification::TranscodingStopped(

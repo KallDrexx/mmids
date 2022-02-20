@@ -6,7 +6,7 @@ use bytes::Bytes;
 use gstreamer::prelude::*;
 use gstreamer::{Buffer, Caps, ClockTime, Element, ElementFactory};
 use gstreamer_app::AppSrc;
-use mmids_core::codecs::VideoCodec;
+use mmids_core::codecs::{AudioCodec, VideoCodec};
 use std::time::Duration;
 
 /// Function that makes it easy to create a gstreamer `Buffer` based on a set of bytes, an optional
@@ -65,6 +65,29 @@ pub fn set_source_video_sequence_header(
             "Video codec is not known, and thus we can't prepare the gstreamer pipeline to \
                 accept it."
         )),
+    }
+}
+
+pub fn set_source_audio_sequence_header(
+    source: &AppSrc,
+    codec: AudioCodec,
+    buffer: Buffer,
+) -> Result<()> {
+    match codec {
+        AudioCodec::Aac => {
+            let caps = Caps::builder("audio/mpeg")
+                .field("mpegversion", 4) // I think this is correct?  Unsure 2 vs 4
+                .field("codec_data", buffer)
+                .build();
+
+            source.set_caps(Some(&caps));
+
+            Ok(())
+        }
+
+        AudioCodec::Unknown => Err(anyhow!(
+            "audio codec is not known, and thus we can't prepare the gstreamer pipeline to accept it."
+        ))
     }
 }
 

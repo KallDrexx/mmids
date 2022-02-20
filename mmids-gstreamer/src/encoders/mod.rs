@@ -3,6 +3,7 @@
 
 mod audio_copy;
 mod audio_drop;
+mod audio_faac;
 mod video_copy;
 mod video_drop;
 mod video_x264;
@@ -20,6 +21,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 pub use audio_copy::AudioCopyEncoderGenerator;
 pub use audio_drop::AudioDropEncoderGenerator;
+pub use audio_faac::FaacEncoderGenerator;
 
 pub use video_copy::VideoCopyEncoderGenerator;
 pub use video_drop::VideoDropEncoderGenerator;

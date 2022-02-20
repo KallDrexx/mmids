@@ -26,10 +26,7 @@ use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoderStepGenerato
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
 use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
-use mmids_gstreamer::encoders::{
-    AudioCopyEncoderGenerator, AudioDropEncoderGenerator, EncoderFactory,
-    VideoCopyEncoderGenerator, VideoDropEncoderGenerator, X264EncoderGenerator,
-};
+use mmids_gstreamer::encoders::{AudioCopyEncoderGenerator, AudioDropEncoderGenerator, EncoderFactory, FaacEncoderGenerator, VideoCopyEncoderGenerator, VideoDropEncoderGenerator, X264EncoderGenerator};
 use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
 use mmids_gstreamer::steps::basic_transcoder::BasicTranscodeStepGenerator;
 use native_tls::Identity;
@@ -280,6 +277,10 @@ fn start_endpoints(
     encoder_factory
         .register_audio_encoder("copy", Box::new(AudioCopyEncoderGenerator {}))
         .expect("Failed to add the audio copy encoder");
+
+    encoder_factory
+        .register_audio_encoder("faac", Box::new(FaacEncoderGenerator {}))
+        .expect("Failed to add the faac encoder");
 
     let gst_transcoder =
         start_gst_transcoder(Arc::new(encoder_factory)).expect("Failed to start gst transcoder");
