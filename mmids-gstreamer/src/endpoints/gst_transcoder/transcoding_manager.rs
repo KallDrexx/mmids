@@ -7,7 +7,7 @@ use gstreamer::prelude::*;
 use gstreamer::{MessageView, Pipeline, State};
 use mmids_core::workflows::MediaNotificationContent;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{debug, error, info, instrument};
+use tracing::{error, info, instrument};
 use uuid::Uuid;
 
 pub enum TranscodeManagerRequest {

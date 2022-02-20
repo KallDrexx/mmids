@@ -31,7 +31,7 @@ use mmids_gstreamer::encoders::{
     VideoCopyEncoderGenerator, VideoDropEncoderGenerator, X264EncoderGenerator,
 };
 use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
-use mmids_gstreamer::steps::BasicTranscodeStepGenerator;
+use mmids_gstreamer::steps::basic_transcoder::BasicTranscodeStepGenerator;
 use native_tls::Identity;
 use std::path::PathBuf;
 use std::sync::Arc;

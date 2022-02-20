@@ -10,7 +10,7 @@ use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, error, info, warn};
+use tracing::{error, warn};
 
 /// Creates a video encoder that uses the gstreamer `x264enc` encoder to encode video into h264
 /// video.
