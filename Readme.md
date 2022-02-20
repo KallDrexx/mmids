@@ -19,6 +19,8 @@ See the [official documentation](https://kalldrexx.github.io/mmids/) for more de
   * This is the official mmids application
 * [mmids-core](mmids-core) 
   * This is the main crate which contains all the logic which runs mmids.  It also contains all types needed to extend mmids, or create your own custom distribution
+* [mmids-gstreamer](mmids-gstreamer)
+  * This crate provides mmids components that relate to gstreamer related activities, such as transcoding.
 * [reactor-test-server](reactor-test-server)
   * This contains a basic HTTP server that can respond to `simple_http` reactor executor queries.  
   * When a `POST` request comes in to `http://localhost:9055/<category>`  with a stream name in the body, it will look for the file `workflows/<category>/<stream name>.mmids`.  If one exists it will return the content of that file with a `200`, otherwise returns a `404`.
@@ -28,6 +30,9 @@ See the [official documentation](https://kalldrexx.github.io/mmids/) for more de
   * [echo-server](validators/echo-server) - Used to test the TCP socket manager
   * [ffmpeg-runner](validators/ffmpeg-runner) - Used to test the ffmpeg endpoint
   * [rtmp-server](validators/rtmp-server) - Used to test the rtmp endpoint
+  
+## Building From Source
 
+For the most part `mmids` can be built just using standard rust tooling.  The exception is that any project that utilizes `mmids-gstreamer` must have the `GStreamer` 1.8 or greater libraries installed.  The GStreamer specific installation steps can be found in the `[gstreamer-rs project docs](https://gitlab.freedesktop.org/gstreamer/gstreamer-rs#installation) 
 
 
