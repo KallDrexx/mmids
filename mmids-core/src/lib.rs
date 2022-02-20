@@ -1,3 +1,7 @@
+//! This crate contains all the building blocks and foundational systems that a mmids application
+//! requires. It also contains standard workflow steps that are likely to be used in most
+//! mmids applications.
+
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
@@ -67,6 +71,14 @@ impl VideoTimestamp {
         VideoTimestamp {
             dts,
             pts_offset: pts_offset as i32,
+        }
+    }
+
+    /// Creates a video timestamp at zero
+    pub fn from_zero() -> Self {
+        VideoTimestamp {
+            dts: Duration::new(0, 0),
+            pts_offset: 0,
         }
     }
 
