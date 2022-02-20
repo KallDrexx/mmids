@@ -1,3 +1,6 @@
+//! An encoder represents a part of a gstreamer pipeline that takes video or audio data, processes
+//! it, and then pushes the results out into a tokio channel.
+
 mod audio_copy;
 mod audio_drop;
 mod video_copy;
@@ -22,7 +25,11 @@ pub use video_copy::VideoCopyEncoderGenerator;
 pub use video_drop::VideoDropEncoderGenerator;
 pub use video_x264::X264EncoderGenerator;
 
+/// An encoder that processes video in its pipeline.  It is expected that each instance of an
+/// encoder is used by one stream at a time, even if multiple media streams require the same
+/// transcoding parameters.
 pub trait VideoEncoder {
+    /// Pushes a video frame into the encoder's pipeline
     fn push_data(
         &self,
         codec: VideoCodec,
@@ -32,7 +39,11 @@ pub trait VideoEncoder {
     ) -> Result<()>;
 }
 
+/// An encoder that processes audio in its pipeline.  It is expected that each instance of an
+/// encoder is used by one stream at a time, even if multiple media streams require the same
+/// transcoding parameters.
 pub trait AudioEncoder {
+    /// Pushes an audio frame into the encoder's pipeline
     fn push_data(
         &self,
         codec: AudioCodec,
@@ -59,6 +70,7 @@ pub enum EncoderFactoryCreationError {
     CreationFailed(#[from] anyhow::Error),
 }
 
+/// A type that can generate a new instance of a specific video encoder.
 pub trait VideoEncoderGenerator {
     fn create(
         &self,
@@ -68,6 +80,7 @@ pub trait VideoEncoderGenerator {
     ) -> anyhow::Result<Box<dyn VideoEncoder>>;
 }
 
+/// A type that can generate a new instance for a specific audio encoder.
 pub trait AudioEncoderGenerator {
     fn create(
         &self,
@@ -77,18 +90,16 @@ pub trait AudioEncoderGenerator {
     ) -> anyhow::Result<Box<dyn AudioEncoder>>;
 }
 
+/// Allows encoder generators to be registered and be referred to via a name that given at
+/// registration time.  When an encoder instance is required, the encoder generator requested is
+/// invoked and the resulting encoder (or error) is returned.
 pub struct EncoderFactory {
     video_encoders: HashMap<String, Box<dyn VideoEncoderGenerator>>,
     audio_encoders: HashMap<String, Box<dyn AudioEncoderGenerator>>,
 }
 
-pub struct SampleResult {
-    content: Bytes,
-    dts: Option<Duration>,
-    pts: Option<Duration>,
-}
-
 impl EncoderFactory {
+    /// Creates a new encoder factory
     pub fn new() -> EncoderFactory {
         EncoderFactory {
             video_encoders: HashMap::new(),
@@ -96,6 +107,7 @@ impl EncoderFactory {
         }
     }
 
+    /// Registers a video encoder generator that can be invoked with a specific name
     pub fn register_video_encoder(
         &mut self,
         name: &str,
@@ -112,6 +124,7 @@ impl EncoderFactory {
         Ok(())
     }
 
+    /// Registers an audio encoder generator that can be invoked with a specific name
     pub fn register_audio_encoder(
         &mut self,
         name: &str,
@@ -128,6 +141,8 @@ impl EncoderFactory {
         Ok(())
     }
 
+    /// Creates a new instance of a video encoder based on the name it was specified with at
+    /// registration
     pub fn get_video_encoder(
         &self,
         name: String,
@@ -145,6 +160,8 @@ impl EncoderFactory {
         Ok(encoder)
     }
 
+    /// Creates a new instance of an audio encoder based on the name it was specified with at
+    /// registration
     pub fn get_audio_encoder(
         &self,
         name: String,
@@ -163,7 +180,16 @@ impl EncoderFactory {
     }
 }
 
+/// Helper struct that contains the result after parsing a sample pulled from an `appsrc` gstreamer
+/// element.  Only used within encoder implementations.
+pub struct SampleResult {
+    content: Bytes,
+    dts: Option<Duration>,
+    pts: Option<Duration>,
+}
+
 impl SampleResult {
+    /// Pulls a sample from the `appsink` element and attempts to parse the contents from it.
     pub fn from_sink(sink: &AppSink) -> Result<SampleResult> {
         let sample = sink.pull_sample().with_context(|| "Sink had no sample")?;
         let buffer = sample.buffer().with_context(|| "Sample had no buffer")?;
@@ -213,6 +239,7 @@ impl SampleResult {
         })
     }
 
+    /// Converts the dts and pts from a sample into a video timestamp.
     pub fn to_video_timestamp(&self) -> VideoTimestamp {
         match (&self.dts, &self.pts) {
             (None, None) => VideoTimestamp::from_zero(),

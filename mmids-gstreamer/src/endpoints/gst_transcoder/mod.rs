@@ -16,27 +16,51 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
+/// Requests that can be made to the gstreamer transcoding endpoint
 pub enum GstTranscoderRequest {
+    /// Makes a request for the endpoint to start transcoding
     StartTranscoding {
+        /// A unique identifier that is associated with this transcoding request.  Used for logging
+        /// and to associate stop transcoding requests.
         id: Uuid,
+
+        /// The channel in which audio and video data will come in for the transcoding process
         input_media: UnboundedReceiver<MediaNotificationContent>,
+
+        /// The name of the video encoder to use for transcoding.  Must match a valid name
+        /// registered with the encoder factory
         video_encoder_name: String,
+
+        /// The name of hte audio encoder to use for transcoding.  Must match a valid name
+        /// registered with the encoder factory
         audio_encoder_name: String,
+
+        /// Parameters to pass to the audio encoder
         audio_parameters: HashMap<String, Option<String>>,
+
+        /// Parameters to pass to the video encoder
         video_parameters: HashMap<String, Option<String>>,
+
+        /// Channel to send responses and notifications to
         notification_channel: UnboundedSender<GstTranscoderNotification>,
     },
 
+    /// Makes a request for the endpoint to stop transcoding
     StopTranscoding {
+        /// The identifier of the transcoding process to stop.
         id: Uuid,
     },
 }
 
+/// Notifications the transcoding endpoint can raise
 pub enum GstTranscoderNotification {
+    /// Notification that transcoding has started
     TranscodingStarted {
+        /// Channel in which resulting audio and video data will be sent to
         output_media: UnboundedReceiver<MediaNotificationContent>,
     },
 
+    /// Notification that transcoding stopped
     TranscodingStopped(GstTranscoderStoppedCause),
 }
 
@@ -46,29 +70,45 @@ pub enum EncoderType {
     Audio,
 }
 
+/// Reasons transcoding have stopped
 #[derive(Debug, PartialEq)]
 pub enum GstTranscoderStoppedCause {
+    /// No encoder generator has been registered with the encoder factory with the specified name
     InvalidEncoderName {
         encoder_type: EncoderType,
         name: String,
     },
 
+    /// An error occurred when the encoder was attempted to be created, either due to an error
+    /// with gstreamer or with invalid parameters
     EncoderCreationFailure {
+        /// What type of encoder that failed
         encoder_type: EncoderType,
+
+        /// Error description of why a failure occurred.
         details: String,
     },
 
+    /// Transcoding was requested to be started with an id that is already active
     IdAlreadyActive(Uuid),
+
+    /// Transcoding stopped because a request was made for it to stop.
     StopRequested,
-    ManagerTerminated,
+
+    /// The transcoding process was unexpectedly terminated without an explicit error being raised.
+    /// Will probably need to look in logs to get more info on why.  This should be rare.
+    UnexpectedlyTerminated,
 }
 
+/// Errors that can occur when attempting to start the endpoint
 #[derive(thiserror::Error, Debug)]
 pub enum EndpointStartError {
     #[error("Gstreamer failed to initialize")]
     GstreamerError(#[from] glib::Error),
 }
 
+/// Starts the gstreamer transcode process, and returns a channel in which communication with the
+/// endpoint can be made.
 pub fn start_gst_transcoder(
     encoder_factory: Arc<EncoderFactory>,
 ) -> Result<UnboundedSender<GstTranscoderRequest>, EndpointStartError> {
@@ -143,7 +183,7 @@ impl EndpointActor {
 
                         let _ = details.notification_channel.send(
                             GstTranscoderNotification::TranscodingStopped(
-                                GstTranscoderStoppedCause::ManagerTerminated,
+                                GstTranscoderStoppedCause::UnexpectedlyTerminated,
                             ),
                         );
                     }

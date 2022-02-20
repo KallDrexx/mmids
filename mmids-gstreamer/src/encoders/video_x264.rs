@@ -12,6 +12,15 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
+/// Creates a video encoder that uses the gstreamer `x264enc` encoder to encode video into h264
+/// video.
+///
+/// This encoder supports the following optional parameters:
+/// * `width` - How many pixels wide the resulting video should be
+/// * `height` - How many pixels high the resulting video should be
+/// * `fps` - The exact fps the resulting video should be
+/// * `preset` - The `speed-preset` value to use in the encoder.  Valid values are: `ultrafast`,
+/// `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`.
 pub struct X264EncoderGenerator {}
 
 impl VideoEncoderGenerator for X264EncoderGenerator {

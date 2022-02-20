@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
 
+/// Creates an encoder that passes video packets through to the output channel without modification
 pub struct VideoCopyEncoderGenerator {}
 
 impl VideoEncoderGenerator for VideoCopyEncoderGenerator {

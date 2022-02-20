@@ -7,6 +7,7 @@ use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Creates a video encoder that drops audio.
 pub struct VideoDropEncoderGenerator {}
 
 impl VideoEncoderGenerator for VideoDropEncoderGenerator {

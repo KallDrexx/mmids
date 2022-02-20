@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
 
+/// Generates an audio encoder that passes audio packets to the output channel without modification.
 pub struct AudioCopyEncoderGenerator {}
 
 impl AudioEncoderGenerator for AudioCopyEncoderGenerator {

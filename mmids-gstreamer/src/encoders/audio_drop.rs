@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Creates an encoder that drops the audio stream.
 pub struct AudioDropEncoderGenerator {}
 
 impl AudioEncoderGenerator for AudioDropEncoderGenerator {

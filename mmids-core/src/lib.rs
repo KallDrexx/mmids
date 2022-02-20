@@ -1,3 +1,7 @@
+//! This crate contains all the building blocks and foundational systems that a mmids application
+//! requires. It also contains standard workflow steps that are likely to be used in most
+//! mmids applications.
+
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;

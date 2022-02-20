@@ -1,3 +1,6 @@
+//! Common utility functions that are useful for interacting with gstreamer.  These are mostly
+//! meant for use by code creating custom encoders.
+
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use gstreamer::prelude::*;
@@ -6,6 +9,8 @@ use gstreamer_app::AppSrc;
 use mmids_core::codecs::VideoCodec;
 use std::time::Duration;
 
+/// Function that makes it easy to create a gstreamer `Buffer` based on a set of bytes, an optional
+/// decoding timestamp, and an optional presentation timestamp.
 pub fn set_gst_buffer(data: Bytes, dts: Option<Duration>, pts: Option<Duration>) -> Result<Buffer> {
     let mut buffer = Buffer::with_size(data.len())
         .with_context(|| format!("Could not create a buffer with size {}", data.len()))?;
@@ -36,6 +41,10 @@ pub fn set_gst_buffer(data: Bytes, dts: Option<Duration>, pts: Option<Duration>)
     Ok(buffer)
 }
 
+/// Sets up an video encoder's `appsrc`'s caps based on the specified codec.  Since sequence headers
+/// are not valid packets for the codec, we can't just push the sequence header into the appsrc's
+/// buffer.  Instead, different codecs have different mechanisms to pass the sequence header in
+/// so it can be utilized, and this provides a central function for that logic.
 pub fn set_source_video_sequence_header(
     source: &AppSrc,
     codec: VideoCodec,
@@ -59,10 +68,14 @@ pub fn set_source_video_sequence_header(
     }
 }
 
+/// Quick function to create an un-named gstreamer element, while providing a consumable error
+/// if that fails.
 pub fn create_gst_element(name: &str) -> Result<Element> {
     ElementFactory::make(name, None).with_context(|| format!("Failed to create element '{}'", name))
 }
 
+/// Reads the `codec_data` caps from the provided element.  This is usually where sequence header
+/// data is contained.
 pub fn get_codec_data_from_element(element: &Element) -> Result<Bytes> {
     let pad = element
         .static_pad("src")
