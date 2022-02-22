@@ -20,7 +20,8 @@ use tracing::{error, warn};
 /// * `height` - How many pixels high the resulting video should be
 /// * `fps` - The exact fps the resulting video should be
 /// * `preset` - The `speed-preset` value to use in the encoder.  Valid values are: `ultrafast`,
-/// `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`.
+/// `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`.  The default
+/// is `medium`.
 pub struct X264EncoderGenerator {}
 
 impl VideoEncoderGenerator for X264EncoderGenerator {
