@@ -984,7 +984,7 @@ impl RtmpServerConnectionHandler {
                 codec,
                 is_sequence_header,
             } => {
-                let flv_audio = match wrap_audio_into_flv(data, codec) {
+                let flv_audio = match wrap_audio_into_flv(data, codec, is_sequence_header) {
                     Ok(x) => x,
                     Err(()) => {
                         if !self.audio_parse_error_raised {
@@ -1104,11 +1104,9 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> UnwrappedAudio {
         };
     }
 
-    // TODO: After the tag is the AVC packet type, composition time, and data.  It's unclear
-    // from the FLV spec if the packet type and composition time data is part of the AAC data
-    // or if that's an FLV specific thing
     let flv_tag = data.split_to(1);
-    let is_sequence_header = data[0] == 0;
+    let packet_type = data.split_to(1);
+    let is_sequence_header = packet_type[0] == 0;
     let codec = if flv_tag[0] & 0xa0 == 0xa0 {
         AudioCodec::Aac
     } else {
@@ -1122,12 +1120,18 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> UnwrappedAudio {
     }
 }
 
-fn wrap_audio_into_flv(data: Bytes, codec: AudioCodec) -> Result<Bytes, ()> {
+fn wrap_audio_into_flv(
+    data: Bytes,
+    codec: AudioCodec,
+    is_sequence_header: bool,
+) -> Result<Bytes, ()> {
     match codec {
         AudioCodec::Aac => {
             let flv_tag = 0xaf;
+            let packet_type = if is_sequence_header { 0 } else { 1 };
             let mut wrapped = BytesMut::new();
             wrapped.put_u8(flv_tag);
+            wrapped.put_u8(packet_type);
             wrapped.extend(data);
 
             Ok(wrapped.freeze())

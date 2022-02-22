@@ -1153,8 +1153,8 @@ async fn notification_raised_when_audio_published() {
 
             assert_eq!(event_timestamp, timestamp, "Unexpected timestamp");
 
-            // First byte is the flv-tag and is stripped out of the notification
-            assert_eq!(event_data, data[1..], "Unexpected video data");
+            // First two bytes are the flv-tag and packet type, and are stripped out of the notification
+            assert_eq!(event_data, data[2..], "Unexpected video data");
         }
 
         message => panic!("Unexpected publisher message: {:?}", message),
@@ -1508,11 +1508,51 @@ async fn watcher_does_not_receive_non_h264_video() {
 }
 
 #[tokio::test]
-async fn watcher_receives_aac_audio() {
+async fn aac_audio_has_flv_headers_added_for_sequence_header() {
     let mut context = TestContextBuilder::new().into_watcher().await;
     context.set_as_active_watcher().await;
 
-    let sent_data = Bytes::from(vec![1, 2, 3, 4]);
+    let sent_data = Bytes::from(vec![10, 11, 3, 4]);
+    let sent_timestamp = RtmpTimestamp::new(5);
+
+    match context
+        .media_sender
+        .as_ref()
+        .unwrap()
+        .send(RtmpEndpointMediaMessage {
+            stream_key: "key".to_string(),
+            data: RtmpEndpointMediaData::NewAudioData {
+                codec: AudioCodec::Aac,
+                data: sent_data.clone(),
+                is_sequence_header: true,
+                timestamp: sent_timestamp.clone(),
+            },
+        }) {
+        Ok(_) => (),
+        Err(_) => panic!("Failed to send media message"),
+    };
+
+    let event = context
+        .client
+        .get_next_event()
+        .await
+        .expect("Expected event returned");
+    match event {
+        ClientSessionEvent::AudioDataReceived { data, timestamp } => {
+            assert_eq!(&data, &vec![0xaf, 0, 10, 11, 3, 4], "Unexpected audio data");
+            assert_eq!(timestamp, sent_timestamp, "Unexpected timestamp");
+        }
+
+        event => panic!("Unexpected event: {:?}", event),
+    }
+}
+
+#[tokio::test]
+async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
+    let mut context = TestContextBuilder::new().into_watcher().await;
+    context.set_as_active_watcher().await;
+
+    let sent_data = Bytes::from(vec![10, 11, 3, 4]);
     let sent_timestamp = RtmpTimestamp::new(5);
 
     match context
@@ -1539,7 +1579,7 @@ async fn watcher_receives_aac_audio() {
         .expect("Expected event returned");
     match event {
         ClientSessionEvent::AudioDataReceived { data, timestamp } => {
-            assert_eq!(&data, &vec![0xaf, 1, 2, 3, 4], "Unexpected audio data");
+            assert_eq!(&data, &vec![0xaf, 1, 10, 11, 3, 4], "Unexpected audio data");
             assert_eq!(timestamp, sent_timestamp, "Unexpected timestamp");
         }
 
