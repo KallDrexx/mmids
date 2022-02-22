@@ -19,6 +19,7 @@ use tracing::{error, warn};
 /// * `width` - How many pixels wide the resulting video should be
 /// * `height` - How many pixels high the resulting video should be
 /// * `fps` - The exact fps the resulting video should be
+/// * `bitrate` - the desired bitrate specified in **kbps**.  Output will be encoded with constant bitrate
 /// * `preset` - The `speed-preset` value to use in the encoder.  Valid values are: `ultrafast`,
 /// `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`.  The default
 /// is `medium`.
@@ -53,6 +54,7 @@ impl X264Encoder {
         let width = get_number(&parameters, "width");
         let preset = parameters.get("preset").unwrap_or(&None);
         let fps = get_number(&parameters, "fps");
+        let bitrate = get_number(&parameters, "bitrate");
 
         let appsrc = create_gst_element("appsrc")?;
         let queue = create_gst_element("queue")?;
@@ -129,6 +131,10 @@ impl X264Encoder {
 
         if let Some(preset) = preset {
             encoder.set_property_from_str("speed-preset", preset.as_str());
+        }
+
+        if let Some(bitrate) = bitrate {
+            encoder.set_property("bitrate", bitrate);
         }
 
         let appsink = appsink
