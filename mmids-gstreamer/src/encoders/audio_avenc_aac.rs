@@ -1,50 +1,58 @@
-use std::collections::HashMap;
-use std::time::Duration;
+use crate::encoders::{AudioEncoder, AudioEncoderGenerator, SampleResult};
+use crate::utils::{
+    create_gst_element, get_codec_data_from_element, set_gst_buffer,
+    set_source_audio_sequence_header,
+};
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer::prelude::*;
+use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, warn};
 use mmids_core::codecs::AudioCodec;
 use mmids_core::workflows::MediaNotificationContent;
-use crate::encoders::{AudioEncoder, AudioEncoderGenerator, SampleResult};
-use crate::utils::{create_gst_element, get_codec_data_from_element, set_gst_buffer, set_source_audio_sequence_header};
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
+use tracing::{error, warn};
 
-/// Creates an audio encoder that uses the gstreamer `faac` encoder to encode audio into aac.
+/// Creates an audio encoder that uses the gstreamer `avenc_aac` encoder to encode audio into aac.
 ///
 /// This encoder supports the following optional parameters:
-/// * `bitrate` - The average **bytes** per second to target.  Default is 128,000 bps.
-pub struct FaacEncoderGenerator {}
+/// * `bitrate` - The average **bytes** per second to target.
+pub struct AvencAacEncoderGenerator {}
 
-impl AudioEncoderGenerator for FaacEncoderGenerator {
+impl AudioEncoderGenerator for AvencAacEncoderGenerator {
     fn create(
         &self,
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn AudioEncoder>> {
-        Ok(Box::new(FaacEncoder::new(media_sender, parameters, pipeline)?))
+        Ok(Box::new(AvencAacEncoder::new(
+            media_sender,
+            parameters,
+            pipeline,
+        )?))
     }
 }
 
-struct FaacEncoder {
+struct AvencAacEncoder {
     source: AppSrc,
 }
 
-impl FaacEncoder {
+impl AvencAacEncoder {
     fn new(
         media_sender: UnboundedSender<MediaNotificationContent>,
         parameters: &HashMap<String, Option<String>>,
         pipeline: &Pipeline,
-    ) -> Result<FaacEncoder> {
+    ) -> Result<AvencAacEncoder> {
         let bitrate = get_number(parameters, "bitrate");
 
         let appsrc = create_gst_element("appsrc")?;
         let queue = create_gst_element("queue")?;
         let decodebin = create_gst_element("decodebin")?;
-        let encoder = create_gst_element("faac")?;
+        let convert = create_gst_element("audioconvert")?;
+        let encoder = create_gst_element("avenc_aac")?;
         let output_parser = create_gst_element("aacparse")?;
         let appsink = create_gst_element("appsink")?;
 
@@ -56,25 +64,25 @@ impl FaacEncoder {
                 &encoder,
                 &output_parser,
                 &appsink,
+                &convert,
             ])
-            .with_context(|| "Failed to add Faac encoder's elements to the pipeline")?;
+            .with_context(|| "Failed to add avenc_aac encoder's elements to the pipeline")?;
 
         Element::link_many(&[&appsrc, &queue, &decodebin])
-            .with_context(|| "Failed to link appsrc -> queue -> decodebin for faac encoder")?;
+            .with_context(|| "Failed to link appsrc -> queue -> decodebin for avenc_aac encoder")?;
 
-        Element::link_many(&[&encoder, &output_parser, &appsink])
-            .with_context(|| "Failed to link faac -> aacparse -> appsink")?;
+        Element::link_many(&[&convert, &encoder, &output_parser, &appsink])
+            .with_context(|| "Failed to link avenc_aac -> aacparse -> appsink")?;
 
         // decodebin's pad is added dynamically
-        let link_destination = encoder.clone();
+        let link_destination = convert.clone();
         decodebin.connect_pad_added(move |src, src_pad| {
-            match src.link_pads(
-                Some(&src_pad.name()),
-                &link_destination.clone(),
-                None,
-            ) {
+            match src.link_pads(Some(&src_pad.name()), &link_destination.clone(), None) {
                 Ok(_) => (),
-                Err(_) => error!("Failed to link `decodebin`'s {} pad to the faac element", src_pad.name()),
+                Err(_) => error!(
+                    "Failed to link `decodebin`'s {} pad to the avenc_aac element",
+                    src_pad.name()
+                ),
             }
         });
 
@@ -90,7 +98,12 @@ impl FaacEncoder {
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    match sample_received(sink, &mut sent_codec_data, &output_parser, media_sender.clone()) {
+                    match sample_received(
+                        sink,
+                        &mut sent_codec_data,
+                        &output_parser,
+                        media_sender.clone(),
+                    ) {
                         Ok(_) => Ok(FlowSuccess::Ok),
                         Err(error) => {
                             error!("new_sample callback error received: {:?}", error);
@@ -98,18 +111,18 @@ impl FaacEncoder {
                         }
                     }
                 })
-                .build()
+                .build(),
         );
 
         let appsrc = appsrc
             .dynamic_cast::<AppSrc>()
             .or_else(|_| Err(anyhow!("source element could not be cast to `AppSrc`")))?;
 
-        Ok(FaacEncoder { source: appsrc})
+        Ok(AvencAacEncoder { source: appsrc })
     }
 }
 
-impl AudioEncoder for FaacEncoder {
+impl AudioEncoder for AvencAacEncoder {
     fn push_data(
         &self,
         codec: AudioCodec,
@@ -165,8 +178,7 @@ fn sample_received(
         *codec_data_sent = true;
     }
 
-    let sample = SampleResult::from_sink(sink)
-        .with_context(|| "Failed to get aac sample")?;
+    let sample = SampleResult::from_sink(sink).with_context(|| "Failed to get aac sample")?;
 
     if let Some(dts) = sample.dts {
         let _ = media_sender.send(MediaNotificationContent::Audio {
@@ -178,6 +190,8 @@ fn sample_received(
 
         Ok(())
     } else {
-        Err(anyhow!("No dts found for AAC sample, and thus timestamp is unknown!"))
+        Err(anyhow!(
+            "No dts found for AAC sample, and thus timestamp is unknown!"
+        ))
     }
 }

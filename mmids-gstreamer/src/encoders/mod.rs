@@ -1,9 +1,9 @@
 //! An encoder represents a part of a gstreamer pipeline that takes video or audio data, processes
 //! it, and then pushes the results out into a tokio channel.
 
+mod audio_avenc_aac;
 mod audio_copy;
 mod audio_drop;
-mod audio_faac;
 mod video_copy;
 mod video_drop;
 mod video_x264;
@@ -19,9 +19,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+pub use audio_avenc_aac::AvencAacEncoderGenerator;
 pub use audio_copy::AudioCopyEncoderGenerator;
 pub use audio_drop::AudioDropEncoderGenerator;
-pub use audio_faac::FaacEncoderGenerator;
 
 pub use video_copy::VideoCopyEncoderGenerator;
 pub use video_drop::VideoDropEncoderGenerator;
