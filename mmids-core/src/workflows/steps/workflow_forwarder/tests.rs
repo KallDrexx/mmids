@@ -3,6 +3,7 @@ use crate::codecs::{AudioCodec, VideoCodec};
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::steps::StepTestContext;
 use crate::{test_utils, VideoTimestamp};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use std::time::Duration;
 
@@ -16,13 +17,17 @@ struct TestContext {
 }
 
 impl TestContext {
-    async fn new(specific_workflow: Option<&str>, reactor: Option<&str>) -> Self {
+    async fn new(specific_workflow: Option<&str>, reactor: Option<&str>) -> Result<Self> {
         if specific_workflow.is_some() && reactor.is_some() {
-            panic!("Both workflow and reactor names specified. Only one should be");
+            return Err(anyhow!(
+                "Both workflow and reactor names specified. Only one should be"
+            ));
         }
 
         if specific_workflow.is_none() && reactor.is_none() {
-            panic!("Neither workflow or reactor name specified. One must be");
+            return Err(anyhow!(
+                "Neither workflow or reactor name specified. One must be"
+            ));
         }
 
         let (reactor_sender, reactor_receiver) = unbounded_channel();
@@ -47,7 +52,7 @@ impl TestContext {
                 .insert(TARGET_WORKFLOW.to_string(), Some(workflow.to_string()));
         }
 
-        let step_context = StepTestContext::new(Box::new(generator), definition);
+        let step_context = StepTestContext::new(Box::new(generator), definition)?;
 
         // It must send a subscription event on startup
         let event = test_utils::expect_mpsc_response(&mut sub_receiver).await;
@@ -56,14 +61,14 @@ impl TestContext {
             event => panic!("Unexpected event: {:?}", event),
         };
 
-        TestContext {
+        Ok(TestContext {
             step_context,
             workflow_sender,
             workflow_receiver,
             _event_hub: sub_receiver,
             reactor_manager: reactor_receiver,
             workflow_event_channel: channel,
-        }
+        })
     }
 
     async fn send_workflow_started_event(
@@ -100,7 +105,7 @@ impl TestContext {
 
 #[tokio::test]
 async fn new_stream_message_sent_to_global_workflow() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.send_workflow_started_event("test", None).await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -129,7 +134,7 @@ async fn new_stream_message_sent_to_global_workflow() {
 
 #[tokio::test]
 async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -159,7 +164,7 @@ async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
 
 #[tokio::test]
 async fn no_message_passed_if_workflow_has_different_name_than_global_name() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.send_workflow_started_event("test2", None).await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -174,7 +179,7 @@ async fn no_message_passed_if_workflow_has_different_name_than_global_name() {
 
 #[tokio::test]
 async fn no_message_passed_if_workflow_stopped_before_media_sent() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.send_workflow_started_event("test", None).await;
     context.send_workflow_stopped_event("test").await;
 
@@ -190,7 +195,7 @@ async fn no_message_passed_if_workflow_stopped_before_media_sent() {
 
 #[tokio::test]
 async fn no_message_passed_if_stream_disconnected_before_workflow_started() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -210,7 +215,7 @@ async fn no_message_passed_if_stream_disconnected_before_workflow_started() {
 
 #[tokio::test]
 async fn new_stream_media_passed_as_output_immediately() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -239,7 +244,7 @@ async fn new_stream_media_passed_as_output_immediately() {
 
 #[tokio::test]
 async fn stream_disconnected_media_passed_as_output_immediately() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -264,7 +269,7 @@ async fn stream_disconnected_media_passed_as_output_immediately() {
 
 #[tokio::test]
 async fn video_media_passed_as_output_immediately() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -311,7 +316,7 @@ async fn video_media_passed_as_output_immediately() {
 
 #[tokio::test]
 async fn audio_media_passed_as_output_immediately() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -351,7 +356,7 @@ async fn audio_media_passed_as_output_immediately() {
 
 #[tokio::test]
 async fn metadata_media_passed_as_output_immediately() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     let mut metadata = HashMap::new();
     metadata.insert("a".to_string(), "b".to_string());
@@ -383,7 +388,7 @@ async fn metadata_media_passed_as_output_immediately() {
 
 #[tokio::test]
 async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -431,7 +436,7 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 
 #[tokio::test]
 async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -471,7 +476,7 @@ async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_wo
 
 #[tokio::test]
 async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -515,7 +520,7 @@ async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 
 #[tokio::test]
 async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -551,7 +556,7 @@ async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_wo
 
 #[tokio::test]
 async fn metadata_not_sent_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await;
+    let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -584,7 +589,7 @@ async fn metadata_not_sent_when_received_before_workflow_starts() {
 
 #[tokio::test]
 async fn new_stream_triggers_reactor_query() {
-    let mut context = TestContext::new(None, Some("test")).await;
+    let mut context = TestContext::new(None, Some("test")).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {
@@ -609,7 +614,7 @@ async fn new_stream_triggers_reactor_query() {
 
 #[tokio::test]
 async fn new_stream_passed_to_all_specified_routable_workflow() {
-    let mut context = TestContext::new(None, Some("test")).await;
+    let mut context = TestContext::new(None, Some("test")).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
         content: MediaNotificationContent::NewIncomingStream {

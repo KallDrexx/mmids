@@ -125,6 +125,8 @@ pub trait WorkflowStep {
 #[cfg(test)]
 use crate::workflows::steps::factory::StepGenerator;
 #[cfg(test)]
+use anyhow::{anyhow, Result};
+#[cfg(test)]
 use futures::stream::FuturesUnordered;
 #[cfg(test)]
 use futures::StreamExt;
@@ -142,16 +144,16 @@ struct StepTestContext {
 
 #[cfg(test)]
 impl StepTestContext {
-    fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Self {
+    fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Result<Self> {
         let (step, futures) = generator
             .generate(definition)
-            .expect("Failed to generate workflow step");
+            .or_else(|error| Err(anyhow!("Failed to generate workflow step: {:?}", error)))?;
 
-        StepTestContext {
+        Ok(StepTestContext {
             step,
             futures: FuturesUnordered::from_iter(futures),
             media_outputs: Vec::new(),
-        }
+        })
     }
 
     fn execute_with_media(&mut self, media: MediaNotification) {

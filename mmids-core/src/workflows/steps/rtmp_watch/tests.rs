@@ -9,6 +9,7 @@ use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::steps::StepTestContext;
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::{test_utils, StreamId, VideoTimestamp};
+use anyhow::Result;
 use bytes::Bytes;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::{HashMap, HashSet};
@@ -102,7 +103,7 @@ impl DefinitionBuilder {
 }
 
 impl TestContext {
-    fn new(definition: WorkflowStepDefinition) -> Self {
+    fn new(definition: WorkflowStepDefinition) -> Result<Self> {
         let (reactor_sender, reactor_receiver) = unbounded_channel();
         let (rtmp_sender, rtmp_receiver) = unbounded_channel();
 
@@ -111,13 +112,13 @@ impl TestContext {
             rtmp_endpoint_sender: rtmp_sender,
         };
 
-        let step_context = StepTestContext::new(Box::new(generator), definition);
+        let step_context = StepTestContext::new(Box::new(generator), definition)?;
 
-        TestContext {
+        Ok(TestContext {
             step_context,
             rtmp_endpoint: rtmp_receiver,
             reactor_manager: reactor_receiver,
-        }
+        })
     }
 
     async fn accept_registration(
@@ -167,7 +168,7 @@ async fn requests_registration_for_watchers() {
         .key("some_key")
         .build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     match response {
@@ -195,7 +196,7 @@ async fn no_port_specified_defaults_to_1935() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(PORT_PROPERTY_NAME);
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     match response {
@@ -214,7 +215,7 @@ async fn asterisk_stream_key_acts_as_wildcard() {
         .parameters
         .insert(STREAM_KEY_PROPERTY_NAME.to_string(), Some("*".to_string()));
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     match response {
@@ -237,11 +238,10 @@ fn error_if_no_app_provided() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(APP_PROPERTY_NAME);
 
-    let result = std::panic::catch_unwind(|| {
-        TestContext::new(definition);
-    });
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Ok(_) => panic!("Expecected failure"),
+        Err(_) => (),
+    }
 }
 
 #[test]
@@ -249,17 +249,16 @@ fn error_if_no_stream_key_provided() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(STREAM_KEY_PROPERTY_NAME);
 
-    let result = std::panic::catch_unwind(|| {
-        TestContext::new(definition);
-    });
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Ok(_) => panic!("Expecected failure"),
+        Err(_) => (),
+    }
 }
 
 #[test]
 fn new_step_is_in_created_status() {
     let definition = DefinitionBuilder::new().build();
-    let context = TestContext::new(definition);
+    let context = TestContext::new(definition).unwrap();
 
     let status = context.step_context.step.get_status();
     assert_eq!(status, &StepStatus::Created, "Unexpected step status");
@@ -268,7 +267,7 @@ fn new_step_is_in_created_status() {
 #[tokio::test]
 async fn registration_failure_changes_status_to_error() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     let _channel = match response {
@@ -298,7 +297,7 @@ async fn registration_failure_changes_status_to_error() {
 #[tokio::test]
 async fn registration_success_changes_status_to_active() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
     let _channel = match response {
@@ -328,7 +327,7 @@ async fn registration_success_changes_status_to_active() {
 #[tokio::test]
 async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_received() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -348,7 +347,7 @@ async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
 #[tokio::test]
 async fn video_packet_sent_to_media_channel_after_new_stream_message_received() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -402,7 +401,7 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
 #[tokio::test]
 async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_message_received() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -437,7 +436,7 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
 #[tokio::test]
 async fn video_packet_not_sent_to_media_channel_when_new_stream_is_for_different_stream_id() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -467,7 +466,7 @@ async fn video_packet_not_sent_to_media_channel_when_new_stream_is_for_different
 #[tokio::test]
 async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -510,7 +509,7 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
 #[tokio::test]
 async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -543,7 +542,7 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
 #[tokio::test]
 async fn media_message_uses_strict_stream_key_when_exact_key_registered() {
     let definition = DefinitionBuilder::new().key("specific_key").build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
@@ -574,7 +573,7 @@ async fn media_message_uses_strict_stream_key_when_exact_key_registered() {
 #[tokio::test]
 async fn new_stream_message_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, _media_channel) = context.accept_registration().await;
 
     context
@@ -590,7 +589,7 @@ async fn new_stream_message_passed_as_output() {
 #[tokio::test]
 async fn stream_disconnected_message_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, _media_channel) = context.accept_registration().await;
 
     context
@@ -604,7 +603,7 @@ async fn stream_disconnected_message_passed_as_output() {
 #[tokio::test]
 async fn video_message_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, _media_channel) = context.accept_registration().await;
 
     context
@@ -627,7 +626,7 @@ async fn video_message_passed_as_output() {
 #[tokio::test]
 async fn audio_message_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, _media_channel) = context.accept_registration().await;
 
     context
@@ -646,7 +645,7 @@ async fn audio_message_passed_as_output() {
 #[tokio::test]
 async fn metadata_message_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (_notification_channel, _media_channel) = context.accept_registration().await;
 
     let mut metadata = HashMap::new();
@@ -665,7 +664,7 @@ async fn watchers_requiring_approval_sends_request_to_reactor() {
     let definition = DefinitionBuilder::new()
         .reactor_name("some_reactor")
         .build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (notification_channel, _media_channel) = context.accept_registration().await;
 
     let (sender, _receiver) = channel();
@@ -699,7 +698,7 @@ async fn reactor_responding_with_invalid_sends_rejection_response() {
     let definition = DefinitionBuilder::new()
         .reactor_name("some_reactor")
         .build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (notification_channel, _media_channel) = context.accept_registration().await;
 
     let (sender, receiver) = channel();
@@ -734,7 +733,7 @@ async fn reactor_responding_with_valid_sends_approved_response() {
     let definition = DefinitionBuilder::new()
         .reactor_name("some_reactor")
         .build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
     let (notification_channel, _media_channel) = context.accept_registration().await;
 
     let (sender, receiver) = channel();

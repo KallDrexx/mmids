@@ -16,6 +16,7 @@ use crate::workflows::steps::ffmpeg_transcode::{
 use crate::workflows::steps::{StepStatus, StepTestContext};
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::{test_utils, StreamId, VideoTimestamp};
+use anyhow::Result;
 use bytes::Bytes;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
@@ -123,7 +124,7 @@ impl DefinitionBuilder {
 }
 
 impl TestContext {
-    fn new(definition: WorkflowStepDefinition) -> Self {
+    fn new(definition: WorkflowStepDefinition) -> Result<Self> {
         let (rtmp_sender, rtmp_receiver) = unbounded_channel();
         let (ffmpeg_sender, ffmpeg_receiver) = unbounded_channel();
 
@@ -132,13 +133,13 @@ impl TestContext {
             rtmp_server_endpoint: rtmp_sender,
         };
 
-        let step_context = StepTestContext::new(Box::new(generator), definition);
+        let step_context = StepTestContext::new(Box::new(generator), definition)?;
 
-        TestContext {
+        Ok(TestContext {
             step_context,
             rtmp_endpoint: rtmp_receiver,
             ffmpeg_endpoint: ffmpeg_receiver,
-        }
+        })
     }
 
     async fn accept_watch_registration(
@@ -216,7 +217,7 @@ impl TestContext {
 #[test]
 fn step_starts_in_active_state() {
     let definition = DefinitionBuilder::new().build();
-    let context = TestContext::new(definition);
+    let context = TestContext::new(definition).unwrap();
 
     let status = context.step_context.step.get_status();
     assert_eq!(status, &StepStatus::Active, "Unexpected step status");
@@ -226,9 +227,10 @@ fn step_starts_in_active_state() {
 fn step_fails_to_build_when_invalid_vcodec_specified() {
     let definition = DefinitionBuilder::new().vcodec("abcdef").build();
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[test]
@@ -236,18 +238,20 @@ fn step_fails_to_build_when_no_vcodec_specified() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(VIDEO_CODEC_NAME);
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[test]
 fn step_fails_to_build_when_invalid_acodec_specified() {
     let definition = DefinitionBuilder::new().acodec("abcdef").build();
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[test]
@@ -255,9 +259,10 @@ fn step_fails_to_build_when_no_acodec_specified() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(AUDIO_CODEC_NAME);
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[test]
@@ -265,9 +270,10 @@ fn step_fails_to_build_when_h264_specified_and_no_preset_specified() {
     let mut definition = DefinitionBuilder::new().vcodec("abcdef").build();
     definition.parameters.remove(H264_PRESET_NAME);
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[test]
@@ -277,24 +283,26 @@ fn step_fails_to_build_when_h264_specified_and_invalid_preset() {
         .h264_preset("abc")
         .build();
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[test]
 fn step_fails_to_build_when_invalid_size_specified() {
     let definition = DefinitionBuilder::new().size("abc").build();
 
-    let result = std::panic::catch_unwind(|| TestContext::new(definition));
-
-    assert!(result.is_err(), "Expected failure");
+    match TestContext::new(definition) {
+        Err(_) => (),
+        Ok(_) => panic!("Expected failure"),
+    }
 }
 
 #[tokio::test]
 async fn rtmp_watch_registration_raised_on_new_stream() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -322,7 +330,7 @@ async fn rtmp_watch_registration_raised_on_new_stream() {
 #[tokio::test]
 async fn rtmp_publish_registration_raised_after_watch_accepted() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -352,7 +360,7 @@ async fn rtmp_publish_registration_raised_after_watch_accepted() {
 #[tokio::test]
 async fn ffmpeg_request_raised_after_publish_accepted() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -378,7 +386,7 @@ async fn h264_with_preset_passed_to_ffmpeg() {
         .h264_preset("ultrafast")
         .build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -403,7 +411,7 @@ async fn h264_with_preset_passed_to_ffmpeg() {
 async fn video_copy_passed_to_ffmpeg() {
     let definition = DefinitionBuilder::new().vcodec("copy").build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -426,7 +434,7 @@ async fn video_copy_passed_to_ffmpeg() {
 async fn aac_acodec_passed_to_ffmpeg() {
     let definition = DefinitionBuilder::new().acodec("aac").build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -449,7 +457,7 @@ async fn aac_acodec_passed_to_ffmpeg() {
 async fn copy_acodec_passed_to_ffmpeg() {
     let definition = DefinitionBuilder::new().acodec("copy").build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -476,7 +484,7 @@ async fn size_passed_to_ffmpeg() {
         .size("1920x1080")
         .build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -502,7 +510,7 @@ async fn bitrate_passed_to_ffmpeg() {
         .bitrate(1233)
         .build();
 
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -522,7 +530,7 @@ async fn bitrate_passed_to_ffmpeg() {
 #[tokio::test]
 async fn ffmpeg_always_told_to_read_in_real_time() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -544,7 +552,7 @@ async fn ffmpeg_always_told_to_read_in_real_time() {
 #[tokio::test]
 async fn ffmpeg_instructed_to_read_from_rtmp() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -574,7 +582,7 @@ async fn ffmpeg_instructed_to_read_from_rtmp() {
 #[tokio::test]
 async fn if_ffmpeg_process_stops_unexpectedly_it_starts_again_with_same_id_and_params() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -602,7 +610,7 @@ async fn if_ffmpeg_process_stops_unexpectedly_it_starts_again_with_same_id_and_p
 #[test]
 fn stream_started_notification_passed_through_immediately() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context
         .step_context
@@ -617,7 +625,7 @@ fn stream_started_notification_passed_through_immediately() {
 #[test]
 fn disconnection_notification_passed_through_immediately() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context
         .step_context
@@ -629,7 +637,7 @@ fn disconnection_notification_passed_through_immediately() {
 #[test]
 fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context
         .step_context
@@ -644,7 +652,7 @@ fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
 #[test]
 fn video_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context
         .step_context
@@ -666,7 +674,7 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
 #[test]
 fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context
         .step_context
@@ -684,7 +692,7 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
 #[tokio::test]
 async fn video_packet_sent_to_watcher_media_channel() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -725,7 +733,7 @@ async fn video_packet_sent_to_watcher_media_channel() {
 #[tokio::test]
 async fn audio_packet_sent_to_watcher_media_channel() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -762,7 +770,7 @@ async fn audio_packet_sent_to_watcher_media_channel() {
 #[tokio::test]
 async fn metadata_packet_sent_to_watcher_media_channel() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -797,7 +805,7 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
 #[tokio::test]
 async fn video_packet_with_other_stream_id_not_sent_to_watcher_media_channel() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -829,7 +837,7 @@ async fn video_packet_with_other_stream_id_not_sent_to_watcher_media_channel() {
 #[tokio::test]
 async fn video_packet_from_publisher_passed_as_media_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -891,7 +899,7 @@ async fn video_packet_from_publisher_passed_as_media_output() {
 #[tokio::test]
 async fn audio_packet_from_publisher_passed_as_media_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
@@ -948,7 +956,7 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
 #[tokio::test]
 async fn metadata_packet_from_publisher_passed_as_media_output() {
     let definition = DefinitionBuilder::new().build();
-    let mut context = TestContext::new(definition);
+    let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId("abc".to_string()),
