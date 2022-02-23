@@ -15,6 +15,7 @@ thiserror = "1.0.30"
 tracing = { version = "0.1", features = ["log"] }
 uuid = "0.8.2"
 futures = "0.3"
+lazy_static = "1.4.0"
 
 gstreamer = "0.18.3"
 gstreamer-app = "0.18.0"

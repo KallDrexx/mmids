@@ -5,6 +5,7 @@ use crate::endpoints::gst_transcoder::endpoint_futures::notify_manager_gone;
 use crate::endpoints::gst_transcoder::transcoding_manager::{
     start_transcode_manager, TranscodeManagerRequest, TranscoderParams,
 };
+use crate::GSTREAMER_INIT_RESULT;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -104,7 +105,7 @@ pub enum GstTranscoderStoppedCause {
 #[derive(thiserror::Error, Debug)]
 pub enum EndpointStartError {
     #[error("Gstreamer failed to initialize")]
-    GstreamerError(#[from] glib::Error),
+    GstreamerError(#[from] &'static glib::Error),
 }
 
 /// Starts the gstreamer transcode process, and returns a channel in which communication with the
@@ -147,7 +148,7 @@ impl EndpointActor {
         receiver: UnboundedReceiver<GstTranscoderRequest>,
         encoder_factory: Arc<EncoderFactory>,
     ) -> Result<EndpointActor, EndpointStartError> {
-        gstreamer::init()?;
+        (*GSTREAMER_INIT_RESULT).as_ref()?;
 
         let futures = FuturesUnordered::new();
         futures.push(endpoint_futures::wait_for_request(receiver).boxed());
