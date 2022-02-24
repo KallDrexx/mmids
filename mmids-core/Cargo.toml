@@ -30,4 +30,5 @@ async-trait = "0.1.51"
 async-recursion = "0.3.2"
 byteorder = "1.4.3"
 anyhow = "1.0.54"
+webrtc = "0.4.0"
 
