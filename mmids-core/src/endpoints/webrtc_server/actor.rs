@@ -1,15 +1,16 @@
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::webrtc_server::actor::FutureResult::AllConsumersGone;
-use crate::endpoints::webrtc_server::{
-    RegistrationType, StreamNameRegistration, WebrtcServerPublisherRegistrantNotification,
-    WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification,
-};
+use crate::endpoints::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot::channel;
 use tracing::{info, instrument, warn};
+use uuid::Uuid;
+use webrtc::util::Conn;
+use crate::net::ConnectionId;
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
@@ -49,6 +50,29 @@ enum FutureResult {
     WatcherRegistrantGone {
         app_name: String,
         stream_name: StreamNameRegistration,
+    },
+
+    ValidationChannelClosed {
+        application_name: String,
+        stream_name: String,
+        operation_type: RequestType,
+        connection_id: ConnectionId,
+    },
+
+    PublishValidationResponse {
+        application_name: String,
+        stream_name: String,
+        connection_id: ConnectionId,
+        response: ValidationResponse,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    },
+
+    WatcherValidationResponse {
+        application_name: String,
+        stream_name: String,
+        connection_id: ConnectionId,
+        response: ValidationResponse,
+        notification_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
     },
 }
 
@@ -149,16 +173,90 @@ impl Actor {
                 application_name,
                 registration_type,
             } => match registration_type {
-                RegistrationType::Publisher => {
+                RequestType::Publisher => {
                     self.remove_publisher_registrant(application_name, stream_name)
                 }
 
-                RegistrationType::Watcher => {
+                RequestType::Watcher => {
                     self.remove_watcher_registrant(application_name, stream_name)
                 }
             },
 
+            WebrtcServerRequest::StreamPublishRequested {
+                application_name,
+                stream_name,
+                notification_channel,
+                offer_sdp,
+            } => {
+
+            }
+
             todo => todo!(),
+        }
+    }
+
+    #[instrument(skip(self, notification_channel))]
+    fn handle_stream_publish_requested(
+        &mut self,
+        application_name: String,
+        stream_name: String,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+        offer_sdp: String,
+    ) {
+        let connection_id = ConnectionId(Uuid::new_v4().to_string());
+        let application = match self.applications.get_mut(&application_name) {
+            Some(app) => app,
+            None => {
+                info!(
+                    connection_id = ?connection_id,
+                    "Client requested publishing stream on application '{}' with stream name \
+                    '{}', but no system has registered to receive publishers for this application",
+                    application_name, stream_name
+                );
+
+                let _ = notification_channel
+                    .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                return;
+            }
+        };
+
+        let registrant = match application.publisher_registrants.get(&StreamNameRegistration::Any) {
+            Some(registrant) => registrant,
+            None => match application.publisher_registrants.get(&StreamNameRegistration::Exact(stream_name.clone())) {
+                Some(registrant) => registrant,
+                None => {
+                    info!(
+                        connection_id = ?connection_id,
+                        "Client requested publishing stream on application '{}' with stream name \
+                        '{}', but no system has registered to receive publishers on this stream name for \
+                        this application", application_name, stream_name
+                    );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                    return;
+                }
+            }
+        };
+
+        if registrant.requires_registrant_approval {
+            info!(
+                connection_id = ?connection_id,
+                "Client requested publishing stream on application '{}' with stream name '{}', but \
+                publishing requires approval", application_name, stream_name
+            );
+
+            let (sender, receiver) = channel();
+            let _ = registrant.notification_channel
+                .send(WebrtcServerPublisherRegistrantNotification::PublisherRequiringApproval {
+                    stream_name: stream_name.clone(),
+                    connection_id,
+                    response_channel: sender,
+                });
+
+
         }
     }
 

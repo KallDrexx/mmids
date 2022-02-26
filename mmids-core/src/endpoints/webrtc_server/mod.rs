@@ -7,6 +7,7 @@ use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot::Sender;
 
 pub use actor::start_webrtc_server;
 
@@ -36,7 +37,7 @@ pub enum WebrtcServerRequest {
     },
 
     RemoveRegistration {
-        registration_type: RegistrationType,
+        registration_type: RequestType,
         application_name: String,
         stream_name: StreamNameRegistration,
     },
@@ -62,7 +63,7 @@ pub enum WebrtcServerPublisherRegistrantNotification {
     PublisherRequiringApproval {
         connection_id: ConnectionId,
         stream_name: String,
-        response_channel: UnboundedSender<ValidationResponse>,
+        response_channel: Sender<ValidationResponse>,
     },
 
     NewPublisherConnected {
@@ -142,7 +143,7 @@ pub enum ValidationResponse {
     },
 }
 
-pub enum RegistrationType {
+pub enum RequestType {
     Publisher,
     Watcher,
 }
