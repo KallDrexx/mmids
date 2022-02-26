@@ -10,6 +10,7 @@ use crate::{StreamId, VideoTimestamp};
 
 pub use actor::start_webrtc_server;
 
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub enum StreamNameRegistration {
     Any,
     Exact(String),
@@ -56,8 +57,8 @@ pub enum WebrtcServerRequest {
 }
 
 pub enum WebrtcServerPublisherRegistrantNotification {
-    RegistrationFailed,
-    RegistrationSuccessful,
+    RegistrationFailed { },
+    RegistrationSuccessful { },
     PublisherRequiringApproval {
         connection_id: ConnectionId,
         stream_name: String,
