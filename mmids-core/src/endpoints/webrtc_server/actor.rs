@@ -1,12 +1,15 @@
-use std::collections::HashMap;
-use futures::future::BoxFuture;
-use futures::{FutureExt, StreamExt};
-use futures::stream::FuturesUnordered;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{info, instrument, warn};
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::webrtc_server::actor::FutureResult::AllConsumersGone;
-use crate::endpoints::webrtc_server::{StreamNameRegistration, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest};
+use crate::endpoints::webrtc_server::{
+    RegistrationType, StreamNameRegistration, WebrtcServerPublisherRegistrantNotification,
+    WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification,
+};
+use futures::future::BoxFuture;
+use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
+use std::collections::HashMap;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{info, instrument, warn};
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
@@ -18,10 +21,18 @@ pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
 
 struct ApplicationDetails {
     publisher_registrants: HashMap<StreamNameRegistration, PublisherRegistrant>,
+    watcher_registrants: HashMap<StreamNameRegistration, WatcherRegistrant>,
 }
 
 struct PublisherRegistrant {
     notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
+    requires_registrant_approval: bool,
+    video_codec: VideoCodec,
+    audio_codec: AudioCodec,
+}
+
+struct WatcherRegistrant {
+    notification_channel: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
     requires_registrant_approval: bool,
     video_codec: VideoCodec,
     audio_codec: AudioCodec,
@@ -33,11 +44,16 @@ enum FutureResult {
     PublisherRegistrantGone {
         app_name: String,
         stream_name: StreamNameRegistration,
-    }
+    },
+
+    WatcherRegistrantGone {
+        app_name: String,
+        stream_name: StreamNameRegistration,
+    },
 }
 
 struct Actor {
-    futures: FuturesUnordered<BoxFuture<'static,  FutureResult>>,
+    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     applications: HashMap<String, ApplicationDetails>,
 }
 
@@ -71,8 +87,18 @@ impl Actor {
                     self.handle_request(request);
                 }
 
-                FutureResult::PublisherRegistrantGone {app_name, stream_name} => {
+                FutureResult::PublisherRegistrantGone {
+                    app_name,
+                    stream_name,
+                } => {
                     self.remove_publisher_registrant(app_name, stream_name);
+                }
+
+                FutureResult::WatcherRegistrantGone {
+                    app_name,
+                    stream_name,
+                } => {
+                    self.remove_watcher_registrant(app_name, stream_name);
                 }
             }
         }
@@ -100,8 +126,126 @@ impl Actor {
                 );
             }
 
-            todo => todo!()
+            WebrtcServerRequest::ListenForWatchers {
+                stream_name,
+                application_name,
+                notification_channel,
+                requires_registrant_approval,
+                audio_codec,
+                video_codec,
+            } => {
+                self.handle_listen_for_watcher_request(
+                    application_name,
+                    stream_name,
+                    notification_channel,
+                    requires_registrant_approval,
+                    video_codec,
+                    audio_codec,
+                );
+            }
+
+            WebrtcServerRequest::RemoveRegistration {
+                stream_name,
+                application_name,
+                registration_type,
+            } => match registration_type {
+                RegistrationType::Publisher => {
+                    self.remove_publisher_registrant(application_name, stream_name)
+                }
+
+                RegistrationType::Watcher => {
+                    self.remove_watcher_registrant(application_name, stream_name)
+                }
+            },
+
+            todo => todo!(),
         }
+    }
+
+    #[instrument(skip(self, notification_channel))]
+    fn handle_listen_for_watcher_request(
+        &mut self,
+        application_name: String,
+        stream_name: StreamNameRegistration,
+        notification_channel: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
+        requires_registrant_approval: bool,
+        video_codec: VideoCodec,
+        audio_codec: AudioCodec,
+    ) {
+        let application = self
+            .applications
+            .entry(application_name.clone())
+            .or_insert_with(|| ApplicationDetails {
+                publisher_registrants: HashMap::new(),
+                watcher_registrants: HashMap::new(),
+            });
+
+        if application
+            .watcher_registrants
+            .contains_key(&StreamNameRegistration::Any)
+        {
+            warn!(
+                "WebRTC watcher registration failed as another system has requested watcher \
+                    registration for all stream names for application '{}'",
+                application_name
+            );
+
+            let _ = notification_channel
+                .send(WebrtcServerWatcherRegistrantNotification::RegistrationFailed);
+
+            return;
+        }
+
+        if let StreamNameRegistration::Exact(exact_name) = &stream_name {
+            if application
+                .watcher_registrants
+                .contains_key(&StreamNameRegistration::Exact(exact_name.clone()))
+            {
+                warn!(
+                    "WebRTC watcher registration failed as another system has requested watcher \
+                        registration for the stream name '{}' for application '{}'",
+                    exact_name, application_name
+                );
+
+                let _ = notification_channel
+                    .send(WebrtcServerWatcherRegistrantNotification::RegistrationFailed);
+
+                return;
+            }
+        } else if !application.watcher_registrants.is_empty() {
+            // Requester requested ::Any, but at least one stream name was already registered
+            warn!("WebRTC watcher registration for all stream names on application '{}' failed as \
+                    at least one other stream name for this application has already been registered",
+                    application_name);
+
+            let _ = notification_channel
+                .send(WebrtcServerWatcherRegistrantNotification::RegistrationFailed);
+
+            return;
+        }
+
+        // registration requirements are successful
+        application.watcher_registrants.insert(
+            stream_name.clone(),
+            WatcherRegistrant {
+                notification_channel: notification_channel.clone(),
+                video_codec,
+                audio_codec,
+                requires_registrant_approval,
+            },
+        );
+
+        self.futures.push(
+            notify_on_watcher_registrant_channel_closed(
+                application_name,
+                stream_name,
+                notification_channel.clone(),
+            )
+            .boxed(),
+        );
+
+        let _ = notification_channel
+            .send(WebrtcServerWatcherRegistrantNotification::RegistrationSuccessful);
     }
 
     #[instrument(skip(self, notification_channel))]
@@ -114,15 +258,23 @@ impl Actor {
         audio_codec: AudioCodec,
         video_codec: VideoCodec,
     ) {
-        let application = self.applications
+        let application = self
+            .applications
             .entry(application_name.clone())
             .or_insert_with(|| ApplicationDetails {
                 publisher_registrants: HashMap::new(),
+                watcher_registrants: HashMap::new(),
             });
 
-        if application.publisher_registrants.contains_key(&StreamNameRegistration::Any) {
-            warn!("WebRTC publish registration failed as another system has requested publisher \
-                    registration for all stream names for application {}", application_name);
+        if application
+            .publisher_registrants
+            .contains_key(&StreamNameRegistration::Any)
+        {
+            warn!(
+                "WebRTC publish registration failed as another system has requested publisher \
+                    registration for all stream names for application {}",
+                application_name
+            );
 
             let _ = notification_channel
                 .send(WebrtcServerPublisherRegistrantNotification::RegistrationFailed {});
@@ -131,11 +283,15 @@ impl Actor {
         }
 
         if let StreamNameRegistration::Exact(exact_name) = &stream_name {
-            if application.publisher_registrants
-                .contains_key(&StreamNameRegistration::Exact(exact_name.clone())) {
-                warn!("WebRTC publish registration failed as another system has requested publisher \
+            if application
+                .publisher_registrants
+                .contains_key(&StreamNameRegistration::Exact(exact_name.clone()))
+            {
+                warn!(
+                    "WebRTC publish registration failed as another system has requested publisher \
                         registration for stream name '{}' on application '{}'",
-                    exact_name, application_name);
+                    exact_name, application_name
+                );
 
                 let _ = notification_channel
                     .send(WebrtcServerPublisherRegistrantNotification::RegistrationFailed {});
@@ -155,20 +311,27 @@ impl Actor {
             }
         }
 
-        application.publisher_registrants.insert(stream_name.clone(), PublisherRegistrant {
-            notification_channel: notification_channel.clone(),
-            requires_registrant_approval,
-            video_codec,
-            audio_codec,
-        });
+        application.publisher_registrants.insert(
+            stream_name.clone(),
+            PublisherRegistrant {
+                notification_channel: notification_channel.clone(),
+                requires_registrant_approval,
+                video_codec,
+                audio_codec,
+            },
+        );
 
         self.futures.push(
             notify_on_pub_registrant_channel_closed(
                 application_name,
                 stream_name,
-                notification_channel)
-                .boxed()
-            );
+                notification_channel.clone(),
+            )
+            .boxed(),
+        );
+
+        let _ = notification_channel
+            .send(WebrtcServerPublisherRegistrantNotification::RegistrationSuccessful);
     }
 
     fn remove_publisher_registrant(
@@ -182,6 +345,19 @@ impl Actor {
         };
 
         application.publisher_registrants.remove(&stream_name);
+    }
+
+    fn remove_watcher_registrant(
+        &mut self,
+        application_name: String,
+        stream_name: StreamNameRegistration,
+    ) {
+        let application = match self.applications.get_mut(&application_name) {
+            Some(app) => app,
+            None => return,
+        };
+
+        application.watcher_registrants.remove(&stream_name);
     }
 }
 
@@ -202,6 +378,19 @@ async fn notify_on_pub_registrant_channel_closed(
     sender.closed().await;
 
     FutureResult::PublisherRegistrantGone {
+        app_name: application_name,
+        stream_name,
+    }
+}
+
+async fn notify_on_watcher_registrant_channel_closed(
+    application_name: String,
+    stream_name: StreamNameRegistration,
+    sender: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
+) -> FutureResult {
+    sender.closed().await;
+
+    FutureResult::WatcherRegistrantGone {
         app_name: application_name,
         stream_name,
     }

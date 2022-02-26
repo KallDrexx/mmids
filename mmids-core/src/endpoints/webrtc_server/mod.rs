@@ -1,12 +1,12 @@
 mod actor;
 
-use std::time::Duration;
-use bytes::Bytes;
-use tokio::sync::mpsc::UnboundedSender;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::ConnectionId;
 use crate::reactors::ReactorWorkflowUpdate;
 use crate::{StreamId, VideoTimestamp};
+use bytes::Bytes;
+use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub use actor::start_webrtc_server;
 
@@ -53,12 +53,12 @@ pub enum WebrtcServerRequest {
         stream_name: String,
         offer_sdp: String,
         notification_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
-    }
+    },
 }
 
 pub enum WebrtcServerPublisherRegistrantNotification {
-    RegistrationFailed { },
-    RegistrationSuccessful { },
+    RegistrationFailed {},
+    RegistrationSuccessful,
     PublisherRequiringApproval {
         connection_id: ConnectionId,
         stream_name: String,
@@ -105,14 +105,12 @@ pub enum WebrtcServerWatcherRegistrantNotification {
 
     StreamNameBecameInactive {
         stream_name: String,
-    }
+    },
 }
 
 pub enum WebrtcStreamPublisherNotification {
     PublishRequestRejected,
-    PublishRequestAccepted {
-        answer_sdp: String,
-    },
+    PublishRequestAccepted { answer_sdp: String },
 }
 
 pub enum WebrtcStreamWatcherNotification {
@@ -144,4 +142,7 @@ pub enum ValidationResponse {
     },
 }
 
-pub enum RegistrationType { Publisher, Watcher }
+pub enum RegistrationType {
+    Publisher,
+    Watcher,
+}
