@@ -6,7 +6,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::channel;
+use tokio::sync::oneshot::{channel, Receiver};
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 use webrtc::util::Conn;
@@ -52,11 +52,11 @@ enum FutureResult {
         stream_name: StreamNameRegistration,
     },
 
-    ValidationChannelClosed {
+    PublishValidationChannelClosed {
         application_name: String,
         stream_name: String,
-        operation_type: RequestType,
         connection_id: ConnectionId,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     },
 
     PublishValidationResponse {
@@ -65,6 +65,7 @@ enum FutureResult {
         connection_id: ConnectionId,
         response: ValidationResponse,
         notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+        offer_sdp: String,
     },
 
     WatcherValidationResponse {
@@ -124,10 +125,46 @@ impl Actor {
                 } => {
                     self.remove_watcher_registrant(app_name, stream_name);
                 }
+
+                FutureResult::PublishValidationChannelClosed {
+                    application_name,
+                    stream_name,
+                    connection_id,
+                    notification_channel,
+                } => {
+                    warn!(
+                        application_name = %application_name,
+                        stream_name = %stream_name,
+                        connection_id = ?connection_id,
+                        "Stream publish request on application '{}' and stream '{}' auto-rejected \
+                        as the validation channel was closed", application_name, stream_name
+                    );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+                }
+
+                FutureResult::PublishValidationResponse {
+                    application_name,
+                    stream_name,
+                    connection_id,
+                    notification_channel,
+                    offer_sdp,
+                    response,
+                } => {
+                    self.handle_pub_validation_response(
+                        application_name,
+                        stream_name,
+                        connection_id,
+                        notification_channel,
+                        offer_sdp,
+                        response,
+                    );
+                }
             }
         }
 
-        info!("WebRTC server stoppingb");
+        info!("WebRTC server stopping");
     }
 
     fn handle_request(&mut self, request: WebrtcServerRequest) {
@@ -188,14 +225,19 @@ impl Actor {
                 notification_channel,
                 offer_sdp,
             } => {
-
+                self.handle_stream_publish_requested(
+                    application_name,
+                    stream_name,
+                    notification_channel,
+                    offer_sdp,
+                );
             }
 
             todo => todo!(),
         }
     }
 
-    #[instrument(skip(self, notification_channel))]
+    #[instrument(skip(self, notification_channel, offer_sdp))]
     fn handle_stream_publish_requested(
         &mut self,
         application_name: String,
@@ -252,12 +294,24 @@ impl Actor {
             let _ = registrant.notification_channel
                 .send(WebrtcServerPublisherRegistrantNotification::PublisherRequiringApproval {
                     stream_name: stream_name.clone(),
-                    connection_id,
+                    connection_id: connection_id.clone(),
                     response_channel: sender,
                 });
 
+            self.futures.push(notify_on_pub_validation(
+                application_name,
+                stream_name,
+                connection_id,
+                receiver,
+                notification_channel,
+                offer_sdp,
+            ).boxed());
 
+            return;
         }
+
+        // No registration required
+        self.add_publisher(application_name, stream_name, connection_id, notification_channel);
     }
 
     #[instrument(skip(self, notification_channel))]
@@ -432,6 +486,33 @@ impl Actor {
             .send(WebrtcServerPublisherRegistrantNotification::RegistrationSuccessful);
     }
 
+    #[instrument(skip(self, notification_channel, offer_sdp))]
+    fn handle_pub_validation_response(
+        &mut self,
+        application_name: String,
+        stream_name: String,
+        connection_id: ConnectionId,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+        offer_sdp: String,
+        response: ValidationResponse,
+    ) {
+        match response {
+            ValidationResponse::Reject => {
+                info!(
+                    "Publish request on application '{}' stream '{}' was rejected",
+                    application_name, stream_name
+                );
+
+                let _ = notification_channel
+                    .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+            }
+
+            ValidationResponse::Approve {reactor_update_channel} => {
+
+            }
+        }
+    }
+
     fn remove_publisher_registrant(
         &mut self,
         application_name: String,
@@ -456,6 +537,16 @@ impl Actor {
         };
 
         application.watcher_registrants.remove(&stream_name);
+    }
+
+    fn add_publisher(
+        &mut self,
+        application_name: String,
+        stream_name: String,
+        connection_id: ConnectionId,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    ) {
+
     }
 }
 
@@ -491,5 +582,32 @@ async fn notify_on_watcher_registrant_channel_closed(
     FutureResult::WatcherRegistrantGone {
         app_name: application_name,
         stream_name,
+    }
+}
+
+async fn notify_on_pub_validation(
+    application_name: String,
+    stream_name: String,
+    connection_id: ConnectionId,
+    mut receiver: Receiver<ValidationResponse>,
+    notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    offer_sdp: String,
+) -> FutureResult {
+    match receiver.await {
+        Some(response) => FutureResult::PublishValidationResponse {
+            connection_id,
+            application_name,
+            stream_name,
+            notification_channel,
+            response,
+            offer_sdp,
+        },
+
+        None => FutureResult::ValidationChannelClosed {
+            connection_id,
+            application_name,
+            stream_name,
+            operation_type: RequestType::Publisher,
+        }
     }
 }
