@@ -7,7 +7,7 @@ use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::{channel, Receiver};
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 use webrtc::util::Conn;
 use crate::net::ConnectionId;
@@ -39,6 +39,28 @@ struct WatcherRegistrant {
     audio_codec: AudioCodec,
 }
 
+enum ConnectionDetails {
+    PublisherCreated {
+        application_name: String,
+        stream_name: String,
+        offer_sdp: String,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    },
+
+    PublisherPendingValidation {
+        application_name: String,
+        stream_name: String,
+        offer_sdp: String,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    },
+
+    PublisherActive {
+        application_name: String,
+        stream_name: String,
+        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    },
+}
+
 enum FutureResult {
     AllConsumersGone,
     RequestReceived(WebrtcServerRequest, UnboundedReceiver<WebrtcServerRequest>),
@@ -53,33 +75,19 @@ enum FutureResult {
     },
 
     PublishValidationChannelClosed {
-        application_name: String,
-        stream_name: String,
         connection_id: ConnectionId,
-        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     },
 
     PublishValidationResponse {
-        application_name: String,
-        stream_name: String,
         connection_id: ConnectionId,
         response: ValidationResponse,
-        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
-        offer_sdp: String,
-    },
-
-    WatcherValidationResponse {
-        application_name: String,
-        stream_name: String,
-        connection_id: ConnectionId,
-        response: ValidationResponse,
-        notification_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
     },
 }
 
 struct Actor {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     applications: HashMap<String, ApplicationDetails>,
+    connections: HashMap<ConnectionId, ConnectionDetails>,
 }
 
 impl Actor {
@@ -90,6 +98,7 @@ impl Actor {
         Actor {
             futures,
             applications: HashMap::new(),
+            connections: HashMap::new(),
         }
     }
 
@@ -126,22 +135,7 @@ impl Actor {
                     self.remove_watcher_registrant(app_name, stream_name);
                 }
 
-                FutureResult::PublishValidationChannelClosed {
-                    application_name,
-                    stream_name,
-                    connection_id,
-                    notification_channel,
-                } => {
-                    warn!(
-                        application_name = %application_name,
-                        stream_name = %stream_name,
-                        connection_id = ?connection_id,
-                        "Stream publish request on application '{}' and stream '{}' auto-rejected \
-                        as the validation channel was closed", application_name, stream_name
-                    );
-
-                    let _ = notification_channel
-                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+                FutureResult::PublishValidationChannelClosed {connection_id} => {
                 }
 
                 FutureResult::PublishValidationResponse {
@@ -165,6 +159,33 @@ impl Actor {
         }
 
         info!("WebRTC server stopping");
+    }
+
+    fn handle_pub_validation_channel_closed(&mut self, connection_id: ConnectionId) {
+        let connection = match self.connections.remove(&connection_id) {
+            Some(connection) => connection,
+            None => return,
+        };
+
+        match connection {
+            ConnectionDetails::PublisherPendingValidation {
+                application_name,
+                stream_name,
+                offer_sdp,
+                notification_channel,
+            } => {
+                warn!(
+                        application_name = %application_name,
+                        stream_name = %stream_name,
+                        connection_id = ?connection_id,
+                        "Stream publish request on application '{}' and stream '{}' auto-rejected \
+                        as the validation channel was closed", application_name, stream_name
+                    );
+
+                let _ = notification_channel
+                    .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+            }
+        }
     }
 
     fn handle_request(&mut self, request: WebrtcServerRequest) {
