@@ -21,8 +21,8 @@ pub enum WebrtcServerRequest {
     ListenForPublishers {
         application_name: String,
         stream_name: StreamNameRegistration,
-        video_codec: VideoCodec,
-        audio_codec: AudioCodec,
+        video_codec: Option<VideoCodec>,
+        audio_codec: Option<AudioCodec>,
         requires_registrant_approval: bool,
         notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
     },
@@ -30,8 +30,8 @@ pub enum WebrtcServerRequest {
     ListenForWatchers {
         application_name: String,
         stream_name: StreamNameRegistration,
-        video_codec: VideoCodec,
-        audio_codec: AudioCodec,
+        video_codec: Option<VideoCodec>,
+        audio_codec: Option<AudioCodec>,
         requires_registrant_approval: bool,
         notification_channel: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
     },
@@ -136,6 +136,7 @@ pub enum WebrtcStreamWatcherNotification {
     },
 }
 
+#[derive(Debug)]
 pub enum ValidationResponse {
     Reject,
     Approve {

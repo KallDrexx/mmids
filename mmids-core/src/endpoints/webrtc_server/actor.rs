@@ -9,6 +9,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::{channel, Receiver};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
+use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264};
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
 use webrtc::util::Conn;
 use crate::net::ConnectionId;
 
@@ -28,25 +30,20 @@ struct ApplicationDetails {
 struct PublisherRegistrant {
     notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
     requires_registrant_approval: bool,
-    video_codec: VideoCodec,
-    audio_codec: AudioCodec,
+    video_codec: Option<VideoCodec>,
+    audio_codec: Option<AudioCodec>,
+    active_publisher: Option<ConnectionId>,
 }
 
 struct WatcherRegistrant {
     notification_channel: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
     requires_registrant_approval: bool,
-    video_codec: VideoCodec,
-    audio_codec: AudioCodec,
+    video_codec: Option<VideoCodec>,
+    audio_codec: Option<AudioCodec>,
 }
 
-enum ConnectionDetails {
-    PublisherCreated {
-        application_name: String,
-        stream_name: String,
-        offer_sdp: String,
-        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
-    },
-
+#[derive(Debug)]
+enum ConnectionState {
     PublisherPendingValidation {
         application_name: String,
         stream_name: String,
@@ -87,7 +84,7 @@ enum FutureResult {
 struct Actor {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     applications: HashMap<String, ApplicationDetails>,
-    connections: HashMap<ConnectionId, ConnectionDetails>,
+    connections: HashMap<ConnectionId, ConnectionState>,
 }
 
 impl Actor {
@@ -136,22 +133,15 @@ impl Actor {
                 }
 
                 FutureResult::PublishValidationChannelClosed {connection_id} => {
+                    self.handle_pub_validation_channel_closed(connection_id);
                 }
 
                 FutureResult::PublishValidationResponse {
-                    application_name,
-                    stream_name,
                     connection_id,
-                    notification_channel,
-                    offer_sdp,
                     response,
                 } => {
                     self.handle_pub_validation_response(
-                        application_name,
-                        stream_name,
                         connection_id,
-                        notification_channel,
-                        offer_sdp,
                         response,
                     );
                 }
@@ -168,10 +158,10 @@ impl Actor {
         };
 
         match connection {
-            ConnectionDetails::PublisherPendingValidation {
+            ConnectionState::PublisherPendingValidation {
                 application_name,
                 stream_name,
-                offer_sdp,
+                offer_sdp: _,
                 notification_channel,
             } => {
                 warn!(
@@ -184,6 +174,15 @@ impl Actor {
 
                 let _ = notification_channel
                     .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+            }
+
+            state => {
+                error!(
+                    connection_id = ?connection_id,
+                    "Received stream publish validation channel closed message on a connection in an \
+                    unexpected state of {:?}.  Connection has been removed.",
+                    state,
+                )
             }
         }
     }
@@ -267,6 +266,7 @@ impl Actor {
         offer_sdp: String,
     ) {
         let connection_id = ConnectionId(Uuid::new_v4().to_string());
+
         let application = match self.applications.get_mut(&application_name) {
             Some(app) => app,
             None => {
@@ -320,19 +320,21 @@ impl Actor {
                 });
 
             self.futures.push(notify_on_pub_validation(
-                application_name,
-                stream_name,
                 connection_id,
                 receiver,
-                notification_channel,
-                offer_sdp,
             ).boxed());
 
             return;
         }
 
         // No registration required
-        self.add_publisher(application_name, stream_name, connection_id, notification_channel);
+        self.setup_publisher_connection(
+            connection_id,
+            application_name,
+            stream_name,
+            offer_sdp,
+            notification_channel
+        );
     }
 
     #[instrument(skip(self, notification_channel))]
@@ -342,8 +344,8 @@ impl Actor {
         stream_name: StreamNameRegistration,
         notification_channel: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
         requires_registrant_approval: bool,
-        video_codec: VideoCodec,
-        audio_codec: AudioCodec,
+        video_codec: Option<VideoCodec>,
+        audio_codec: Option<AudioCodec>,
     ) {
         let application = self
             .applications
@@ -428,8 +430,8 @@ impl Actor {
         stream_name: StreamNameRegistration,
         notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
         requires_registrant_approval: bool,
-        audio_codec: AudioCodec,
-        video_codec: VideoCodec,
+        audio_codec: Option<AudioCodec>,
+        video_codec: Option<VideoCodec>,
     ) {
         let application = self
             .applications
@@ -491,6 +493,7 @@ impl Actor {
                 requires_registrant_approval,
                 video_codec,
                 audio_codec,
+                active_publisher: None,
             },
         );
 
@@ -507,21 +510,48 @@ impl Actor {
             .send(WebrtcServerPublisherRegistrantNotification::RegistrationSuccessful);
     }
 
-    #[instrument(skip(self, notification_channel, offer_sdp))]
+    #[instrument(skip(self))]
     fn handle_pub_validation_response(
         &mut self,
-        application_name: String,
-        stream_name: String,
         connection_id: ConnectionId,
-        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
-        offer_sdp: String,
         response: ValidationResponse,
     ) {
+        let connection_state = match self.connections.remove(&connection_id) {
+            Some(state) => state,
+            None => return, // connection probably closed before validation came back
+        };
+
+        let (app_name, stream_name, offer_sdp, notification_channel) = match connection_state {
+            ConnectionState::PublisherPendingValidation {
+                application_name,
+                stream_name,
+                offer_sdp,
+                notification_channel,
+            } => {
+                (application_name, stream_name, offer_sdp, notification_channel)
+            }
+
+            state => {
+                error!(
+                    connection_id = ?connection_id,
+                    "Connection received a publisher validation response but was in an unexpected \
+                    connection state of {:?}.  Ignoring...", state
+                );
+
+                self.connections.insert(connection_id, state);
+
+                return;
+            }
+        };
+
         match response {
             ValidationResponse::Reject => {
                 info!(
+                    connection_id = ?connection_id,
+                    application_name = %app_name,
+                    stream_name = %stream_name,
                     "Publish request on application '{}' stream '{}' was rejected",
-                    application_name, stream_name
+                    app_name, stream_name
                 );
 
                 let _ = notification_channel
@@ -529,7 +559,21 @@ impl Actor {
             }
 
             ValidationResponse::Approve {reactor_update_channel} => {
+                info!(
+                    connection_id = ?connection_id,
+                    application_name = %app_name,
+                    stream_name = %stream_name,
+                    "Publish request on application '{}' stream '{}' was accepted",
+                    app_name, stream_name
+                );
 
+                self.setup_publisher_connection(
+                    connection_id,
+                    app_name,
+                    stream_name,
+                    offer_sdp,
+                    notification_channel,
+                );
             }
         }
     }
@@ -560,14 +604,131 @@ impl Actor {
         application.watcher_registrants.remove(&stream_name);
     }
 
-    fn add_publisher(
+    #[instrument(skip(self, notification_channel, offer_sdp))]
+    fn setup_publisher_connection(
         &mut self,
+        connection_id: ConnectionId,
         application_name: String,
         stream_name: String,
-        connection_id: ConnectionId,
+        offer_sdp: String,
         notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     ) {
+        // We need to validate these again in case the registrants has gone away after validation
+        let application = match self.applications.get_mut(application_name.as_str()) {
+            Some(app) => app,
+            None => {
+                info!(
+                    "Client requested publishing stream but no system has registered to receive \
+                    publishers for this application",
+                );
 
+                let _ = notification_channel
+                    .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                return;
+            }
+        };
+
+        let registrant = match application.publisher_registrants.get_mut(&StreamNameRegistration::Any) {
+            Some(registrant) => registrant,
+            None => match application.publisher_registrants.get_mut(&StreamNameRegistration::Exact(stream_name.clone())) {
+                Some(registrant) => registrant,
+                None => {
+                    info!(
+                        "Client requested publishing stream but no system has registered to receive \
+                        publishers on this stream name for this application"
+                    );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                    return;
+                }
+            }
+        };
+
+        if registrant.active_publisher.is_some() {
+            info!("Client requested publishing but another publisher is already active");
+
+            let _ = notification_channel
+                .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+            return;
+        }
+
+        // setup webrtc
+        let mut media_engine = MediaEngine::default();
+
+        if let Some(video_codec) = &registrant.video_codec {
+            match video_codec {
+                VideoCodec::H264 => {
+                    let result = media_engine.register_codec(
+                        RTCRtpCodecParameters {
+                            capability: RTCRtpCodecCapability {
+                                mime_type: MIME_TYPE_H264.to_owned(),
+                                clock_rate: 90000,
+                                channels: 0,
+                                sdp_fmtp_line: "".to_owned(),
+                                rtcp_feedback: vec![],
+                            },
+                            payload_type: 102,
+                            ..Default::default()
+                        },
+                        RTPCodecType::Video,
+                    );
+
+                    if let Err(error) = result {
+                        error!("Failed to add h264 to the WebRTC media engine: {:?}", error);
+                        let _ = notification_channel
+                            .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                        return;
+                    }
+                }
+
+                VideoCodec::Unknown => {
+                    error!(
+                    "Publisher registrant registered with unknown video codec, and thus we \
+                    cannot initialize WebRTC"
+                );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                    return;
+                }
+            }
+        }
+
+        if let Some(audio_codec) = &registrant.audio_codec {
+            match audio_codec {
+                AudioCodec::Aac => {
+                    error!(
+                    "Publisher registrant registered with the AAC audio codec, which isn't \
+                    available for WebRTC!"
+                );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                    return;
+                }
+
+                AudioCodec::Unknown => {
+                    error!(
+                    "Publisher registrant registered with unknown video codec, and thus we \
+                    cannot initialize WebRTC"
+                );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
+
+                    return;
+                }
+            }
+        }
+
+        registrant.active_publisher = Some(connection_id.clone());
     }
 }
 
@@ -607,28 +768,17 @@ async fn notify_on_watcher_registrant_channel_closed(
 }
 
 async fn notify_on_pub_validation(
-    application_name: String,
-    stream_name: String,
     connection_id: ConnectionId,
     mut receiver: Receiver<ValidationResponse>,
-    notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
-    offer_sdp: String,
 ) -> FutureResult {
     match receiver.await {
-        Some(response) => FutureResult::PublishValidationResponse {
+        Ok(response) => FutureResult::PublishValidationResponse {
             connection_id,
-            application_name,
-            stream_name,
-            notification_channel,
             response,
-            offer_sdp,
         },
 
-        None => FutureResult::ValidationChannelClosed {
+        Err(_) => FutureResult::PublishValidationChannelClosed {
             connection_id,
-            application_name,
-            stream_name,
-            operation_type: RequestType::Publisher,
         }
     }
 }
