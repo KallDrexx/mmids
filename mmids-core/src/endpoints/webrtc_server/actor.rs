@@ -10,9 +10,12 @@ use tokio::sync::oneshot::{channel, Receiver};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264};
+use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
 use webrtc::util::Conn;
+use crate::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
 use crate::net::ConnectionId;
+use crate::webrtc_utils::{create_webrtc_connection, register_audio_codec_to_media_engine, register_video_codec_to_media_engine};
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
@@ -48,13 +51,13 @@ enum ConnectionState {
         application_name: String,
         stream_name: String,
         offer_sdp: String,
-        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+        publisher_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     },
 
     PublisherActive {
         application_name: String,
         stream_name: String,
-        notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+        connection_handler: UnboundedSender<PublisherConnectionHandlerRequest>,
     },
 }
 
@@ -79,6 +82,8 @@ enum FutureResult {
         connection_id: ConnectionId,
         response: ValidationResponse,
     },
+
+    PublishConnectionHandlerGone(ConnectionId),
 }
 
 struct Actor {
@@ -145,6 +150,15 @@ impl Actor {
                         response,
                     );
                 }
+
+                FutureResult::PublishConnectionHandlerGone(connection_id) => {
+                    if let Some(_) = self.connections.remove(&connection_id) {
+                        info!(
+                            connection_id = ?connection_id,
+                            "Publish connection handler unexpectedly closed",
+                        );
+                    }
+                }
             }
         }
 
@@ -162,7 +176,7 @@ impl Actor {
                 application_name,
                 stream_name,
                 offer_sdp: _,
-                notification_channel,
+                publisher_channel: notification_channel,
             } => {
                 warn!(
                         application_name = %application_name,
@@ -526,7 +540,7 @@ impl Actor {
                 application_name,
                 stream_name,
                 offer_sdp,
-                notification_channel,
+                publisher_channel: notification_channel,
             } => {
                 (application_name, stream_name, offer_sdp, notification_channel)
             }
@@ -656,77 +670,25 @@ impl Actor {
             return;
         }
 
-        // setup webrtc
-        let mut media_engine = MediaEngine::default();
+        let parameters = PublisherConnectionHandlerParams {
+            connection_id: connection_id.clone(),
+            video_codec: registrant.video_codec,
+            audio_codec: registrant.audio_codec,
+            offer_sdp,
+            publisher_notification_channel: notification_channel.clone(),
+            registrant_notification_channel: registrant.notification_channel.clone(),
+        };
 
-        if let Some(video_codec) = &registrant.video_codec {
-            match video_codec {
-                VideoCodec::H264 => {
-                    let result = media_engine.register_codec(
-                        RTCRtpCodecParameters {
-                            capability: RTCRtpCodecCapability {
-                                mime_type: MIME_TYPE_H264.to_owned(),
-                                clock_rate: 90000,
-                                channels: 0,
-                                sdp_fmtp_line: "".to_owned(),
-                                rtcp_feedback: vec![],
-                            },
-                            payload_type: 102,
-                            ..Default::default()
-                        },
-                        RTPCodecType::Video,
-                    );
+        let connection_handler = start_publisher_connection(parameters);
+        self.futures.push(
+            notify_on_pub_connection_handler_gone(connection_id.clone(), connection_handler.clone()).boxed()
+        );
 
-                    if let Err(error) = result {
-                        error!("Failed to add h264 to the WebRTC media engine: {:?}", error);
-                        let _ = notification_channel
-                            .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
-
-                        return;
-                    }
-                }
-
-                VideoCodec::Unknown => {
-                    error!(
-                    "Publisher registrant registered with unknown video codec, and thus we \
-                    cannot initialize WebRTC"
-                );
-
-                    let _ = notification_channel
-                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
-
-                    return;
-                }
-            }
-        }
-
-        if let Some(audio_codec) = &registrant.audio_codec {
-            match audio_codec {
-                AudioCodec::Aac => {
-                    error!(
-                    "Publisher registrant registered with the AAC audio codec, which isn't \
-                    available for WebRTC!"
-                );
-
-                    let _ = notification_channel
-                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
-
-                    return;
-                }
-
-                AudioCodec::Unknown => {
-                    error!(
-                    "Publisher registrant registered with unknown video codec, and thus we \
-                    cannot initialize WebRTC"
-                );
-
-                    let _ = notification_channel
-                        .send(WebrtcStreamPublisherNotification::PublishRequestRejected);
-
-                    return;
-                }
-            }
-        }
+        self.connections.insert(connection_id.clone(), ConnectionState::PublisherActive {
+            application_name,
+            stream_name,
+            connection_handler,
+        });
 
         registrant.active_publisher = Some(connection_id.clone());
     }
@@ -781,4 +743,13 @@ async fn notify_on_pub_validation(
             connection_id,
         }
     }
+}
+
+async fn notify_on_pub_connection_handler_gone(
+    connection_id: ConnectionId,
+    sender: UnboundedSender<PublisherConnectionHandlerRequest>,
+) -> FutureResult {
+    sender.closed().await;
+
+    FutureResult::PublishConnectionHandlerGone(connection_id)
 }
