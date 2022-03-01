@@ -4,7 +4,8 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::stream::FuturesUnordered;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{info, instrument};
+use tokio::sync::watch;
+use tracing::{error, info, instrument};
 use webrtc::media::track::setting::audio::Audio;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
@@ -116,13 +117,50 @@ impl PublisherConnectionHandler {
     }
 }
 
-fn handle_incoming_track(
-    track: Option<Arc<TrackRemote>>,
+async fn handle__track(
+    track: Arc<TrackRemote>,
     video_codec: Option<VideoCodec>,
     audio_codec: Option<AudioCodec>,
     registrant_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
+    connection_id: ConnectionId,
 ) {
-    TODO: pull video or audio out of track and send it to registrant
+    let track_codec = track.codec().await;
+    let mime_type = track_codec.capability.mime_type.to_lowercase();
+
+    enum CodecType { Video, Audio }
+    let codec_type = if let Some(video_codec) = video_codec {
+        if video_codec.to_mime_type() == Some(mime_type) {
+            Some(CodecType::Video)
+        } else {
+            None
+        }
+    } else if let Some(audio_codec) = audio_codec {
+        if audio_codec.to_mime_type() == Some(mime_type) {
+            Some(CodecType::Audio)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    match codec_type {
+        Some(CodecType::Video) => {
+
+        }
+
+        Some(CodecType::Audio) => {
+
+        }
+
+        None => {
+            error!(
+                connection_id = ?connection_id
+                "Received track with mime type of '{}' which could not be matched to the \
+                designated audio or video codec", mime_type
+            );
+        }
+    }
 }
 
 async fn notify_on_request_received(
@@ -152,4 +190,41 @@ async fn notify_on_registrant_gone(
     sender.closed().await;
 
     FutureResult::RegistrantGone
+}
+
+#[instrument(skip(track, cancellation_token, registrant_channel))]
+async fn read_video_track(
+    track: Arc<TrackRemote>,
+    connection_id: ConnectionId,
+    cancellation_token: watch::Receiver<bool>,
+    registrant_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
+) {
+    loop {
+        tokio::select! {
+            result = track.read_rtp() => {
+                match result {
+                    Ok((rtp_packet, _)) => {
+                        // Need to switch on video codec, and for h264 call
+                        // webrtc::rtp::codecs::h264::H264Packet.depacketize(rtp_packet.payload).
+                        // Might need to do more too.  See https://github.com/webrtc-rs/media/blob/main/src/io/h264_writer/mod.rs
+                        // and https://github.com/webrtc-rs/rtp/blob/main/src/codecs/h264/mod.rs
+                        adfadfadf
+
+                    }
+
+                    Err(error) => {
+                        error!("Error reading rtp packet: {:?}", error);
+                        break;
+                    }
+                }
+            }
+
+            should_cancel = cancellation_token.changed() => {
+                if should_cancel {
+                    info!("Cancellation requested, no longer reading track");
+                    break;
+                }
+            }
+        }
+    }
 }
