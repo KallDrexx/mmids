@@ -21,7 +21,7 @@ pub mod reactors;
 #[cfg(test)]
 mod test_utils;
 mod utils;
-pub mod webrtc_utils;
+pub mod webrtc;
 pub mod workflows;
 
 /// Unique identifier that identifies the flow of video end-to-end.  Normally when media data enters
@@ -58,6 +58,15 @@ impl VideoTimestamp {
         VideoTimestamp {
             dts: Duration::from_millis(rtmp_timestamp.value as u64),
             pts_offset: composition_time_offset,
+        }
+    }
+
+    /// Creates a new video timestamp from an RTP packet.  This is assuming the RTP packet header's
+    /// timestamp has already been adjusted from the rtcp session.
+    pub fn from_rtp_packet(packet: &rtp::packet::Packet) -> VideoTimestamp {
+        VideoTimestamp {
+            dts: Duration::from_millis(packet.header.timestamp as u64),
+            pts_offset: 0,
         }
     }
 

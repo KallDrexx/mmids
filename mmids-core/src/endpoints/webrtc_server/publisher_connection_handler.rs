@@ -13,7 +13,7 @@ use webrtc::track::track_remote::TrackRemote;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 use crate::net::ConnectionId;
-use crate::webrtc_utils::create_webrtc_connection;
+use crate::webrtc::utils::create_webrtc_connection;
 
 pub struct PublisherConnectionHandlerParams {
     pub connection_id: ConnectionId,
@@ -228,3 +228,4 @@ async fn read_video_track(
         }
     }
 }
+

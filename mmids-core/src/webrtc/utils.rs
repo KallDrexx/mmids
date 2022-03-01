@@ -46,7 +46,7 @@ pub async fn create_webrtc_connection(
     Ok(peer_connection)
 }
 
-pub fn register_video_codec_to_media_engine(
+fn register_video_codec_to_media_engine(
     media_engine: &mut MediaEngine,
     codec: VideoCodec,
 ) -> Result<()> {
@@ -78,7 +78,7 @@ pub fn register_video_codec_to_media_engine(
     }
 }
 
-pub fn register_audio_codec_to_media_engine(
+fn register_audio_codec_to_media_engine(
     _media_engine: &mut MediaEngine,
     codec: AudioCodec,
 ) -> Result<()> {

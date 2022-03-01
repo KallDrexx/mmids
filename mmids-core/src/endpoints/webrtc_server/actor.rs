@@ -15,7 +15,7 @@ use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParam
 use webrtc::util::Conn;
 use crate::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
 use crate::net::ConnectionId;
-use crate::webrtc_utils::{create_webrtc_connection, register_audio_codec_to_media_engine, register_video_codec_to_media_engine};
+use crate::webrtc::utils::{create_webrtc_connection, register_audio_codec_to_media_engine, register_video_codec_to_media_engine};
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
