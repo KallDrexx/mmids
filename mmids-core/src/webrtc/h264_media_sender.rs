@@ -5,6 +5,7 @@ use rtp::packetizer::Depacketizer;
 use tokio::sync::mpsc::UnboundedSender;
 use crate::codecs::VideoCodec;
 use crate::VideoTimestamp;
+use crate::webrtc::RtpToMediaContentSender;
 use crate::workflows::MediaNotificationContent;
 
 const NALU_TTYPE_STAP_A: u32 = 24;
@@ -29,10 +30,14 @@ impl H264MediaSender {
             has_sent_keyframe: false,
         }
     }
+}
 
-    pub fn send_rtp_data(&mut self, packet: &Packet) -> Result<(), webrtc::error::Error> {
+unsafe impl Send for H264MediaSender{ }
+
+impl RtpToMediaContentSender for H264MediaSender {
+    fn send_rtp_data(&mut self, packet: &Packet) -> Result<(), webrtc::error::Error> {
         if packet.payload.is_empty() {
-            Ok(())
+            return Ok(());
         }
 
         let is_key_frame = is_key_frame(&packet.payload);

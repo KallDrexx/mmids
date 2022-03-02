@@ -7,10 +7,11 @@ use crate::reactors::ReactorWorkflowUpdate;
 use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
 use std::time::Duration;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 
 pub use actor::start_webrtc_server;
+use crate::workflows::MediaNotificationContent;
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub enum StreamNameRegistration {
@@ -72,23 +73,7 @@ pub enum WebrtcServerPublisherRegistrantNotification {
         stream_id: StreamId,
         stream_name: String,
         reactor_update_channel: Option<UnboundedSender<ReactorWorkflowUpdate>>,
-    },
-
-    NewVideoData {
-        publisher: ConnectionId,
-        codec: VideoCodec,
-        is_keyframe: bool,
-        is_sequence_header: bool,
-        data: Bytes,
-        timestamp: VideoTimestamp,
-    },
-
-    NewAudioData {
-        publisher: ConnectionId,
-        codec: AudioCodec,
-        is_sequence_header: bool,
-        data: Bytes,
-        timestamp: Duration,
+        media_channel: UnboundedReceiver<MediaNotificationContent>,
     },
 }
 

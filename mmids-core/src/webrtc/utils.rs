@@ -7,6 +7,8 @@ use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::webrtc_server::WebrtcStreamPublisherNotification;
@@ -44,6 +46,15 @@ pub async fn create_webrtc_connection(
     let peer_connection = api.new_peer_connection(config).await?;
 
     Ok(peer_connection)
+}
+
+pub fn offer_to_sdp_struct(sdp_string: String) -> Result<RTCSessionDescription> {
+    // Due to private fields we can't create a RTCSessionDescription without json deserialization
+    let sdp_string = sdp_string.replace("\"", "\\\"");
+    let json = format!("{{\"type\": \"offer\", \"sdp\": \"{}\"}}", sdp_string);
+
+    serde_json::from_str(&json)
+        .with_context(|| "Failed to serialize offer sdp")
 }
 
 fn register_video_codec_to_media_engine(
