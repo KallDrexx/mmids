@@ -1,13 +1,16 @@
+use futures::StreamExt;
 use tokio::fs;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing_subscriber::{fmt, layer::SubscriberExt};
 use tracing::{info};
 use tracing::log::warn;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, start_publisher_connection};
 use mmids_core::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 use mmids_core::net::ConnectionId;
+use mmids_core::workflows::MediaNotificationContent;
 
 #[tokio::main()]
 pub async fn main() {
@@ -18,12 +21,14 @@ pub async fn main() {
 
     info!("WebRTC validator starting");
 
-    let mut file = fs::File::open("offer.sdp").await
-        .expect("Could not open offer.sdp");
-
-    let mut sdp = String::new();
-    file.read_to_string(&mut sdp).await
-        .expect("Failed to read contents of offer.sdp");
+    println!("Enter base64 sdp: ");
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let line = reader.lines().next_line().await.unwrap().unwrap();
+    let bytes = base64::decode(line).unwrap();
+    let json = String::from_utf8(bytes).unwrap();
+    let offer = serde_json::from_str::<RTCSessionDescription>(&json).unwrap();
+    let sdp = offer.sdp;
 
     let (registrant_sender, mut registrant_receiver) = unbounded_channel();
     let (publisher_sender, mut publisher_receiver) = unbounded_channel();
@@ -82,9 +87,22 @@ fn handle_registrant_notification(notification: WebrtcServerPublisherRegistrantN
         WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
             connection_id,
             stream_name,
+            mut media_channel,
             ..
         } => {
             info!("New publisher connected with connection {:?} and stream name {}", connection_id, stream_name);
+
+            tokio::spawn(async move {
+                while let Some(content) = media_channel.recv().await {
+                    match content {
+                        MediaNotificationContent::Video {..} => info!("Video Received"),
+                        MediaNotificationContent::Audio {..} => info!("Audio Recieved"),
+                        _ => (),
+                    }
+                }
+
+                info!("Media channel closed");
+            });
         }
 
         WebrtcServerPublisherRegistrantNotification::PublisherRequiringApproval {..} => {
@@ -100,7 +118,11 @@ fn handle_publisher_notification(notification: WebrtcStreamPublisherNotification
         }
 
         WebrtcStreamPublisherNotification::PublishRequestAccepted {answer_sdp} => {
-            info!("Publish request accepted with answer sdp of: {}", answer_sdp);
+            let sdp = answer_sdp.replace("\r", "").replace("\n", "\\n");
+            let json = format!("{{\"type\": \"answer\", \"sdp\": \"{}\"}}", sdp);
+            let encoded_json = base64::encode(json);
+
+            info!("Publish request accepted with (base64'ed) answer sdp of: {}", encoded_json);
         }
     }
 }
