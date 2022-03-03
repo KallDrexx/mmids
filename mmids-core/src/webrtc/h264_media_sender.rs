@@ -2,6 +2,7 @@ use rtp::codecs::h264::H264Packet;
 use rtp::packet::Packet;
 use rtp::packetizer::Depacketizer;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::debug;
 use crate::codecs::VideoCodec;
 use crate::VideoTimestamp;
 use crate::webrtc::RtpToMediaContentSender;
@@ -42,6 +43,10 @@ impl RtpToMediaContentSender for H264MediaSender {
         let is_key_frame = is_key_frame(&packet.payload);
         if !self.has_sent_keyframe && !is_key_frame {
             return Ok(());
+        }
+
+        if is_key_frame {
+            self.has_sent_keyframe = true;
         }
 
         let payload = self.cached_packet.depacketize(&packet.payload)?;

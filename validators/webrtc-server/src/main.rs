@@ -1,12 +1,10 @@
-use futures::StreamExt;
-use tokio::fs;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing_subscriber::{fmt, layer::SubscriberExt};
 use tracing::{info};
 use tracing::log::warn;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::codecs::{VideoCodec};
 use mmids_core::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, start_publisher_connection};
 use mmids_core::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 use mmids_core::net::ConnectionId;
@@ -93,10 +91,22 @@ fn handle_registrant_notification(notification: WebrtcServerPublisherRegistrantN
             info!("New publisher connected with connection {:?} and stream name {}", connection_id, stream_name);
 
             tokio::spawn(async move {
+                let mut video_received = false;
+                let mut audio_received = false;
                 while let Some(content) = media_channel.recv().await {
                     match content {
-                        MediaNotificationContent::Video {..} => info!("Video Received"),
-                        MediaNotificationContent::Audio {..} => info!("Audio Received"),
+                        MediaNotificationContent::Video {..} => {
+                            if !video_received {
+                                info!("Video Received");
+                                video_received = true;
+                            }
+                        },
+                        MediaNotificationContent::Audio {..} => {
+                            if !audio_received {
+                                info!("Audio Received");
+                                audio_received = true;
+                            }
+                        },
                         _ => (),
                     }
                 }
