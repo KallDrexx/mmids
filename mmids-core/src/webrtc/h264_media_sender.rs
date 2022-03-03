@@ -1,4 +1,3 @@
-use std::time::Duration;
 use rtp::codecs::h264::H264Packet;
 use rtp::packet::Packet;
 use rtp::packetizer::Depacketizer;

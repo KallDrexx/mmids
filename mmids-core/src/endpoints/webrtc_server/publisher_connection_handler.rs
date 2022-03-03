@@ -1,19 +1,24 @@
 use std::sync::Arc;
-use anyhow::{Result, Context};
+use std::time::Duration;
+use anyhow::{anyhow, Result, Context};
 use futures::future::BoxFuture;
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use futures::stream::FuturesUnordered;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tracing::{error, info, instrument, warn};
+use uuid::Uuid;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::track::track_remote::TrackRemote;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 use crate::net::ConnectionId;
+use crate::reactors::ReactorWorkflowUpdate;
+use crate::StreamId;
 use crate::webrtc::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
 use crate::webrtc::rtp_track_receiver::receive_rtp_track_media;
 use crate::webrtc::utils::{create_webrtc_connection, offer_to_sdp_struct};
@@ -21,11 +26,13 @@ use crate::workflows::MediaNotificationContent;
 
 pub struct PublisherConnectionHandlerParams {
     pub connection_id: ConnectionId,
+    pub stream_name: String,
     pub audio_codec: Option<AudioCodec>,
     pub video_codec: Option<VideoCodec>,
     pub offer_sdp: String,
     pub registrant_notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
     pub publisher_notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+    pub reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 }
 
 pub enum PublisherConnectionHandlerRequest {
@@ -37,7 +44,7 @@ pub fn start_publisher_connection(
 ) -> UnboundedSender<PublisherConnectionHandlerRequest> {
     let (sender, receiver) = unbounded_channel();
     let actor = PublisherConnectionHandler::new(receiver, &parameters);
-    tokio::spawn(actor.run(parameters.offer_sdp));
+    tokio::spawn(actor.run(parameters.stream_name, parameters.offer_sdp, parameters.reactor_update_channel));
 
     sender
 }
@@ -48,7 +55,6 @@ enum WebRtcNotification {
 
 enum FutureResult {
     AllConsumersGone,
-    PublisherGone,
     RegistrantGone,
     WebRtcNotificationSendersGone,
 
@@ -61,6 +67,8 @@ enum FutureResult {
         notification: WebRtcNotification,
         receiver: UnboundedReceiver<WebRtcNotification>,
     },
+
+    ConnectionCheckTimerTriggered,
 }
 
 struct PublisherConnectionHandler {
@@ -71,6 +79,8 @@ struct PublisherConnectionHandler {
     registrant_notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
     publisher_notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     cancellation_token_sender: Option<watch::Sender<bool>>,
+    connection_state: Option<RTCIceConnectionState>,
+    terminate: bool,
 }
 
 impl PublisherConnectionHandler {
@@ -80,11 +90,6 @@ impl PublisherConnectionHandler {
     ) -> PublisherConnectionHandler {
         let futures = FuturesUnordered::new();
         futures.push(notify_on_request_received(receiver).boxed());
-        futures.push(
-            notify_on_publisher_gone(parameters.publisher_notification_channel.clone())
-                .boxed()
-        );
-
         futures.push(
             notify_on_registrant_gone(parameters.registrant_notification_channel.clone())
                 .boxed()
@@ -98,16 +103,27 @@ impl PublisherConnectionHandler {
             registrant_notification_channel: parameters.registrant_notification_channel.clone(),
             publisher_notification_channel: parameters.publisher_notification_channel.clone(),
             cancellation_token_sender: None,
+            connection_state: None,
+            terminate: false,
         }
     }
 
     #[instrument(name = "WebRTC Publisher Connection Handler Execution",
-        skip(self, offer_sdp),
+        skip(self, offer_sdp, reactor_update_channel),
         fields(connection_id = ?self.connection_id))]
-    async fn run(mut self, offer_sdp: String) {
+    async fn run(
+        mut self,
+        stream_name: String,
+        offer_sdp: String,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
+    ) {
         info!("Starting publisher connection handler");
 
-        let peer_connection = match self.create_connection(offer_sdp).await {
+        let peer_connection = match self.create_connection(
+            stream_name,
+            offer_sdp,
+            reactor_update_channel,
+        ).await {
             Ok(connection) => connection,
             Err(error) => {
                 error!("Failed to create peer connection: {:?}", error);
@@ -115,14 +131,91 @@ impl PublisherConnectionHandler {
             }
         };
 
+        while let Some(future_result) = self.futures.next().await {
+            match future_result {
+                FutureResult::RegistrantGone => {
+                    info!("Registrant gone");
+                    self.terminate = true;
+                }
 
+                FutureResult::AllConsumersGone => {
+                    info!("All consumers gone");
+                    self.terminate = true;
+                }
 
+                FutureResult::WebRtcNotificationSendersGone => {
+                    info!("All webrtc notification senders are gone");
+                    self.terminate = true;
+                }
 
+                FutureResult::ConnectionCheckTimerTriggered => {
+                    self.futures.push(wait_for_connection_check().boxed());
+                    self.handle_connection_timeout_check();
+                }
 
+                FutureResult::RequestReceived {request, receiver} => {
+                    self.futures
+                        .push(notify_on_request_received(receiver).boxed());
+
+                    self.handle_request(request);
+                }
+
+                FutureResult::WebRtcNotificationReceived {notification, receiver} => {
+                    self.futures
+                        .push(notify_on_webrtc_notification(receiver).boxed());
+
+                    self.handle_webrtc_notification(notification);
+                }
+            }
+
+            if self.terminate {
+                break;
+            }
+        }
+
+        let _ = peer_connection.close().await;
         info!("Stopping publisher connection handler");
     }
 
-    async fn create_connection(&mut self, offer_sdp: String) -> Result<RTCPeerConnection> {
+    fn handle_request(&mut self, request: PublisherConnectionHandlerRequest) {
+        match request {
+            PublisherConnectionHandlerRequest::CloseConnection => {
+                self.terminate = true;
+            }
+        }
+    }
+
+    fn handle_webrtc_notification(&mut self, notification: WebRtcNotification) {
+        match notification {
+            WebRtcNotification::ConnectionStateChanged(state) => {
+                info!("Connection entered state {}", state);
+                self.connection_state = Some(state);
+            }
+        }
+    }
+
+    fn handle_connection_timeout_check(&mut self) {
+        // If after a minute we are not in a connected state, terminate.  Otherwise we have no idea
+        // when someone never attempts to connect and could end up leaking connections and memory
+        match self.connection_state {
+            Some(RTCIceConnectionState::Connected) => (),
+            _ => {
+                warn!(
+                    "Connection in {:?} state instead of Connected.  Terminating",
+                    self.connection_state
+                );
+
+                self.terminate = true;
+            }
+        }
+    }
+
+    async fn create_connection(
+        &mut self,
+        stream_name: String,
+        offer_sdp: String,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
+    ) -> Result<RTCPeerConnection> {
         let (cancel_sender, cancel_receiver) = watch::channel(false);
         self.cancellation_token_sender = Some(cancel_sender);
 
@@ -180,11 +273,39 @@ impl PublisherConnectionHandler {
         let answer = webrtc_connection.create_answer(None).await
             .with_context(|| "Failed to create answer")?;
 
+        let mut ice_channel = webrtc_connection.gathering_complete_promise().await;
         webrtc_connection.set_local_description(answer).await
             .with_context(|| "Failed to set local description")?;
 
+        // Wait until we've gotten the ice candidate.
+        let _ = ice_channel.recv().await;
 
-        Ok(webrtc_connection)
+        if let Some(local_description) = webrtc_connection.local_description().await {
+            if local_description.sdp_type != RTCSdpType::Answer {
+                return Err(anyhow!(
+                    "WebRTC local description was {} instead of an answer", local_description.sdp_type
+                ));
+            }
+
+            // If we got here then we should be ready to accept the publisher
+            let _ = self.registrant_notification_channel
+                .send(WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
+                    connection_id: self.connection_id.clone(),
+                    stream_name,
+                    stream_id: StreamId(Uuid::new_v4().to_string()),
+                    media_channel: media_receiver,
+                    reactor_update_channel,
+                });
+
+            let _ = self.publisher_notification_channel
+                .send(WebrtcStreamPublisherNotification::PublishRequestAccepted {
+                    answer_sdp: local_description.sdp,
+                });
+
+            Ok(webrtc_connection)
+        } else {
+            Err(anyhow!("WebRTC connection did not have a local description"))
+        }
     }
 }
 
@@ -252,14 +373,6 @@ async fn notify_on_request_received(
     }
 }
 
-async fn notify_on_publisher_gone(
-    sender: UnboundedSender<WebrtcStreamPublisherNotification>,
-) -> FutureResult {
-    sender.closed().await;
-
-    FutureResult::PublisherGone
-}
-
 async fn notify_on_registrant_gone(
     sender: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
 ) -> FutureResult {
@@ -281,3 +394,8 @@ async fn notify_on_webrtc_notification(
     }
 }
 
+async fn wait_for_connection_check() -> FutureResult {
+    tokio::time::sleep(Duration::from_secs(60)).await;
+
+    FutureResult::ConnectionCheckTimerTriggered
+}

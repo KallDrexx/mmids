@@ -12,6 +12,7 @@ use uuid::Uuid;
 use webrtc::util::Conn;
 use crate::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
 use crate::net::ConnectionId;
+use crate::reactors::ReactorWorkflowUpdate;
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
@@ -343,7 +344,8 @@ impl Actor {
             application_name,
             stream_name,
             offer_sdp,
-            notification_channel
+            notification_channel,
+            None,
         );
     }
 
@@ -583,6 +585,7 @@ impl Actor {
                     stream_name,
                     offer_sdp,
                     notification_channel,
+                    Some(reactor_update_channel),
                 );
             }
         }
@@ -622,6 +625,7 @@ impl Actor {
         stream_name: String,
         offer_sdp: String,
         notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
     ) {
         // We need to validate these again in case the registrants has gone away after validation
         let application = match self.applications.get_mut(application_name.as_str()) {
@@ -673,6 +677,8 @@ impl Actor {
             offer_sdp,
             publisher_notification_channel: notification_channel.clone(),
             registrant_notification_channel: registrant.notification_channel.clone(),
+            stream_name: stream_name.clone(),
+            reactor_update_channel,
         };
 
         let connection_handler = start_publisher_connection(parameters);

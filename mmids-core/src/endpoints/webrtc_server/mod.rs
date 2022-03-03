@@ -72,7 +72,7 @@ pub enum WebrtcServerPublisherRegistrantNotification {
         connection_id: ConnectionId,
         stream_id: StreamId,
         stream_name: String,
-        reactor_update_channel: Option<UnboundedSender<ReactorWorkflowUpdate>>,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
         media_channel: UnboundedReceiver<MediaNotificationContent>,
     },
 }
@@ -126,7 +126,7 @@ pub enum WebrtcStreamWatcherNotification {
 pub enum ValidationResponse {
     Reject,
     Approve {
-        reactor_update_channel: UnboundedSender<ReactorWorkflowUpdate>,
+        reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
     },
 }
 
