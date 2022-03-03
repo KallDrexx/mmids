@@ -24,7 +24,7 @@ use mmids_core::workflows::MediaNotificationContent;
 use crate::media_senders::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
 use crate::rtp_track_receiver::receive_rtp_track_media;
 use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, offer_to_sdp_struct};
-use crate::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
+use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 
 pub struct PublisherConnectionHandlerParams {
     pub connection_id: ConnectionId,

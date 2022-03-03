@@ -10,8 +10,8 @@ use uuid::Uuid;
 use webrtc::util::Conn;
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
-use crate::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification};
-use crate::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
+use crate::endpoints::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification};
+use crate::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();

@@ -13,7 +13,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::VideoTimestamp;
-use crate::webrtc_server::WebrtcStreamPublisherNotification;
+use crate::endpoints::webrtc_server::WebrtcStreamPublisherNotification;
 
 pub async fn create_webrtc_connection(
     audio_codec: Option<AudioCodec>,
