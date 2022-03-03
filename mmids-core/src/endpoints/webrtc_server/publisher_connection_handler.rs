@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use anyhow::{anyhow, Result, Context};
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
@@ -10,8 +11,10 @@ use uuid::Uuid;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
-use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use webrtc::rtp_transceiver::SSRC;
 use webrtc::track::track_remote::TrackRemote;
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
@@ -50,6 +53,12 @@ pub fn start_publisher_connection(
 
 enum WebRtcNotification {
     ConnectionStateChanged(RTCIceConnectionState),
+    NewTrackStarted {
+        track: Arc<TrackRemote>,
+        track_codec: RTCRtpCodecParameters,
+        media_channel: UnboundedSender<MediaNotificationContent>,
+        cancellation_token: watch::Receiver<bool>,
+    }
 }
 
 enum FutureResult {
@@ -66,6 +75,8 @@ enum FutureResult {
         notification: WebRtcNotification,
         receiver: UnboundedReceiver<WebRtcNotification>,
     },
+
+    PictureLossIndicatorRequested(SSRC),
 }
 
 struct PublisherConnectionHandler {
@@ -126,6 +137,8 @@ impl PublisherConnectionHandler {
             }
         };
 
+        let peer_connection = Arc::new(peer_connection);
+
         while let Some(future_result) = self.futures.next().await {
             match future_result {
                 FutureResult::RegistrantGone => {
@@ -156,6 +169,10 @@ impl PublisherConnectionHandler {
 
                     self.handle_webrtc_notification(notification);
                 }
+
+                FutureResult::PictureLossIndicatorRequested(ssrc) => {
+                    self.send_pls(ssrc, peer_connection.clone());
+                }
             }
 
             if self.terminate {
@@ -183,6 +200,15 @@ impl PublisherConnectionHandler {
                 if let RTCIceConnectionState::Failed = state {
                     self.terminate = true;
                 }
+            }
+
+            WebRtcNotification::NewTrackStarted {
+                track,
+                media_channel,
+                cancellation_token,
+                track_codec,
+            } => {
+                self.handle_new_track(track, track_codec, media_channel, cancellation_token);
             }
         }
     }
@@ -214,25 +240,29 @@ impl PublisherConnectionHandler {
         }
 
         let (media_sender, media_receiver) = unbounded_channel();
-        let video_codec = self.video_codec.clone();
-        let audio_codec = self.audio_codec.clone();
-        let connection_id = self.connection_id.clone();
-        webrtc_connection.on_track(
-            Box::new(move |track: Option<Arc<TrackRemote>>, _receiver: Option<Arc<RTCRtpReceiver>>| {
-                if let Some(track) = track {
-                    Box::pin(handle_new_track(
-                        track,
-                        video_codec,
-                        audio_codec,
-                        media_sender.clone(),
-                        connection_id.clone(),
-                        cancel_receiver.clone(),
-                    ))
-                } else {
+        {
+            let notification_sender = notification_sender.clone();
+            webrtc_connection.on_track(
+                Box::new(move |track: Option<Arc<TrackRemote>>, _receiver: Option<Arc<RTCRtpReceiver>>| {
+                    let notification_sender = notification_sender.clone();
+                    let cancel_receiver = cancel_receiver.clone();
+                    let media_sender = media_sender.clone();
+                    tokio::spawn(async move {
+                        if let Some(track) = track {
+                            let track_codec = track.codec().await;
+                            let _ = notification_sender.send(WebRtcNotification::NewTrackStarted {
+                                track,
+                                track_codec,
+                                cancellation_token: cancel_receiver.clone(),
+                                media_channel: media_sender.clone(),
+                            });
+                        }
+                    });
+
                     Box::pin(async {})
-                }
-            })
-        ).await;
+                })
+            ).await;
+        }
 
         webrtc_connection.on_ice_connection_state_change(
             Box::new(move |state: RTCIceConnectionState| {
@@ -284,56 +314,69 @@ impl PublisherConnectionHandler {
             Err(anyhow!("WebRTC connection did not have a local description"))
         }
     }
-}
 
-async fn handle_new_track(
-    track: Arc<TrackRemote>,
-    video_codec: Option<VideoCodec>,
-    audio_codec: Option<AudioCodec>,
-    media_channel: UnboundedSender<MediaNotificationContent>,
-    connection_id: ConnectionId,
-    cancellation_token: watch::Receiver<bool>,
-) {
-    let track_codec = track.codec().await;
-    let mime_type = track_codec.capability.mime_type.to_lowercase();
+    fn handle_new_track(
+        &mut self,
+        track: Arc<TrackRemote>,
+        track_codec: RTCRtpCodecParameters,
+        media_channel: UnboundedSender<MediaNotificationContent>,
+        cancellation_token: watch::Receiver<bool>,
+    ) {
+        let mime_type = track_codec.capability.mime_type.to_lowercase();
 
-    info!(
-        connection_id = ?connection_id,
-        "New RTP track started with mime type '{}'", mime_type
-    );
+        info!("New RTP track started with mime type '{}'", mime_type);
 
-    let mut media_sender = None;
-    if let Some(video_codec) = video_codec {
-        if video_codec.to_mime_type() == Some(mime_type.clone()) {
-            media_sender = get_media_sender_for_video_codec(video_codec, media_channel.clone());
-        }
-    }
-
-    if media_sender.is_none() {
-        if let Some(audio_codec) = audio_codec {
-            if audio_codec.to_mime_type() == Some(mime_type.clone()) {
-                media_sender = get_media_sender_for_audio_codec(audio_codec, media_channel.clone())
+        let mut media_sender = None;
+        if let Some(video_codec) = self.video_codec {
+            if video_codec.to_mime_type() == Some(mime_type.clone()) {
+                media_sender = get_media_sender_for_video_codec(video_codec, media_channel.clone());
             }
         }
+
+        if media_sender.is_none() {
+            if let Some(audio_codec) = self.audio_codec {
+                if audio_codec.to_mime_type() == Some(mime_type.clone()) {
+                    media_sender = get_media_sender_for_audio_codec(audio_codec, media_channel.clone())
+                }
+            }
+        }
+
+        if let Some(media_sender) = media_sender {
+            self.futures.push(send_pli_after_delay(track.ssrc()).boxed());
+
+            tokio::spawn(receive_rtp_track_media(
+                track,
+                self.connection_id.clone(),
+                cancellation_token,
+                media_sender,
+            ));
+        } else {
+            warn!(
+                "Either the mime type of '{}' didn't match the audio or video codecs specified ({:?}, \
+                {:?}), or the video codecs do not have a defined media sender implementation.  Track is \
+                being abandoned.",
+                mime_type, self.audio_codec, self.video_codec,
+            );
+
+            return;
+        }
     }
 
-    if let Some(media_sender) = media_sender {
-        tokio::spawn(receive_rtp_track_media(
-            track,
-            connection_id,
-            cancellation_token,
-            media_sender,
-        ));
-    } else {
-        warn!(
-            connection_id = ?connection_id,
-            "Either the mime type of '{}' didn't match the audio or video codecs specified ({:?}, \
-            {:?}), or the video codecs do not have a defined media sender implementation.  Track is \
-            being abandoned.",
-            mime_type, audio_codec, video_codec,
-        );
+    fn send_pls(&self, ssrc: SSRC, connection: Arc<RTCPeerConnection>) {
+        // send a packet loss indicator to encourage a new keyframe to be sent.  We want to try and
+        // get a keyframe relatively often for live streams, so late joiners can see video without
+        // too much of a delay.
+        tokio::spawn(async move {
+            let _ = connection.write_rtcp(&[
+                Box::new(PictureLossIndication {
+                    sender_ssrc: 0,
+                    media_ssrc: ssrc,
+                })
+            ]).await;
+        });
 
-        return;
+        self.futures
+            .push(send_pli_after_delay(ssrc).boxed());
     }
 }
 
@@ -369,4 +412,10 @@ async fn notify_on_webrtc_notification(
 
         None => FutureResult::WebRtcNotificationSendersGone,
     }
+}
+
+async fn send_pli_after_delay(ssrc: SSRC) -> FutureResult {
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    FutureResult::PictureLossIndicatorRequested(ssrc)
 }
