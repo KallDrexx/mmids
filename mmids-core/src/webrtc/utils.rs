@@ -50,7 +50,10 @@ pub async fn create_webrtc_connection(
 
 pub fn offer_to_sdp_struct(sdp_string: String) -> Result<RTCSessionDescription> {
     // Due to private fields we can't create a RTCSessionDescription without json deserialization
-    let sdp_string = sdp_string.replace("\"", "\\\"");
+    let sdp_string = sdp_string.replace("\"", "\\\"")
+        .replace("\r", "")
+        .replace("\n", "\\n");
+
     let json = format!("{{\"type\": \"offer\", \"sdp\": \"{}\"}}", sdp_string);
 
     serde_json::from_str(&json)

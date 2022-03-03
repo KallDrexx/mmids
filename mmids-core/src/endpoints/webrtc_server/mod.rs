@@ -1,5 +1,5 @@
 mod actor;
-mod publisher_connection_handler;
+pub mod publisher_connection_handler;
 
 use crate::codecs::{AudioCodec, VideoCodec};
 use crate::net::ConnectionId;

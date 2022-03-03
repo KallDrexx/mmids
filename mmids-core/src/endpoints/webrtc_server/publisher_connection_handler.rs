@@ -67,8 +67,6 @@ enum FutureResult {
         notification: WebRtcNotification,
         receiver: UnboundedReceiver<WebRtcNotification>,
     },
-
-    ConnectionCheckTimerTriggered,
 }
 
 struct PublisherConnectionHandler {
@@ -79,7 +77,6 @@ struct PublisherConnectionHandler {
     registrant_notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
     publisher_notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     cancellation_token_sender: Option<watch::Sender<bool>>,
-    connection_state: Option<RTCIceConnectionState>,
     terminate: bool,
 }
 
@@ -103,7 +100,6 @@ impl PublisherConnectionHandler {
             registrant_notification_channel: parameters.registrant_notification_channel.clone(),
             publisher_notification_channel: parameters.publisher_notification_channel.clone(),
             cancellation_token_sender: None,
-            connection_state: None,
             terminate: false,
         }
     }
@@ -148,11 +144,6 @@ impl PublisherConnectionHandler {
                     self.terminate = true;
                 }
 
-                FutureResult::ConnectionCheckTimerTriggered => {
-                    self.futures.push(wait_for_connection_check().boxed());
-                    self.handle_connection_timeout_check();
-                }
-
                 FutureResult::RequestReceived {request, receiver} => {
                     self.futures
                         .push(notify_on_request_received(receiver).boxed());
@@ -189,23 +180,10 @@ impl PublisherConnectionHandler {
         match notification {
             WebRtcNotification::ConnectionStateChanged(state) => {
                 info!("Connection entered state {}", state);
-                self.connection_state = Some(state);
-            }
-        }
-    }
 
-    fn handle_connection_timeout_check(&mut self) {
-        // If after a minute we are not in a connected state, terminate.  Otherwise we have no idea
-        // when someone never attempts to connect and could end up leaking connections and memory
-        match self.connection_state {
-            Some(RTCIceConnectionState::Connected) => (),
-            _ => {
-                warn!(
-                    "Connection in {:?} state instead of Connected.  Terminating",
-                    self.connection_state
-                );
-
-                self.terminate = true;
+                if let RTCIceConnectionState::Failed = state {
+                    self.terminate = true;
+                }
             }
         }
     }
@@ -392,10 +370,4 @@ async fn notify_on_webrtc_notification(
 
         None => FutureResult::WebRtcNotificationSendersGone,
     }
-}
-
-async fn wait_for_connection_check() -> FutureResult {
-    tokio::time::sleep(Duration::from_secs(60)).await;
-
-    FutureResult::ConnectionCheckTimerTriggered
 }

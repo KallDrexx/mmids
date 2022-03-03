@@ -2,6 +2,7 @@ cargo.lock
 mmids-app/logs
 !mmids-app/cargo.lock
 site/
+validators/webrtc-server/offer.sdp
 
 perf.data*
 
@@ -16,5 +17,6 @@ target/
 cmake-build-debug/
 
 CMakeLists\.txt
+
 
 
