@@ -96,7 +96,7 @@ fn handle_registrant_notification(notification: WebrtcServerPublisherRegistrantN
                 while let Some(content) = media_channel.recv().await {
                     match content {
                         MediaNotificationContent::Video {..} => info!("Video Received"),
-                        MediaNotificationContent::Audio {..} => info!("Audio Recieved"),
+                        MediaNotificationContent::Audio {..} => info!("Audio Received"),
                         _ => (),
                     }
                 }
