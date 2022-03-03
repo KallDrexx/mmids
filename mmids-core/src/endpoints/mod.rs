@@ -5,4 +5,3 @@
 
 pub mod ffmpeg;
 pub mod rtmp_server;
-pub mod webrtc_server;

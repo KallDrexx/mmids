@@ -1,12 +1,10 @@
 use rtp::packet::Packet;
 use tokio::sync::mpsc::UnboundedSender;
-use crate::codecs::{AudioCodec, VideoCodec};
-use crate::webrtc::h264_media_sender::H264MediaSender;
-use crate::workflows::MediaNotificationContent;
+use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::workflows::MediaNotificationContent;
+use crate::media_senders::h264_media_sender::H264MediaSender;
 
 pub mod h264_media_sender;
-pub mod rtp_track_receiver;
-pub mod utils;
 
 /// Represents a type that can take data from rtp packets, depacketize them, and send them over
 /// a tokio channel as a `MediaNotificationContent` message.
@@ -33,4 +31,3 @@ pub fn get_media_sender_for_audio_codec(
         AudioCodec::Unknown => None,
     }
 }
-

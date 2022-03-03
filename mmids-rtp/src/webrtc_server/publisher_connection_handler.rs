@@ -16,15 +16,15 @@ use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::rtp_transceiver::SSRC;
 use webrtc::track::track_remote::TrackRemote;
-use crate::codecs::{AudioCodec, VideoCodec};
-use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
-use crate::net::ConnectionId;
-use crate::reactors::ReactorWorkflowUpdate;
-use crate::StreamId;
-use crate::webrtc::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
-use crate::webrtc::rtp_track_receiver::receive_rtp_track_media;
-use crate::webrtc::utils::{create_webrtc_connection, offer_to_sdp_struct};
-use crate::workflows::MediaNotificationContent;
+use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::net::ConnectionId;
+use mmids_core::reactors::ReactorWorkflowUpdate;
+use mmids_core::StreamId;
+use mmids_core::workflows::MediaNotificationContent;
+use crate::media_senders::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
+use crate::rtp_track_receiver::receive_rtp_track_media;
+use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, offer_to_sdp_struct};
+use crate::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 
 pub struct PublisherConnectionHandlerParams {
     pub connection_id: ConnectionId,
@@ -328,14 +328,14 @@ impl PublisherConnectionHandler {
 
         let mut media_sender = None;
         if let Some(video_codec) = self.video_codec {
-            if video_codec.to_mime_type() == Some(mime_type.clone()) {
+            if get_video_mime_type(video_codec) == Some(mime_type.clone()) {
                 media_sender = get_media_sender_for_video_codec(video_codec, media_channel.clone());
             }
         }
 
         if media_sender.is_none() {
             if let Some(audio_codec) = self.audio_codec {
-                if audio_codec.to_mime_type() == Some(mime_type.clone()) {
+                if get_audio_mime_type(audio_codec)  == Some(mime_type.clone()) {
                     media_sender = get_media_sender_for_audio_codec(audio_codec, media_channel.clone())
                 }
             }

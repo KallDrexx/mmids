@@ -3,6 +3,7 @@ members = [
     "mmids-app",
     "mmids-core",
     "mmids-gstreamer",
+    "mmids-rtp",
     "reactor-test-server",
     "validators/echo-server",
     "validators/ffmpeg-runner",

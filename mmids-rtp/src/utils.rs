@@ -1,3 +1,4 @@
+use std::time::Duration;
 use anyhow::{Result, Context, anyhow};
 use tracing::error;
 use webrtc::api::APIBuilder;
@@ -10,8 +11,9 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
-use crate::codecs::{AudioCodec, VideoCodec};
-use crate::endpoints::webrtc_server::WebrtcStreamPublisherNotification;
+use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::VideoTimestamp;
+use crate::webrtc_server::WebrtcStreamPublisherNotification;
 
 pub async fn create_webrtc_connection(
     audio_codec: Option<AudioCodec>,
@@ -58,6 +60,25 @@ pub fn offer_to_sdp_struct(sdp_string: String) -> Result<RTCSessionDescription> 
 
     serde_json::from_str(&json)
         .with_context(|| "Failed to serialize offer sdp")
+}
+
+pub fn get_video_mime_type(video_codec: VideoCodec) -> Option<String> {
+    match video_codec {
+        VideoCodec::H264 => Some(MIME_TYPE_H264.to_lowercase()),
+        VideoCodec::Unknown => None,
+    }
+}
+
+pub fn get_audio_mime_type(audio_codec: AudioCodec) -> Option<String> {
+    match audio_codec {
+        AudioCodec::Aac => None,
+        AudioCodec::Unknown => None,
+    }
+}
+
+pub fn video_timestamp_from_rtp_packet(packet: &rtp::packet::Packet) -> VideoTimestamp {
+    let duration = Duration::from_millis(packet.header.timestamp as u64);
+    VideoTimestamp::from_durations(duration.clone(), duration)
 }
 
 fn register_video_codec_to_media_engine(

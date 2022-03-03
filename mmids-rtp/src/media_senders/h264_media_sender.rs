@@ -3,10 +3,11 @@ use rtp::packet::Packet;
 use rtp::packetizer::Depacketizer;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
-use crate::codecs::VideoCodec;
-use crate::VideoTimestamp;
-use crate::webrtc::RtpToMediaContentSender;
-use crate::workflows::MediaNotificationContent;
+use mmids_core::codecs::VideoCodec;
+use mmids_core::VideoTimestamp;
+use mmids_core::workflows::MediaNotificationContent;
+use crate::media_senders::RtpToMediaContentSender;
+use crate::utils::video_timestamp_from_rtp_packet;
 
 const NALU_TTYPE_STAP_A: u32 = 24;
 const NALU_TTYPE_SPS: u32 = 7;
@@ -57,7 +58,7 @@ impl RtpToMediaContentSender for H264MediaSender {
                 codec: VideoCodec::H264,
                 is_sequence_header: false, // todo: figure this out
                 is_keyframe: is_key_frame,
-                timestamp: VideoTimestamp::from_rtp_packet(&packet),
+                timestamp: video_timestamp_from_rtp_packet(&packet),
                 data: payload,
             });
         }

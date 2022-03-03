@@ -5,10 +5,10 @@ use tracing::{info};
 use tracing::log::warn;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use mmids_core::codecs::{VideoCodec};
-use mmids_core::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, start_publisher_connection};
-use mmids_core::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::MediaNotificationContent;
+use mmids_rtp::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, start_publisher_connection};
+use mmids_rtp::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 
 #[tokio::main()]
 pub async fn main() {
@@ -96,7 +96,7 @@ fn handle_registrant_notification(notification: WebrtcServerPublisherRegistrantN
                 while let Some(content) = media_channel.recv().await {
                     match content {
                         MediaNotificationContent::Video {..} => {
-                            if !video_received || is_keyframe {
+                            if !video_received {
                                 info!("Video Received");
                                 video_received = true;
                             }
