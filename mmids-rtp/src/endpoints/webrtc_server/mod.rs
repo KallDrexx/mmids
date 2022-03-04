@@ -1,5 +1,6 @@
 mod actor;
-pub mod publisher_connection_handler;
+mod publisher_connection_handler;
+mod watcher_connection_handler;
 
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
