@@ -13,10 +13,9 @@ use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
-use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::StreamId;
 use crate::endpoints::webrtc_server::{WebrtcServerWatcherRegistrantNotification, WebrtcStreamWatcherNotification};
-use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, get_webrtc_connection_answer, offer_to_sdp_struct};
+use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, get_webrtc_connection_answer};
 
 pub struct WatcherConnectionHandlerParams {
     pub connection_id: ConnectionId,
@@ -30,6 +29,16 @@ pub struct WatcherConnectionHandlerParams {
 
 pub enum WatcherConnectionHandlerRequest {
     CloseConnection,
+}
+
+pub fn start_watcher_connection(
+    parameters: WatcherConnectionHandlerParams,
+) -> UnboundedSender<WatcherConnectionHandlerRequest> {
+    let (sender, receiver) = unbounded_channel();
+    let actor = WatcherConnectionHandler::new(receiver, &parameters);
+    tokio::spawn(actor.run(parameters.offer_sdp));
+
+    sender
 }
 
 enum WebRtcNotification {
@@ -76,9 +85,6 @@ impl WatcherConnectionHandler {
     ) -> WatcherConnectionHandler {
         let futures = FuturesUnordered::new();
         futures.push(notify_on_request_received(receiver).boxed());
-        futures.push(
-            notify_on_registrant_gone(parameters.registrant_channel.clone()).boxed()
-        );
 
         WatcherConnectionHandler {
             connection_id: parameters.connection_id.clone(),
@@ -235,19 +241,17 @@ impl WatcherConnectionHandler {
 
                     Box::pin(async {})
                 })
-            );
+            ).await;
         }
 
         webrtc_connection.on_peer_connection_state_change(
-            webrtc_connection.on_peer_connection_state_change(
-                Box::new(move |state: RTCPeerConnectionState| {
-                    let _ = notification_sender
-                        .send(WebRtcNotification::PeerConnectionStateChanged(state));
+            Box::new(move |state: RTCPeerConnectionState| {
+                let _ = notification_sender
+                    .send(WebRtcNotification::PeerConnectionStateChanged(state));
 
-                    Box::pin(async {})
-                })
-            )
-        );
+                Box::pin(async {})
+            })
+        ).await;
 
         let local_description = get_webrtc_connection_answer(&webrtc_connection, offer_sdp).await?;
 
