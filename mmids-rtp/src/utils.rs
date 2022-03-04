@@ -81,6 +81,37 @@ pub fn video_timestamp_from_rtp_packet(packet: &rtp::packet::Packet) -> VideoTim
     VideoTimestamp::from_durations(duration.clone(), duration)
 }
 
+pub async fn get_webrtc_connection_answer(
+    connection: &RTCPeerConnection,
+    offer_sdp: String,
+) -> Result<RTCSessionDescription> {
+    let offer = offer_to_sdp_struct(offer_sdp)?;
+    connection.set_remote_description(offer).await
+        .with_context(|| "Failed to set remote description from offer")?;
+
+    let answer = connection.create_answer(None).await
+        .with_context(|| "Failed to create answer")?;
+
+    let mut ice_channel = connection.gathering_complete_promise().await;
+    connection.set_local_description(answer).await
+        .with_context(|| "Failed to set local description from answer")?;
+
+    // Wait until we've gotten the ice candidate
+    let _ = ice_channel.recv().await;
+
+    if let Some(local_description) = connection.local_description().await {
+        if local_description.sdp_type != RTCSdpType::Answer {
+            Err(anyhow!(
+                "WebRTC's local description was a {} instead of an answer", local_description.sdp_type,
+            ))
+        } else {
+            Ok(local_description)
+        }
+    } else {
+        Err(anyhow!("The WebRTC connection did not contain a local description"))
+    }
+}
+
 fn register_video_codec_to_media_engine(
     media_engine: &mut MediaEngine,
     codec: VideoCodec,

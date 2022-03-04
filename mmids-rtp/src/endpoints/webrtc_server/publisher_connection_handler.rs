@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{anyhow, Result, Context};
+use anyhow::{Result, Context};
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
 use futures::stream::FuturesUnordered;
@@ -10,7 +10,6 @@ use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -23,7 +22,7 @@ use mmids_core::StreamId;
 use mmids_core::workflows::MediaNotificationContent;
 use crate::media_senders::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
 use crate::rtp_track_receiver::receive_rtp_track_media;
-use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, offer_to_sdp_struct};
+use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, get_webrtc_connection_answer};
 use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 
 pub struct PublisherConnectionHandlerParams {
@@ -273,46 +272,24 @@ impl PublisherConnectionHandler {
             })
         ).await;
 
-        let offer = offer_to_sdp_struct(offer_sdp)?;
-        webrtc_connection.set_remote_description(offer).await
-            .with_context(|| "Could not set connection from offer")?;
+        let local_description = get_webrtc_connection_answer(&webrtc_connection, offer_sdp).await?;
 
-        let answer = webrtc_connection.create_answer(None).await
-            .with_context(|| "Failed to create answer")?;
+        // If we got here then we should be ready to accept the publisher
+        let _ = self.registrant_notification_channel
+            .send(WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
+                connection_id: self.connection_id.clone(),
+                stream_name,
+                stream_id: StreamId(Uuid::new_v4().to_string()),
+                media_channel: media_receiver,
+                reactor_update_channel,
+            });
 
-        let mut ice_channel = webrtc_connection.gathering_complete_promise().await;
-        webrtc_connection.set_local_description(answer).await
-            .with_context(|| "Failed to set local description")?;
+        let _ = self.publisher_notification_channel
+            .send(WebrtcStreamPublisherNotification::PublishRequestAccepted {
+                answer_sdp: local_description.sdp,
+            });
 
-        // Wait until we've gotten the ice candidate.
-        let _ = ice_channel.recv().await;
-
-        if let Some(local_description) = webrtc_connection.local_description().await {
-            if local_description.sdp_type != RTCSdpType::Answer {
-                return Err(anyhow!(
-                    "WebRTC local description was {} instead of an answer", local_description.sdp_type
-                ));
-            }
-
-            // If we got here then we should be ready to accept the publisher
-            let _ = self.registrant_notification_channel
-                .send(WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
-                    connection_id: self.connection_id.clone(),
-                    stream_name,
-                    stream_id: StreamId(Uuid::new_v4().to_string()),
-                    media_channel: media_receiver,
-                    reactor_update_channel,
-                });
-
-            let _ = self.publisher_notification_channel
-                .send(WebrtcStreamPublisherNotification::PublishRequestAccepted {
-                    answer_sdp: local_description.sdp,
-                });
-
-            Ok(webrtc_connection)
-        } else {
-            Err(anyhow!("WebRTC connection did not have a local description"))
-        }
+        Ok(webrtc_connection)
     }
 
     fn handle_new_track(
