@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
 use futures::stream::FuturesUnordered;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
@@ -76,6 +76,7 @@ enum FutureResult {
     },
 
     PictureLossIndicatorRequested(SSRC),
+    TrackRtpReceiverClosed,
 }
 
 struct PublisherConnectionHandler {
@@ -171,6 +172,11 @@ impl PublisherConnectionHandler {
 
                 FutureResult::PictureLossIndicatorRequested(ssrc) => {
                     self.send_pls(ssrc, peer_connection.clone());
+                }
+
+                FutureResult::TrackRtpReceiverClosed => {
+                    warn!("An RTP track receiver unexpectedly closed");
+                    self.terminate = true;
                 }
             }
 
@@ -319,13 +325,16 @@ impl PublisherConnectionHandler {
         }
 
         if let Some(media_sender) = media_sender {
+            let (closed_sender, closed_receiver) = oneshot::channel();
             self.futures.push(send_pli_after_delay(track.ssrc()).boxed());
+            self.futures.push(notify_on_rtp_receiver_closed(closed_receiver).boxed());
 
             tokio::spawn(receive_rtp_track_media(
                 track,
                 self.connection_id.clone(),
                 cancellation_token,
                 media_sender,
+                closed_sender,
             ));
         } else {
             warn!(
@@ -395,4 +404,12 @@ async fn send_pli_after_delay(ssrc: SSRC) -> FutureResult {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     FutureResult::PictureLossIndicatorRequested(ssrc)
+}
+
+async fn notify_on_rtp_receiver_closed(
+    receiver: oneshot::Receiver<()>,
+) -> FutureResult {
+    let _ = receiver.await; // No matter what we get back, this signals the rtp receiver was clsoed
+
+    FutureResult::TrackRtpReceiverClosed
 }

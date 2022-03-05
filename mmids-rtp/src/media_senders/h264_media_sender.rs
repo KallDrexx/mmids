@@ -63,6 +63,8 @@ impl RtpToMediaContentSender for H264MediaSender {
 
         Ok(())
     }
+
+    fn get_name(&self) -> &str { "H264MediaSender" }
 }
 
 fn is_key_frame(data: &[u8]) -> bool {

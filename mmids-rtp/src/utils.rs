@@ -1,6 +1,5 @@
 use std::time::Duration;
 use anyhow::{Result, Context, anyhow};
-use tracing::error;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264};
@@ -13,7 +12,6 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::VideoTimestamp;
-use crate::endpoints::webrtc_server::WebrtcStreamPublisherNotification;
 
 pub async fn create_webrtc_connection(
     audio_codec: Option<AudioCodec>,
@@ -28,7 +26,7 @@ pub async fn create_webrtc_connection(
         register_audio_codec_to_media_engine(&mut media_engine, audio_codec)?;
     }
 
-    let mut registry = Registry::new();
+    let registry = Registry::new();
     let registry = register_default_interceptors(registry, &mut media_engine)
         .with_context(|| "Failed to register default webrtc interceptors")?;
 

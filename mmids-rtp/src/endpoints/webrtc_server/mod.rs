@@ -1,6 +1,6 @@
 mod actor;
-mod publisher_connection_handler;
-mod watcher_connection_handler;
+pub mod publisher_connection_handler;
+pub mod watcher_connection_handler;
 
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
@@ -84,7 +84,7 @@ pub enum WebrtcServerWatcherRegistrantNotification {
     WatcherRequiringApproval {
         connection_id: ConnectionId,
         stream_name: String,
-        response_channel: UnboundedSender<ValidationResponse>,
+        response_channel: Sender<ValidationResponse>,
     },
 
     StreamNameBecameActive {
@@ -105,21 +105,6 @@ pub enum WebrtcStreamWatcherNotification {
     WatchRequestRejected,
     WatchRequestAccepted {
         answer_sdp: String,
-    },
-
-    NewVideoData {
-        codec: VideoCodec,
-        data: Bytes,
-        timestamp: VideoTimestamp,
-        is_sequence_header: bool,
-        is_keyframe: bool,
-    },
-
-    NewAudioData {
-        codec: AudioCodec,
-        data: Bytes,
-        timestamp: Duration,
-        is_sequence_header: bool,
     },
 }
 

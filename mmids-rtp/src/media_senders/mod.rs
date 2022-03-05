@@ -10,6 +10,7 @@ pub mod h264_media_sender;
 /// a tokio channel as a `MediaNotificationContent` message.
 pub trait RtpToMediaContentSender {
     fn send_rtp_data(&mut self, packet: &Packet) -> Result<(), webrtc::error::Error>;
+    fn get_name(&self) -> &str;
 }
 
 pub fn get_media_sender_for_video_codec(

@@ -10,8 +10,9 @@ use uuid::Uuid;
 use webrtc::util::Conn;
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
-use crate::endpoints::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification};
+use crate::endpoints::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification};
 use crate::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
+use crate::endpoints::webrtc_server::watcher_connection_handler::WatcherConnectionHandlerRequest;
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
@@ -55,6 +56,19 @@ enum ConnectionState {
         stream_name: String,
         connection_handler: UnboundedSender<PublisherConnectionHandlerRequest>,
     },
+
+    WatcherPendingValidation {
+        application_name: String,
+        stream_name: String,
+        offer_sdp: String,
+        watcher_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
+    },
+
+    WatcherActive {
+        application_name: String,
+        stream_name: String,
+        connection_handler: UnboundedSender<WatcherConnectionHandlerRequest>,
+    },
 }
 
 enum FutureResult {
@@ -80,6 +94,17 @@ enum FutureResult {
     },
 
     PublishConnectionHandlerGone(ConnectionId),
+
+    WatcherValidationChannelClosed {
+        connection_id: ConnectionId,
+    },
+
+    WatcherValidationResponse {
+        connection_id: ConnectionId,
+        response: ValidationResponse,
+    },
+
+    WatcherConnectionHandlerGone(ConnectionId),
 }
 
 struct Actor {
@@ -154,6 +179,23 @@ impl Actor {
                             "Publish connection handler unexpectedly closed",
                         );
                     }
+                }
+
+                FutureResult::WatcherConnectionHandlerGone(connection_id) => {
+                    if let Some(_) = self.connections.remove(&connection_id) {
+                        info!(
+                            connection_id = ?connection_id,
+                            "Watch connection handler unexpectedly closed",
+                        );
+                    }
+                }
+
+                FutureResult::WatcherValidationResponse {connection_id, response} => {
+
+                }
+
+                FutureResult::WatcherValidationChannelClosed {connection_id} => {
+
                 }
             }
         }
@@ -263,8 +305,97 @@ impl Actor {
                 );
             }
 
+            WebrtcServerRequest::StreamWatchRequested {
+                application_name,
+                stream_name,
+                notification_channel,
+                offer_sdp,
+            } => {
+                self.handle_stream_watch_requested(
+                    application_name,
+                    stream_name,
+                    notification_channel,
+                    offer_sdp,
+                );
+            }
+
             todo => todo!(),
         }
+    }
+
+    #[instrument(skip(self, notification_channel, offer_sdp))]
+    fn handle_stream_watch_requested(
+        &mut self,
+        application_name: String,
+        stream_name: String,
+        notification_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
+        offer_sdp: String,
+    ) {
+        let connection_id = ConnectionId(Uuid::new_v4().to_string());
+        let application = match self.applications.get_mut(&application_name) {
+            Some(app) => app,
+            None => {
+                info!(
+                    connection_id = ?connection_id,
+                    "Client requested watching stream on application '{}' with stream name \
+                    '{}', but no system has registered to receive watchers for this application",
+                    application_name, stream_name
+                );
+
+                let _ = notification_channel
+                    .send(WebrtcStreamWatcherNotification::WatchRequestRejected);
+
+                return;
+            }
+        };
+
+        let registrant = match application.watcher_registrants.get(&StreamNameRegistration::Any) {
+            Some(registrant) => registrant,
+            None => match application.watcher_registrants.get(&StreamNameRegistration::Exact(stream_name.clone())) {
+                Some(registrant) => registrant,
+                None => {
+                    info!(
+                        connection_id = ?connection_id,
+                        "Client requested watching stream on application '{}' with stream name \
+                        '{}', but no system has registered to receive watchers on this stream name for \
+                        this application", application_name, stream_name
+                    );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamWatcherNotification::WatchRequestRejected);
+
+                    return;
+                }
+            }
+        };
+
+        if registrant.requires_registrant_approval {
+            info!(
+                connection_id = ?connection_id,
+                "Client requested to watch stream but watching requires approval"
+            );
+
+            let (sender, receiver) = channel();
+            let _ = registrant.notification_channel
+                .send(WebrtcServerWatcherRegistrantNotification::WatcherRequiringApproval {
+                    stream_name: stream_name.clone(),
+                    connection_id: connection_id.clone(),
+                    response_channel: sender,
+                });
+
+            self.futures.push(notify_on_watch_validation(connection_id, receiver).boxed());
+            return;
+        }
+
+        // No registration required
+        self.setup_watcher_connection(
+            connection_id,
+            application_name,
+            stream_name,
+            offer_sdp,
+            notification_channel,
+            None,
+        );
     }
 
     #[instrument(skip(self, notification_channel, offer_sdp))]
@@ -693,6 +824,18 @@ impl Actor {
 
         registrant.active_publisher = Some(connection_id.clone());
     }
+
+    fn setup_watcher_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        application_name: String,
+        stream_name: String,
+        offer_sdp: String,
+        notification_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
+    ) {
+
+    }
 }
 
 async fn notify_on_request_received(
@@ -753,4 +896,18 @@ async fn notify_on_pub_connection_handler_gone(
     sender.closed().await;
 
     FutureResult::PublishConnectionHandlerGone(connection_id)
+}
+
+async fn notify_on_watch_validation(
+    connection_id: ConnectionId,
+    mut receiver: Receiver<ValidationResponse>,
+) -> FutureResult {
+    match receiver.await {
+        Ok(response) => FutureResult::WatcherValidationResponse {
+            response,
+            connection_id,
+        },
+
+        Err(_) => FutureResult::WatcherValidationChannelClosed {connection_id},
+    }
 }

@@ -11,10 +11,11 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc_media::Sample;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
-use mmids_core::StreamId;
-use crate::endpoints::webrtc_server::{WebrtcServerWatcherRegistrantNotification, WebrtcStreamWatcherNotification};
+use mmids_core::workflows::MediaNotificationContent;
+use crate::endpoints::webrtc_server::{WebrtcStreamWatcherNotification};
 use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, get_webrtc_connection_answer};
 
 pub struct WatcherConnectionHandlerParams {
@@ -24,11 +25,11 @@ pub struct WatcherConnectionHandlerParams {
     pub video_codec: Option<VideoCodec>,
     pub offer_sdp: String,
     pub watcher_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
-    pub stream_id: StreamId,
 }
 
 pub enum WatcherConnectionHandlerRequest {
     CloseConnection,
+    SendMedia(MediaNotificationContent),
 }
 
 pub fn start_watcher_connection(
@@ -48,7 +49,6 @@ enum WebRtcNotification {
 
 enum FutureResult {
     AllConsumersGone,
-    RegistrantGone,
     WebRtcNotificationSendersGone,
 
     RequestReceived {
@@ -69,11 +69,10 @@ struct WatcherConnectionHandler {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     watcher_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
     terminate: bool,
-    stream_id: StreamId,
 }
 
 struct Connection {
-    peer_connection: RTCPeerConnection,
+    _peer_connection: RTCPeerConnection,
     audio_track: Option<Arc<TrackLocalStaticSample>>,
     video_track: Option<Arc<TrackLocalStaticSample>>,
 }
@@ -93,7 +92,6 @@ impl WatcherConnectionHandler {
             futures,
             watcher_channel: parameters.watcher_channel.clone(),
             terminate: false,
-            stream_id: parameters.stream_id.clone(),
         }
     }
 
@@ -116,11 +114,6 @@ impl WatcherConnectionHandler {
 
         while let Some(future_result) = self.futures.next().await {
             match future_result {
-                FutureResult::RegistrantGone => {
-                    info!("Registrant gone");
-                    self.terminate = true;
-                }
-
                 FutureResult::AllConsumersGone => {
                     info!("All consumers gone");
                     self.terminate = true;
@@ -135,7 +128,7 @@ impl WatcherConnectionHandler {
                     self.futures
                         .push(notify_on_request_received(receiver).boxed());
 
-                    self.handle_request(request);
+                    self.handle_request(request, &connection).await;
                 }
 
                 FutureResult::WebRtcNotificationReceived {notification, receiver} => {
@@ -154,11 +147,41 @@ impl WatcherConnectionHandler {
         info!("Stopping connection handler");
     }
 
-    fn handle_request(&mut self, request: WatcherConnectionHandlerRequest) {
+    async fn handle_request(
+        &mut self,
+        request: WatcherConnectionHandlerRequest,
+        connection: &Connection,
+    ) {
         match request {
             WatcherConnectionHandlerRequest::CloseConnection => {
                 info!("Close connection requested");
                 self.terminate = true;
+            }
+
+            WatcherConnectionHandlerRequest::SendMedia(media) => {
+                match media {
+                    // It's not clear how to set timestamps, or if any data transformation
+                    // has to be done, especially for sequence headers
+                    MediaNotificationContent::Video {data, ..} => {
+                        if let Some(track) = &connection.video_track {
+                            let _ = track.write_sample(&Sample {
+                                data,
+                                ..Default::default()
+                            }).await;
+                        }
+                    }
+
+                    MediaNotificationContent::Audio {data, ..} => {
+                        if let Some(track) = &connection.audio_track {
+                            let _ = track.write_sample(&Sample {
+                                data,
+                                ..Default::default()
+                            }).await;
+                        }
+                    }
+
+                    _ => (),
+                }
             }
         }
     }
@@ -262,7 +285,7 @@ impl WatcherConnectionHandler {
             });
 
         Ok(Connection {
-            peer_connection: webrtc_connection,
+            _peer_connection: webrtc_connection,
             video_track,
             audio_track,
         })
@@ -287,14 +310,6 @@ async fn notify_on_request_received(
         Some(request) => FutureResult::RequestReceived {request, receiver},
         None => FutureResult::AllConsumersGone,
     }
-}
-
-async fn notify_on_registrant_gone(
-    sender: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
-) -> FutureResult {
-    sender.closed().await;
-
-    FutureResult::RegistrantGone
 }
 
 async fn notify_on_webrtc_notification(
