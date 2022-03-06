@@ -166,6 +166,10 @@ fn handle_registrant_notification(
         WebrtcServerPublisherRegistrantNotification::PublisherRequiringApproval {..} => {
             info!("Publisher requires approval");
         }
+
+        WebrtcServerPublisherRegistrantNotification::PublisherDisconnected {..} => {
+            info!("Publisher disconnected");
+        }
     }
 }
 

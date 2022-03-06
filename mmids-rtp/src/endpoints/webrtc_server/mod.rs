@@ -5,7 +5,6 @@ pub mod watcher_connection_handler;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
-use bytes::Bytes;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 
@@ -75,6 +74,11 @@ pub enum WebrtcServerPublisherRegistrantNotification {
         reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
         media_channel: UnboundedReceiver<MediaNotificationContent>,
     },
+
+    PublisherDisconnected {
+        connection_id: ConnectionId,
+        stream_name: String,
+    },
 }
 
 pub enum WebrtcServerWatcherRegistrantNotification {
@@ -88,6 +92,7 @@ pub enum WebrtcServerWatcherRegistrantNotification {
 
     StreamNameBecameActive {
         stream_name: String,
+        reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
     },
 
     StreamNameBecameInactive {
@@ -115,6 +120,7 @@ pub enum ValidationResponse {
     },
 }
 
+#[derive(Debug)]
 pub enum RequestType {
     Publisher,
     Watcher,
