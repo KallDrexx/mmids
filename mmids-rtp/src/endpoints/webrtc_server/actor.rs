@@ -2,14 +2,14 @@ use mmids_core::codecs::{AudioCodec, VideoCodec};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::{channel, Receiver};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
-use webrtc::util::Conn;
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
+use mmids_core::workflows::MediaNotificationContent;
 use crate::endpoints::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification};
 use crate::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest, start_publisher_connection};
 use crate::endpoints::webrtc_server::watcher_connection_handler::WatcherConnectionHandlerRequest;
@@ -25,6 +25,23 @@ pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
 struct ApplicationDetails {
     publisher_registrants: HashMap<StreamNameRegistration, PublisherRegistrant>,
     watcher_registrants: HashMap<StreamNameRegistration, WatcherRegistrant>,
+    published_streams: HashMap<String, PublishedStreamDetails>,
+    watched_streams: HashMap<String, WatchedStreamDetails>,
+}
+
+struct PublishedStreamDetails {
+    publisher: ConnectionId,
+    video_sequence_header: Option<MediaNotificationContent>,
+    audio_sequence_header: Option<MediaNotificationContent>,
+}
+
+struct WatchedStreamDetails {
+    watchers: HashSet<WatcherDetails>,
+}
+
+struct WatcherDetails {
+    connection_id: ConnectionId,
+    media_sender: MediaNotificationContent,
 }
 
 struct PublisherRegistrant {
@@ -32,7 +49,6 @@ struct PublisherRegistrant {
     requires_registrant_approval: bool,
     video_codec: Option<VideoCodec>,
     audio_codec: Option<AudioCodec>,
-    active_publisher: Option<ConnectionId>,
 }
 
 struct WatcherRegistrant {
@@ -195,12 +211,46 @@ impl Actor {
                 }
 
                 FutureResult::WatcherValidationChannelClosed {connection_id} => {
-
+                    self.handle_watch_validation_channel_closed(connection_id);
                 }
             }
         }
 
         info!("WebRTC server stopping");
+    }
+
+    fn handle_watch_validation_channel_closed(&mut self, connection_id: ConnectionId) {
+        let connection = match self.connections.remove(&connection_id) {
+            Some(connection) => connection,
+            None => return,
+        };
+
+        match connection {
+            ConnectionState::WatcherPendingValidation {
+                application_name,
+                stream_name,
+                watcher_channel,
+                ..
+            } => {
+                warn!(
+                    application_name = %application_name,
+                    stream_name = %stream_name,
+                    connection_id = ?connection_id,
+                    "Stream watch request auto-rejected, as the validation channel was closed"
+                );
+
+                let _ = watcher_channel
+                    .send(WebrtcStreamWatcherNotification::WatchRequestRejected);
+            }
+
+            state => {
+                error!(
+                    connection_id = ?connection_id,
+                    "Received stream watch validation channel closed message on a connection in an \
+                    unexpected state of {:?}.  Connection has been removed.", state
+                );
+            }
+        }
     }
 
     fn handle_pub_validation_channel_closed(&mut self, connection_id: ConnectionId) {
@@ -834,6 +884,39 @@ impl Actor {
         notification_channel: UnboundedSender<WebrtcStreamWatcherNotification>,
         reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
     ) {
+        // We need to validate these again in case the registrants has gone away after validation
+        let application = match self.applications.get_mut(application_name.as_str()) {
+            Some(app) => app,
+            None => {
+                info!(
+                    "Client requested watching stream but no system has registered to receive \
+                    watchers for this application",
+                );
+
+                let _ = notification_channel
+                    .send(WebrtcStreamWatcherNotification::WatchRequestRejected);
+
+                return;
+            }
+        };
+
+        let registrant = match application.watcher_registrants.get_mut(&StreamNameRegistration::Any) {
+            Some(registrant) => registrant,
+            None => match application.watcher_registrants.get_mut(&StreamNameRegistration::Exact(stream_name.clone())) {
+                Some(registrant) => registrant,
+                None => {
+                    info!(
+                        "Client requested watching stream but no system has registered to receive \
+                        watchers on this stream name for this application"
+                    );
+
+                    let _ = notification_channel
+                        .send(WebrtcStreamWatcherNotification::WatchRequestRejected);
+
+                    return;
+                }
+            }
+        };
 
     }
 }
