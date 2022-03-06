@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use anyhow::{anyhow, Result, Context};
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
@@ -166,6 +167,7 @@ impl WatcherConnectionHandler {
                         if let Some(track) = &connection.video_track {
                             let _ = track.write_sample(&Sample {
                                 data,
+                                duration: Duration::from_secs(1),
                                 ..Default::default()
                             }).await;
                         }
