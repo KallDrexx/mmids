@@ -59,6 +59,7 @@ pub enum WebrtcServerRequest {
     },
 }
 
+#[derive(Debug)]
 pub enum WebrtcServerPublisherRegistrantNotification {
     RegistrationFailed {},
     RegistrationSuccessful,
@@ -82,6 +83,7 @@ pub enum WebrtcServerPublisherRegistrantNotification {
     },
 }
 
+#[derive(Debug)]
 pub enum WebrtcServerWatcherRegistrantNotification {
     RegistrationFailed,
     RegistrationSuccessful,
@@ -102,11 +104,13 @@ pub enum WebrtcServerWatcherRegistrantNotification {
     },
 }
 
+#[derive(Debug)]
 pub enum WebrtcStreamPublisherNotification {
     PublishRequestRejected,
     PublishRequestAccepted { answer_sdp: String },
 }
 
+#[derive(Debug)]
 pub enum WebrtcStreamWatcherNotification {
     WatchRequestRejected,
     WatchRequestAccepted {

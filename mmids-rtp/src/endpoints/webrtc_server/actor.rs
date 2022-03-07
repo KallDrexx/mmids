@@ -1158,6 +1158,19 @@ impl Actor {
 
         entry.watchers.insert(connection_id.clone());
 
+        // If we have already received sequence headers, pass them along
+        if let Some(media) = &entry.video_sequence_header {
+            let _ = connection_handler.send(WatcherConnectionHandlerRequest::SendMedia(
+                media.clone(),
+            ));
+        }
+
+        if let Some(media) = &entry.audio_sequence_header {
+            let _ = connection_handler.send(WatcherConnectionHandlerRequest::SendMedia(
+                media.clone(),
+            ));
+        }
+
         self.connections.insert(connection_id, WatcherActive {
             application_name,
             stream_name,
@@ -1314,21 +1327,25 @@ impl Actor {
                             details.video_sequence_header = Some(media.content.clone());
                         }
 
-                        for connection_id in &details.watchers {
-                            if let Some(connection) = self.connections.get(&connection_id) {
-                                match connection {
-                                    ConnectionState::WatcherActive {connection_handler, ..} => {
-                                        let _ = connection_handler
-                                            .send(WatcherConnectionHandlerRequest::SendMedia(
+                        // Only send video if we've received a sequence header.  Otherwise all
+                        // video packets can't be decoded anyway
+                        if details.video_sequence_header.is_some() {
+                            for connection_id in &details.watchers {
+                                if let Some(connection) = self.connections.get(&connection_id) {
+                                    match connection {
+                                        ConnectionState::WatcherActive { connection_handler, .. } => {
+                                            let _ = connection_handler
+                                                .send(WatcherConnectionHandlerRequest::SendMedia(
                                                     media.content.clone(),
-                                            ));
-                                    }
+                                                ));
+                                        }
 
-                                    state => error!(
+                                        state => error!(
                                         connection_id = ?connection_id,
                                         "Attempted to pass media to watcher connection, but watcher \
                                         was in state {:?} when WatcherActive was expected", state
                                     ),
+                                    }
                                 }
                             }
                         }
@@ -1343,21 +1360,25 @@ impl Actor {
                             details.audio_sequence_header = Some(media.content.clone());
                         }
 
-                        for connection_id in &details.watchers {
-                            if let Some(connection) = self.connections.get(&connection_id) {
-                                match connection {
-                                    ConnectionState::WatcherActive {connection_handler, ..} => {
-                                        let _ = connection_handler
-                                            .send(WatcherConnectionHandlerRequest::SendMedia(
-                                                media.content.clone(),
-                                            ));
-                                    }
+                        // Only send audio data if we've already received (and presumably sent)
+                        // sequence header already.
+                        if details.audio_sequence_header.is_some() {
+                            for connection_id in &details.watchers {
+                                if let Some(connection) = self.connections.get(&connection_id) {
+                                    match connection {
+                                        ConnectionState::WatcherActive { connection_handler, .. } => {
+                                            let _ = connection_handler
+                                                .send(WatcherConnectionHandlerRequest::SendMedia(
+                                                    media.content.clone(),
+                                                ));
+                                        }
 
-                                    state => error!(
+                                        state => error!(
                                         connection_id = ?connection_id,
                                         "Attempted to pass media to watcher connection, but watcher \
                                         was in state {:?} when WatcherActive was expected", state
                                     ),
+                                    }
                                 }
                             }
                         }
