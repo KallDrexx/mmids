@@ -10,7 +10,7 @@ use tokio::sync::oneshot::Sender;
 
 pub use actor::start_webrtc_server;
 use mmids_core::{StreamId};
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub enum StreamNameRegistration {
@@ -35,6 +35,7 @@ pub enum WebrtcServerRequest {
         audio_codec: Option<AudioCodec>,
         requires_registrant_approval: bool,
         notification_channel: UnboundedSender<WebrtcServerWatcherRegistrantNotification>,
+        media_channel: UnboundedReceiver<MediaNotification>,
     },
 
     RemoveRegistration {
@@ -84,6 +85,7 @@ pub enum WebrtcServerPublisherRegistrantNotification {
 pub enum WebrtcServerWatcherRegistrantNotification {
     RegistrationFailed,
     RegistrationSuccessful,
+
     WatcherRequiringApproval {
         connection_id: ConnectionId,
         stream_name: String,
