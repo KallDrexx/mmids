@@ -354,8 +354,10 @@ impl WorkflowForwarderStep {
                     );
                 }
 
-                // Send disconnection message to removed workflows
+                // Remove target workflows and send disconnection message to removed workflows
                 for workflow in removed_workflows {
+                    stream.target_workflow_names.remove(&workflow);
+
                     if let Some(channel) = self.known_workflows.get(&workflow) {
                         let _ = channel.send(WorkflowRequest {
                             request_id: "workflow_forwarder_reactor_update".to_string(),
@@ -376,8 +378,10 @@ impl WorkflowForwarderStep {
                     }
                 }
 
-                // Send required media to new workflows
+                // Add new target workflows and send required media to new workflows
                 for workflow in new_workflows {
+                    stream.target_workflow_names.insert(workflow.clone());
+
                     if let Some(channel) = self.known_workflows.get(&workflow) {
                         for media in &stream.required_media {
                             let _ = channel.send(WorkflowRequest {
