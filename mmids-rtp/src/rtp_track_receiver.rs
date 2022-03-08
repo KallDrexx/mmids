@@ -6,7 +6,7 @@ use tracing::{error, info, instrument};
 use webrtc::track::track_remote::TrackRemote;
 
 #[instrument(
-    skip(track, cancellation_token, media_sender),
+    skip(track, cancellation_token, media_sender, close_notification),
     fields(media_sender_type = %media_sender.get_name()))]
 pub async fn receive_rtp_track_media(
     track: Arc<TrackRemote>,

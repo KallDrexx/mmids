@@ -5,6 +5,7 @@ pub mod watcher_connection_handler;
 use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
+use std::fmt::{Debug, Formatter};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 
@@ -104,19 +105,16 @@ pub enum WebrtcServerWatcherRegistrantNotification {
     },
 }
 
-#[derive(Debug)]
 pub enum WebrtcStreamPublisherNotification {
     PublishRequestRejected,
     PublishRequestAccepted { answer_sdp: String },
 }
 
-#[derive(Debug)]
 pub enum WebrtcStreamWatcherNotification {
     WatchRequestRejected,
     WatchRequestAccepted { answer_sdp: String },
 }
 
-#[derive(Debug)]
 pub enum ValidationResponse {
     Reject,
     Approve {
@@ -128,4 +126,43 @@ pub enum ValidationResponse {
 pub enum RequestType {
     Publisher,
     Watcher,
+}
+
+impl Debug for ValidationResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidationResponse::Reject => write!(f, "Reject"),
+            ValidationResponse::Approve { .. } => write!(f, "Approve"),
+        }
+    }
+}
+
+// Manually implement Debug to not log raw SDP
+impl Debug for WebrtcStreamWatcherNotification {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WebrtcStreamWatcherNotification::WatchRequestRejected => {
+                write!(f, "WatchRequestRejected")
+            }
+
+            WebrtcStreamWatcherNotification::WatchRequestAccepted { .. } => {
+                write!(f, "WatchRequestAccepted")
+            }
+        }
+    }
+}
+
+// Manually implement Debug to not log raw SDP
+impl Debug for WebrtcStreamPublisherNotification {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WebrtcStreamPublisherNotification::PublishRequestAccepted { .. } => {
+                write!(f, "PublishRequestAccepted")
+            }
+
+            WebrtcStreamPublisherNotification::PublishRequestRejected => {
+                write!(f, "PublishRequestRejected")
+            }
+        }
+    }
 }
