@@ -1,10 +1,16 @@
+use crate::endpoints::webrtc_server::actor::ConnectionState::WatcherActive;
 use crate::endpoints::webrtc_server::publisher_connection_handler::{
     start_publisher_connection, PublisherConnectionHandlerParams, PublisherConnectionHandlerRequest,
 };
 use crate::endpoints::webrtc_server::watcher_connection_handler::{
     start_watcher_connection, WatcherConnectionHandlerParams, WatcherConnectionHandlerRequest,
 };
-use crate::endpoints::webrtc_server::{RequestType, StreamNameRegistration, ValidationResponse, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification};
+use crate::endpoints::webrtc_server::{
+    RequestType, StreamNameRegistration, ValidationResponse,
+    WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest,
+    WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification,
+    WebrtcStreamWatcherNotification,
+};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -12,13 +18,12 @@ use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::StreamId;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::{channel, Receiver};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
-use mmids_core::StreamId;
-use crate::endpoints::webrtc_server::actor::ConnectionState::WatcherActive;
 
 pub fn start_webrtc_server() -> UnboundedSender<WebrtcServerRequest> {
     let (sender, receiver) = unbounded_channel();
@@ -226,16 +231,22 @@ impl Actor {
                     media,
                     receiver,
                 } => {
-                    self.futures.push(notify_on_media_received(
-                        application_name.clone(),
-                        registered_stream_name.clone(),
-                        receiver
-                    ).boxed());
+                    self.futures.push(
+                        notify_on_media_received(
+                            application_name.clone(),
+                            registered_stream_name.clone(),
+                            receiver,
+                        )
+                        .boxed(),
+                    );
 
                     self.handle_media(application_name, registered_stream_name, media);
                 }
 
-                FutureResult::MediaChannelClosed {application_name, registered_stream_name} => {
+                FutureResult::MediaChannelClosed {
+                    application_name,
+                    registered_stream_name,
+                } => {
                     info!(
                         application_name = %application_name,
                         registered_stream_name = ?registered_stream_name,
@@ -401,11 +412,11 @@ impl Actor {
                 match registration_type {
                     RequestType::Watcher => {
                         self.remove_watcher_registrant(application_name, stream_name)
-                    },
+                    }
 
                     RequestType::Publisher => {
                         self.remove_publisher_registrant(application_name, stream_name)
-                    },
+                    }
                 }
             }
         }
@@ -478,12 +489,15 @@ impl Actor {
                 },
             );
 
-            self.connections.insert(connection_id.clone(), ConnectionState::WatcherPendingValidation {
-                application_name,
-                stream_name,
-                offer_sdp,
-                watcher_channel: notification_channel,
-            });
+            self.connections.insert(
+                connection_id.clone(),
+                ConnectionState::WatcherPendingValidation {
+                    application_name,
+                    stream_name,
+                    offer_sdp,
+                    watcher_channel: notification_channel,
+                },
+            );
 
             self.futures
                 .push(notify_on_watch_validation(connection_id, receiver).boxed());
@@ -571,12 +585,15 @@ impl Actor {
                 },
             );
 
-            self.connections.insert(connection_id.clone(), ConnectionState::PublisherPendingValidation {
-                application_name,
-                stream_name,
-                publisher_channel: notification_channel,
-                offer_sdp,
-            });
+            self.connections.insert(
+                connection_id.clone(),
+                ConnectionState::PublisherPendingValidation {
+                    application_name,
+                    stream_name,
+                    publisher_channel: notification_channel,
+                    offer_sdp,
+                },
+            );
 
             self.futures
                 .push(notify_on_pub_validation(connection_id, receiver).boxed());
@@ -681,13 +698,8 @@ impl Actor {
             .boxed(),
         );
 
-        self.futures.push(
-            notify_on_media_received(
-                application_name,
-                stream_name,
-                media_channel,
-            ).boxed(),
-        );
+        self.futures
+            .push(notify_on_media_received(application_name, stream_name, media_channel).boxed());
 
         let _ = notification_channel
             .send(WebrtcServerWatcherRegistrantNotification::RegistrationSuccessful);
@@ -793,20 +805,19 @@ impl Actor {
             None => return,
         };
 
-        let(app_name, stream_name, offer_sdp, notification_channel) = match connection_state {
+        let (app_name, stream_name, offer_sdp, notification_channel) = match connection_state {
             ConnectionState::WatcherPendingValidation {
                 application_name,
                 stream_name,
                 offer_sdp,
                 watcher_channel,
-            } => {
-                (application_name, stream_name, offer_sdp, watcher_channel)
-            }
+            } => (application_name, stream_name, offer_sdp, watcher_channel),
 
             state => {
                 error!(
                     "Connection received a watcher validation response but was in an unexpected \
-                    connection state of {:?}.  Ignoring...", state
+                    connection state of {:?}.  Ignoring...",
+                    state
                 );
 
                 self.connections.insert(connection_id, state);
@@ -828,7 +839,9 @@ impl Actor {
                     .send(WebrtcStreamWatcherNotification::WatchRequestRejected);
             }
 
-            ValidationResponse::Approve {reactor_update_channel} => {
+            ValidationResponse::Approve {
+                reactor_update_channel,
+            } => {
                 info!(
                     application_name = %app_name,
                     stream_name = %stream_name,
@@ -941,7 +954,9 @@ impl Actor {
 
             match stream_name {
                 StreamNameRegistration::Any => application.published_streams.clear(),
-                StreamNameRegistration::Exact(name) => {application.published_streams.remove(&name);}
+                StreamNameRegistration::Exact(name) => {
+                    application.published_streams.remove(&name);
+                }
             }
         }
     }
@@ -965,7 +980,9 @@ impl Actor {
 
             match stream_name {
                 StreamNameRegistration::Any => application.watched_streams.clear(),
-                StreamNameRegistration::Exact(name) => {application.watched_streams.remove(&name);},
+                StreamNameRegistration::Exact(name) => {
+                    application.watched_streams.remove(&name);
+                }
             }
         }
     }
@@ -1160,22 +1177,23 @@ impl Actor {
 
         // If we have already received sequence headers, pass them along
         if let Some(media) = &entry.video_sequence_header {
-            let _ = connection_handler.send(WatcherConnectionHandlerRequest::SendMedia(
-                media.clone(),
-            ));
+            let _ =
+                connection_handler.send(WatcherConnectionHandlerRequest::SendMedia(media.clone()));
         }
 
         if let Some(media) = &entry.audio_sequence_header {
-            let _ = connection_handler.send(WatcherConnectionHandlerRequest::SendMedia(
-                media.clone(),
-            ));
+            let _ =
+                connection_handler.send(WatcherConnectionHandlerRequest::SendMedia(media.clone()));
         }
 
-        self.connections.insert(connection_id, WatcherActive {
-            application_name,
-            stream_name,
-            connection_handler,
-        });
+        self.connections.insert(
+            connection_id,
+            WatcherActive {
+                application_name,
+                stream_name,
+                connection_handler,
+            },
+        );
     }
 
     #[instrument(skip(self))]
@@ -1199,11 +1217,13 @@ impl Actor {
 
                             let channel = if let Some(registrant) = application
                                 .publisher_registrants
-                                .get(&StreamNameRegistration::Any) {
+                                .get(&StreamNameRegistration::Any)
+                            {
                                 Some(&registrant.notification_channel)
                             } else if let Some(registrant) = application
                                 .publisher_registrants
-                                .get(&StreamNameRegistration::Exact(stream_name.clone())) {
+                                .get(&StreamNameRegistration::Exact(stream_name.clone()))
+                            {
                                 Some(&registrant.notification_channel)
                             } else {
                                 None
@@ -1266,7 +1286,7 @@ impl Actor {
 
             Some(ConnectionState::PublisherPendingValidation { .. }) => {
                 info!("Publisher pending validation was removed");
-            },
+            }
             Some(ConnectionState::WatcherPendingValidation { .. }) => {
                 info!("Watcher pending validation was removed");
             }
@@ -1286,12 +1306,15 @@ impl Actor {
             None => return, // application is no longer valid
         };
 
-        if !application.watcher_registrants.contains_key(&registered_stream_name) {
+        if !application
+            .watcher_registrants
+            .contains_key(&registered_stream_name)
+        {
             return; // No one listening to registrants
         }
 
         match &media.content {
-            MediaNotificationContent::NewIncomingStream {stream_name} => {
+            MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(old_name) = application.stream_id_to_name_map.get(&media.stream_id) {
                     warn!(
                         stream_id = ?media.stream_id,
@@ -1300,12 +1323,16 @@ impl Actor {
                         old_name, stream_name
                     );
                 } else {
-                    application.stream_id_to_name_map.insert(media.stream_id.clone(), stream_name.clone());
+                    application
+                        .stream_id_to_name_map
+                        .insert(media.stream_id.clone(), stream_name.clone());
                 }
             }
 
             MediaNotificationContent::StreamDisconnected => {
-                if let Some(stream_name) = application.stream_id_to_name_map.remove(&media.stream_id) {
+                if let Some(stream_name) =
+                    application.stream_id_to_name_map.remove(&media.stream_id)
+                {
                     if let Some(watchers) = application.watched_streams.get(&stream_name) {
                         if watchers.watchers.is_empty() {
                             // Since we have no watchers, no reason to keep this in memory
@@ -1320,7 +1347,9 @@ impl Actor {
                 }
             }
 
-            MediaNotificationContent::Video {is_sequence_header, ..} => {
+            MediaNotificationContent::Video {
+                is_sequence_header, ..
+            } => {
                 if let Some(stream_name) = application.stream_id_to_name_map.get(&media.stream_id) {
                     if let Some(details) = application.watched_streams.get_mut(stream_name) {
                         if *is_sequence_header {
@@ -1333,18 +1362,22 @@ impl Actor {
                             for connection_id in &details.watchers {
                                 if let Some(connection) = self.connections.get(&connection_id) {
                                     match connection {
-                                        ConnectionState::WatcherActive { connection_handler, .. } => {
-                                            let _ = connection_handler
-                                                .send(WatcherConnectionHandlerRequest::SendMedia(
+                                        ConnectionState::WatcherActive {
+                                            connection_handler,
+                                            ..
+                                        } => {
+                                            let _ = connection_handler.send(
+                                                WatcherConnectionHandlerRequest::SendMedia(
                                                     media.content.clone(),
-                                                ));
+                                                ),
+                                            );
                                         }
 
                                         state => error!(
-                                        connection_id = ?connection_id,
-                                        "Attempted to pass media to watcher connection, but watcher \
-                                        was in state {:?} when WatcherActive was expected", state
-                                    ),
+                                            connection_id = ?connection_id,
+                                            "Attempted to pass media to watcher connection, but watcher \
+                                            was in state {:?} when WatcherActive was expected", state
+                                        ),
                                     }
                                 }
                             }
@@ -1353,7 +1386,9 @@ impl Actor {
                 }
             }
 
-            MediaNotificationContent::Audio {is_sequence_header, ..} => {
+            MediaNotificationContent::Audio {
+                is_sequence_header, ..
+            } => {
                 if let Some(stream_name) = application.stream_id_to_name_map.get(&media.stream_id) {
                     if let Some(details) = application.watched_streams.get_mut(stream_name) {
                         if *is_sequence_header {
@@ -1366,18 +1401,22 @@ impl Actor {
                             for connection_id in &details.watchers {
                                 if let Some(connection) = self.connections.get(&connection_id) {
                                     match connection {
-                                        ConnectionState::WatcherActive { connection_handler, .. } => {
-                                            let _ = connection_handler
-                                                .send(WatcherConnectionHandlerRequest::SendMedia(
+                                        ConnectionState::WatcherActive {
+                                            connection_handler,
+                                            ..
+                                        } => {
+                                            let _ = connection_handler.send(
+                                                WatcherConnectionHandlerRequest::SendMedia(
                                                     media.content.clone(),
-                                                ));
+                                                ),
+                                            );
                                         }
 
                                         state => error!(
-                                        connection_id = ?connection_id,
-                                        "Attempted to pass media to watcher connection, but watcher \
-                                        was in state {:?} when WatcherActive was expected", state
-                                    ),
+                                            connection_id = ?connection_id,
+                                            "Attempted to pass media to watcher connection, but watcher \
+                                            was in state {:?} when WatcherActive was expected", state
+                                        ),
                                     }
                                 }
                             }
@@ -1386,7 +1425,7 @@ impl Actor {
                 }
             }
 
-            MediaNotificationContent::Metadata {..} => (),
+            MediaNotificationContent::Metadata { .. } => (),
         }
     }
 }
@@ -1485,6 +1524,9 @@ async fn notify_on_media_received(
             receiver,
         },
 
-        None => FutureResult::MediaChannelClosed {application_name, registered_stream_name}
+        None => FutureResult::MediaChannelClosed {
+            application_name,
+            registered_stream_name,
+        },
     }
 }

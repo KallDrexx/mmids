@@ -1,17 +1,18 @@
+use mmids_core::codecs::VideoCodec;
+use mmids_core::net::ConnectionId;
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::StreamId;
+use mmids_rtp::endpoints::webrtc_server::{
+    start_webrtc_server, StreamNameRegistration, WebrtcServerPublisherRegistrantNotification,
+    WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification,
+    WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification,
+};
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
-use tracing_subscriber::{fmt, layer::SubscriberExt};
 use tracing::{debug, error, info};
-use tracing::log::warn;
+use tracing_subscriber::{fmt, layer::SubscriberExt};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use mmids_core::codecs::{VideoCodec};
-use mmids_core::net::ConnectionId;
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
-use mmids_rtp::endpoints::webrtc_server::publisher_connection_handler::{PublisherConnectionHandlerParams, start_publisher_connection};
-use mmids_rtp::endpoints::webrtc_server::{start_webrtc_server, StreamNameRegistration, WebrtcServerPublisherRegistrantNotification, WebrtcServerRequest, WebrtcServerWatcherRegistrantNotification, WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification};
-use mmids_rtp::endpoints::webrtc_server::watcher_connection_handler::{start_watcher_connection, WatcherConnectionHandlerParams, WatcherConnectionHandlerRequest};
 
 const APP_NAME: &str = "app";
 const STREAM_NAME: &str = "stream";
@@ -29,18 +30,19 @@ pub async fn main() {
     let endpoint = start_webrtc_server();
 
     info!("Register for listeners and watchers");
-    let pub_registration = register_for_publishers(&endpoint).await;
-    let (watch_registration, media_sender) = register_for_watchers(&endpoint).await;
+    let mut pub_registration = register_for_publishers(&endpoint).await;
+    let (mut watch_registration, media_sender) = register_for_watchers(&endpoint).await;
 
     let _ = connect_watcher(&endpoint).await;
     let _ = connect_publisher(&endpoint).await;
 
     info!("Watcher and publisher accepted");
+    let mut stream_id_map = HashMap::new();
     loop {
         tokio::select! {
             notification = pub_registration.recv() => {
                 if let Some(notification) = notification {
-                    handle_pub_notification(notification);
+                    handle_pub_notification(notification, media_sender.clone(), &mut stream_id_map);
                 } else {
                     panic!("Publisher registrant disappeared");
                 }
@@ -60,17 +62,19 @@ pub async fn main() {
 fn handle_pub_notification(
     notification: WebrtcServerPublisherRegistrantNotification,
     media_sender: UnboundedSender<MediaNotification>,
+    stream_id_map: &mut HashMap<ConnectionId, StreamId>,
 ) {
     match notification {
         WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
             stream_id,
             stream_name,
-            connection_id: _,
+            connection_id,
             mut media_channel,
             reactor_update_channel: _,
         } => {
             info!("New publisher connection on stream {}", stream_name);
 
+            stream_id_map.insert(connection_id, stream_id.clone());
             let media_sender = media_sender.clone();
             tokio::spawn(async move {
                 info!("Media sender for stream {:?} started", stream_name);
@@ -92,20 +96,33 @@ fn handle_pub_notification(
             });
         }
 
-        WebrtcServerPublisherRegistrantNotification::PublisherDisconnected {connection_id, ..} => {
-            let _ = media_sender.send(MediaNotification {
-                stream_id: stream_id.clone(),
-                content: MediaNotificationContent::StreamDisconnected,
-            });
+        WebrtcServerPublisherRegistrantNotification::PublisherDisconnected {
+            connection_id,
+            ..
+        } => {
+            if let Some(stream_id) = stream_id_map.remove(&connection_id) {
+                let _ = media_sender.send(MediaNotification {
+                    stream_id,
+                    content: MediaNotificationContent::StreamDisconnected,
+                });
+            }
+        }
+
+        WebrtcServerPublisherRegistrantNotification::PublisherRequiringApproval { .. } => {
+            error!("Unexpected PublisherRequiringApproval event");
+        }
+
+        WebrtcServerPublisherRegistrantNotification::RegistrationFailed { .. } => {
+            error!("Unexpected RegistrationFailed event");
+        }
+
+        WebrtcServerPublisherRegistrantNotification::RegistrationSuccessful => {
+            error!("Unexpected Registration Successful event");
         }
     }
 }
 
-fn handle_watch_notification(
-    notification: WebrtcServerWatcherRegistrantNotification,
-) {
-
-}
+fn handle_watch_notification(_notification: WebrtcServerWatcherRegistrantNotification) {}
 
 async fn connect_watcher(
     endpoint: &UnboundedSender<WebrtcServerRequest>,
@@ -122,12 +139,16 @@ async fn connect_watcher(
     });
 
     match receiver.recv().await {
-        Some(WebrtcStreamWatcherNotification::WatchRequestAccepted {answer_sdp}) => {
+        Some(WebrtcStreamWatcherNotification::WatchRequestAccepted { answer_sdp }) => {
+            let answer_sdp = sdp_to_base64_json(answer_sdp);
             debug!("Watcher accepted, answer SDP: {}", answer_sdp);
         }
 
         Some(notification) => {
-            panic!("Unexpected watcher notification received: {:?}", notification);
+            panic!(
+                "Unexpected watcher notification received: {:?}",
+                notification
+            );
         }
 
         None => {
@@ -153,7 +174,8 @@ async fn connect_publisher(
     });
 
     match receiver.recv().await {
-        Some(WebrtcStreamPublisherNotification::PublishRequestAccepted {answer_sdp}) => {
+        Some(WebrtcStreamPublisherNotification::PublishRequestAccepted { answer_sdp }) => {
+            let answer_sdp = sdp_to_base64_json(answer_sdp);
             debug!("Publisher accepted, answer SDP: {}", answer_sdp);
         }
 
@@ -185,7 +207,10 @@ async fn register_for_publishers(
     match receiver.recv().await {
         Some(WebrtcServerPublisherRegistrantNotification::RegistrationSuccessful) => receiver,
         Some(notification) => {
-            panic!("Received unexpected publisher registration notification: {:?}", notification);
+            panic!(
+                "Received unexpected publisher registration notification: {:?}",
+                notification
+            );
         }
 
         None => {
@@ -196,7 +221,10 @@ async fn register_for_publishers(
 
 async fn register_for_watchers(
     endpoint: &UnboundedSender<WebrtcServerRequest>,
-) -> (UnboundedReceiver<WebrtcServerWatcherRegistrantNotification>, UnboundedSender<MediaNotification>) {
+) -> (
+    UnboundedReceiver<WebrtcServerWatcherRegistrantNotification>,
+    UnboundedSender<MediaNotification>,
+) {
     let (sender, mut receiver) = unbounded_channel();
     let (media_sender, media_receiver) = unbounded_channel();
     let _ = endpoint.send(WebrtcServerRequest::ListenForWatchers {
@@ -210,9 +238,14 @@ async fn register_for_watchers(
     });
 
     match receiver.recv().await {
-        Some(WebrtcServerWatcherRegistrantNotification::RegistrationSuccessful) => (receiver, media_sender),
+        Some(WebrtcServerWatcherRegistrantNotification::RegistrationSuccessful) => {
+            (receiver, media_sender)
+        }
         Some(notification) => {
-            panic!("Unexpected watch registration notification: {:?}", notification);
+            panic!(
+                "Unexpected watch registration notification: {:?}",
+                notification
+            );
         }
 
         None => {
@@ -232,61 +265,8 @@ async fn read_sdp_from_stdin() -> String {
     offer.sdp
 }
 
-fn handle_registrant_notification(
-    notification: WebrtcServerPublisherRegistrantNotification,
-    watcher_connection_handler: UnboundedSender<WatcherConnectionHandlerRequest>,
-) {
-    match notification {
-        WebrtcServerPublisherRegistrantNotification::RegistrationFailed {} => {
-            info!("Registrant registration reported as failed");
-        }
-
-        WebrtcServerPublisherRegistrantNotification::RegistrationSuccessful {} => {
-            info!("Registrant registration reported as successful");
-        }
-
-        WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
-            connection_id,
-            stream_name,
-            mut media_channel,
-            ..
-        } => {
-            info!("New publisher connected with connection {:?} and stream name {}", connection_id, stream_name);
-
-            tokio::spawn(async move {
-                let mut video_received = false;
-                let mut audio_received = false;
-                while let Some(content) = media_channel.recv().await {
-                    match content {
-                        MediaNotificationContent::Video {..} => {
-                            if !video_received {
-                                info!("Video Received");
-                                video_received = true;
-                            }
-
-                            let _ = watcher_connection_handler
-                                .send(WatcherConnectionHandlerRequest::SendMedia(content));
-                        },
-                        MediaNotificationContent::Audio {..} => {
-                            if !audio_received {
-                                info!("Audio Received");
-                                audio_received = true;
-                            }
-                        },
-                        _ => (),
-                    }
-                }
-
-                info!("Media channel closed");
-            });
-        }
-
-        WebrtcServerPublisherRegistrantNotification::PublisherRequiringApproval {..} => {
-            info!("Publisher requires approval");
-        }
-
-        WebrtcServerPublisherRegistrantNotification::PublisherDisconnected {..} => {
-            info!("Publisher disconnected");
-        }
-    }
+fn sdp_to_base64_json(answer_sdp: String) -> String {
+    let sdp = answer_sdp.replace("\r", "").replace("\n", "\\n");
+    let json = format!("{{\"type\": \"answer\", \"sdp\": \"{}\"}}", sdp);
+    base64::encode(json)
 }

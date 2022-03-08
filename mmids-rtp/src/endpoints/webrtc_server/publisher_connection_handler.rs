@@ -1,9 +1,23 @@
+use crate::endpoints::webrtc_server::{
+    WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification,
+};
+use crate::media_senders::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
+use crate::rtp_track_receiver::receive_rtp_track_media;
+use crate::utils::{
+    create_webrtc_connection, get_audio_mime_type, get_video_mime_type,
+    get_webrtc_connection_answer,
+};
+use anyhow::{Context, Result};
+use futures::future::BoxFuture;
+use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
+use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::net::ConnectionId;
+use mmids_core::reactors::ReactorWorkflowUpdate;
+use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::StreamId;
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{Result, Context};
-use futures::future::BoxFuture;
-use futures::{FutureExt, StreamExt};
-use futures::stream::FuturesUnordered;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 use tracing::{error, info, instrument, warn};
@@ -15,15 +29,6 @@ use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::rtp_transceiver::SSRC;
 use webrtc::track::track_remote::TrackRemote;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
-use mmids_core::net::ConnectionId;
-use mmids_core::reactors::ReactorWorkflowUpdate;
-use mmids_core::StreamId;
-use mmids_core::workflows::MediaNotificationContent;
-use crate::media_senders::{get_media_sender_for_audio_codec, get_media_sender_for_video_codec};
-use crate::rtp_track_receiver::receive_rtp_track_media;
-use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, get_webrtc_connection_answer};
-use crate::endpoints::webrtc_server::{WebrtcServerPublisherRegistrantNotification, WebrtcStreamPublisherNotification};
 
 pub struct PublisherConnectionHandlerParams {
     pub connection_id: ConnectionId,
@@ -31,7 +36,8 @@ pub struct PublisherConnectionHandlerParams {
     pub audio_codec: Option<AudioCodec>,
     pub video_codec: Option<VideoCodec>,
     pub offer_sdp: String,
-    pub registrant_notification_channel: UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
+    pub registrant_notification_channel:
+        UnboundedSender<WebrtcServerPublisherRegistrantNotification>,
     pub publisher_notification_channel: UnboundedSender<WebrtcStreamPublisherNotification>,
     pub reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 }
@@ -41,11 +47,15 @@ pub enum PublisherConnectionHandlerRequest {
 }
 
 pub fn start_publisher_connection(
-    parameters: PublisherConnectionHandlerParams
+    parameters: PublisherConnectionHandlerParams,
 ) -> UnboundedSender<PublisherConnectionHandlerRequest> {
     let (sender, receiver) = unbounded_channel();
     let actor = PublisherConnectionHandler::new(receiver, &parameters);
-    tokio::spawn(actor.run(parameters.stream_name, parameters.offer_sdp, parameters.reactor_update_channel));
+    tokio::spawn(actor.run(
+        parameters.stream_name,
+        parameters.offer_sdp,
+        parameters.reactor_update_channel,
+    ));
 
     sender
 }
@@ -57,7 +67,7 @@ enum WebRtcNotification {
         track_codec: RTCRtpCodecParameters,
         media_channel: UnboundedSender<MediaNotificationContent>,
         cancellation_token: watch::Receiver<bool>,
-    }
+    },
 }
 
 enum FutureResult {
@@ -98,8 +108,7 @@ impl PublisherConnectionHandler {
         let futures = FuturesUnordered::new();
         futures.push(notify_on_request_received(receiver).boxed());
         futures.push(
-            notify_on_registrant_gone(parameters.registrant_notification_channel.clone())
-                .boxed()
+            notify_on_registrant_gone(parameters.registrant_notification_channel.clone()).boxed(),
         );
 
         PublisherConnectionHandler {
@@ -125,11 +134,10 @@ impl PublisherConnectionHandler {
     ) {
         info!("Starting publisher connection handler");
 
-        let peer_connection = match self.create_connection(
-            stream_name,
-            offer_sdp,
-            reactor_update_channel,
-        ).await {
+        let peer_connection = match self
+            .create_connection(stream_name, offer_sdp, reactor_update_channel)
+            .await
+        {
             Ok(connection) => connection,
             Err(error) => {
                 error!("Failed to create peer connection: {:?}", error);
@@ -156,14 +164,17 @@ impl PublisherConnectionHandler {
                     self.terminate = true;
                 }
 
-                FutureResult::RequestReceived {request, receiver} => {
+                FutureResult::RequestReceived { request, receiver } => {
                     self.futures
                         .push(notify_on_request_received(receiver).boxed());
 
                     self.handle_request(request);
                 }
 
-                FutureResult::WebRtcNotificationReceived {notification, receiver} => {
+                FutureResult::WebRtcNotificationReceived {
+                    notification,
+                    receiver,
+                } => {
                     self.futures
                         .push(notify_on_webrtc_notification(receiver).boxed());
 
@@ -231,69 +242,79 @@ impl PublisherConnectionHandler {
         self.futures
             .push(notify_on_webrtc_notification(notification_receiver).boxed());
 
-        let webrtc_connection = create_webrtc_connection(self.audio_codec, self.video_codec).await
+        let webrtc_connection = create_webrtc_connection(self.audio_codec, self.video_codec)
+            .await
             .with_context(|| "Creation of RTCPeerConnection failed")?;
 
         if let Some(_) = self.video_codec {
-            webrtc_connection.add_transceiver_from_kind(RTPCodecType::Video, &[]).await
+            webrtc_connection
+                .add_transceiver_from_kind(RTPCodecType::Video, &[])
+                .await
                 .with_context(|| "Adding video transceiver failed")?;
         }
 
         if let Some(_) = self.audio_codec {
-            webrtc_connection.add_transceiver_from_kind(RTPCodecType::Audio, &[]).await
+            webrtc_connection
+                .add_transceiver_from_kind(RTPCodecType::Audio, &[])
+                .await
                 .with_context(|| "Adding audio webrtc transceiver failed")?;
         }
 
         let (media_sender, media_receiver) = unbounded_channel();
         {
             let notification_sender = notification_sender.clone();
-            webrtc_connection.on_track(
-                Box::new(move |track: Option<Arc<TrackRemote>>, _receiver: Option<Arc<RTCRtpReceiver>>| {
-                    let notification_sender = notification_sender.clone();
-                    let cancel_receiver = cancel_receiver.clone();
-                    let media_sender = media_sender.clone();
-                    tokio::spawn(async move {
-                        if let Some(track) = track {
-                            let track_codec = track.codec().await;
-                            let _ = notification_sender.send(WebRtcNotification::NewTrackStarted {
-                                track,
-                                track_codec,
-                                cancellation_token: cancel_receiver.clone(),
-                                media_channel: media_sender.clone(),
-                            });
-                        }
-                    });
+            webrtc_connection
+                .on_track(Box::new(
+                    move |track: Option<Arc<TrackRemote>>,
+                          _receiver: Option<Arc<RTCRtpReceiver>>| {
+                        let notification_sender = notification_sender.clone();
+                        let cancel_receiver = cancel_receiver.clone();
+                        let media_sender = media_sender.clone();
+                        tokio::spawn(async move {
+                            if let Some(track) = track {
+                                let track_codec = track.codec().await;
+                                let _ =
+                                    notification_sender.send(WebRtcNotification::NewTrackStarted {
+                                        track,
+                                        track_codec,
+                                        cancellation_token: cancel_receiver.clone(),
+                                        media_channel: media_sender.clone(),
+                                    });
+                            }
+                        });
 
-                    Box::pin(async {})
-                })
-            ).await;
+                        Box::pin(async {})
+                    },
+                ))
+                .await;
         }
 
-        webrtc_connection.on_ice_connection_state_change(
-            Box::new(move |state: RTCIceConnectionState| {
-                let _ = notification_sender
-                    .send(WebRtcNotification::ConnectionStateChanged(state));
+        webrtc_connection
+            .on_ice_connection_state_change(Box::new(move |state: RTCIceConnectionState| {
+                let _ = notification_sender.send(WebRtcNotification::ConnectionStateChanged(state));
 
                 Box::pin(async {})
-            })
-        ).await;
+            }))
+            .await;
 
         let local_description = get_webrtc_connection_answer(&webrtc_connection, offer_sdp).await?;
 
         // If we got here then we should be ready to accept the publisher
-        let _ = self.registrant_notification_channel
-            .send(WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
+        let _ = self.registrant_notification_channel.send(
+            WebrtcServerPublisherRegistrantNotification::NewPublisherConnected {
                 connection_id: self.connection_id.clone(),
                 stream_name,
                 stream_id: StreamId(Uuid::new_v4().to_string()),
                 media_channel: media_receiver,
                 reactor_update_channel,
-            });
+            },
+        );
 
-        let _ = self.publisher_notification_channel
-            .send(WebrtcStreamPublisherNotification::PublishRequestAccepted {
+        let _ = self.publisher_notification_channel.send(
+            WebrtcStreamPublisherNotification::PublishRequestAccepted {
                 answer_sdp: local_description.sdp,
-            });
+            },
+        );
 
         Ok(webrtc_connection)
     }
@@ -318,16 +339,19 @@ impl PublisherConnectionHandler {
 
         if media_sender.is_none() {
             if let Some(audio_codec) = self.audio_codec {
-                if get_audio_mime_type(audio_codec)  == Some(mime_type.clone()) {
-                    media_sender = get_media_sender_for_audio_codec(audio_codec, media_channel.clone())
+                if get_audio_mime_type(audio_codec) == Some(mime_type.clone()) {
+                    media_sender =
+                        get_media_sender_for_audio_codec(audio_codec, media_channel.clone())
                 }
             }
         }
 
         if let Some(media_sender) = media_sender {
             let (closed_sender, closed_receiver) = oneshot::channel();
-            self.futures.push(send_pli_after_delay(track.ssrc()).boxed());
-            self.futures.push(notify_on_rtp_receiver_closed(closed_receiver).boxed());
+            self.futures
+                .push(send_pli_after_delay(track.ssrc()).boxed());
+            self.futures
+                .push(notify_on_rtp_receiver_closed(closed_receiver).boxed());
 
             tokio::spawn(receive_rtp_track_media(
                 track,
@@ -353,16 +377,15 @@ impl PublisherConnectionHandler {
         // get a keyframe relatively often for live streams, so late joiners can see video without
         // too much of a delay.
         tokio::spawn(async move {
-            let _ = connection.write_rtcp(&[
-                Box::new(PictureLossIndication {
+            let _ = connection
+                .write_rtcp(&[Box::new(PictureLossIndication {
                     sender_ssrc: 0,
                     media_ssrc: ssrc,
-                })
-            ]).await;
+                })])
+                .await;
         });
 
-        self.futures
-            .push(send_pli_after_delay(ssrc).boxed());
+        self.futures.push(send_pli_after_delay(ssrc).boxed());
     }
 }
 
@@ -370,10 +393,7 @@ async fn notify_on_request_received(
     mut receiver: UnboundedReceiver<PublisherConnectionHandlerRequest>,
 ) -> FutureResult {
     match receiver.recv().await {
-        Some(request) => FutureResult::RequestReceived {
-            request,
-            receiver,
-        },
+        Some(request) => FutureResult::RequestReceived { request, receiver },
 
         None => FutureResult::AllConsumersGone,
     }
@@ -406,9 +426,7 @@ async fn send_pli_after_delay(ssrc: SSRC) -> FutureResult {
     FutureResult::PictureLossIndicatorRequested(ssrc)
 }
 
-async fn notify_on_rtp_receiver_closed(
-    receiver: oneshot::Receiver<()>,
-) -> FutureResult {
+async fn notify_on_rtp_receiver_closed(receiver: oneshot::Receiver<()>) -> FutureResult {
     let _ = receiver.await; // No matter what we get back, this signals the rtp receiver was clsoed
 
     FutureResult::TrackRtpReceiverClosed

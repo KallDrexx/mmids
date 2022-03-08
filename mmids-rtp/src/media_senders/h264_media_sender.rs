@@ -1,11 +1,11 @@
+use crate::media_senders::RtpToMediaContentSender;
+use crate::utils::video_timestamp_from_rtp_packet;
+use mmids_core::codecs::VideoCodec;
+use mmids_core::workflows::MediaNotificationContent;
 use rtp::codecs::h264::H264Packet;
 use rtp::packet::Packet;
 use rtp::packetizer::Depacketizer;
 use tokio::sync::mpsc::UnboundedSender;
-use mmids_core::codecs::VideoCodec;
-use mmids_core::workflows::MediaNotificationContent;
-use crate::media_senders::RtpToMediaContentSender;
-use crate::utils::video_timestamp_from_rtp_packet;
 
 /// Takes h264 based RTP packets and sends them over to the specified tokio channel.
 pub struct H264MediaSender {
@@ -30,7 +30,7 @@ impl H264MediaSender {
     }
 }
 
-unsafe impl Send for H264MediaSender{ }
+unsafe impl Send for H264MediaSender {}
 
 impl RtpToMediaContentSender for H264MediaSender {
     fn send_rtp_data(&mut self, packet: &Packet) -> Result<(), webrtc::error::Error> {
@@ -68,7 +68,9 @@ impl RtpToMediaContentSender for H264MediaSender {
         Ok(())
     }
 
-    fn get_name(&self) -> &str { "H264MediaSender" }
+    fn get_name(&self) -> &str {
+        "H264MediaSender"
+    }
 }
 
 fn get_nal_info(data: &[u8]) -> Option<NalInfo> {
@@ -122,7 +124,11 @@ mod tests {
 
         for data in test_data {
             if let Some(result) = get_nal_info(&data) {
-                assert!(result.is_important, "Data {:?} expected to be marked important but wasn't", data);
+                assert!(
+                    result.is_important,
+                    "Data {:?} expected to be marked important but wasn't",
+                    data
+                );
             } else {
                 panic!("Data {:?} returned no Nal info", data);
             }
@@ -140,7 +146,11 @@ mod tests {
 
         for data in test_data {
             if let Some(result) = get_nal_info(&data) {
-                assert!(!result.is_important, "Data {:?} expected not to be marked important but was", data);
+                assert!(
+                    !result.is_important,
+                    "Data {:?} expected not to be marked important but was",
+                    data
+                );
             } else {
                 panic!("Data {:?} returned no Nal info", data);
             }
@@ -156,7 +166,11 @@ mod tests {
 
         for data in test_data {
             if let Some(result) = get_nal_info(&data) {
-                assert!(result.is_sps, "Data {:?} expected to be sps but wasn't", data);
+                assert!(
+                    result.is_sps,
+                    "Data {:?} expected to be sps but wasn't",
+                    data
+                );
             } else {
                 panic!("Data {:?} returned no Nal info", data);
             }
@@ -173,7 +187,11 @@ mod tests {
 
         for data in test_data {
             if let Some(result) = get_nal_info(&data) {
-                assert!(!result.is_sps, "Data {:?} expected not to be sps but was", data);
+                assert!(
+                    !result.is_sps,
+                    "Data {:?} expected not to be sps but was",
+                    data
+                );
             } else {
                 panic!("Data {:?} returned no Nal info", data);
             }

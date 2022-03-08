@@ -1,9 +1,17 @@
+use crate::endpoints::webrtc_server::WebrtcStreamWatcherNotification;
+use crate::utils::{
+    create_webrtc_connection, get_audio_mime_type, get_video_mime_type,
+    get_webrtc_connection_answer,
+};
+use anyhow::{anyhow, Context, Result};
+use futures::future::BoxFuture;
+use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
+use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::net::ConnectionId;
+use mmids_core::workflows::MediaNotificationContent;
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{anyhow, Result, Context};
-use futures::future::BoxFuture;
-use futures::{FutureExt, StreamExt};
-use futures::stream::FuturesUnordered;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument};
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
@@ -13,11 +21,6 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc_media::Sample;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
-use mmids_core::net::ConnectionId;
-use mmids_core::workflows::MediaNotificationContent;
-use crate::endpoints::webrtc_server::{WebrtcStreamWatcherNotification};
-use crate::utils::{create_webrtc_connection, get_audio_mime_type, get_video_mime_type, get_webrtc_connection_answer};
 
 pub struct WatcherConnectionHandlerParams {
     pub connection_id: ConnectionId,
@@ -99,10 +102,7 @@ impl WatcherConnectionHandler {
     #[instrument(name = "WebRTC Watcher Connection Handler Execution",
         skip(self, offer_sdp),
         fields(connection_id = ?self.connection_id))]
-    async fn run(
-        mut self,
-        offer_sdp: String,
-    ) {
+    async fn run(mut self, offer_sdp: String) {
         info!("Starting connection handler");
 
         let connection = match self.create_connection(offer_sdp).await {
@@ -125,14 +125,17 @@ impl WatcherConnectionHandler {
                     self.terminate = true;
                 }
 
-                FutureResult::RequestReceived {request, receiver} => {
+                FutureResult::RequestReceived { request, receiver } => {
                     self.futures
                         .push(notify_on_request_received(receiver).boxed());
 
                     self.handle_request(request, &connection).await;
                 }
 
-                FutureResult::WebRtcNotificationReceived {notification, receiver} => {
+                FutureResult::WebRtcNotificationReceived {
+                    notification,
+                    receiver,
+                } => {
                     self.futures
                         .push(notify_on_webrtc_notification(receiver).boxed());
 
@@ -163,22 +166,26 @@ impl WatcherConnectionHandler {
                 match media {
                     // It's not clear how to set timestamps, or if any data transformation
                     // has to be done, especially for sequence headers
-                    MediaNotificationContent::Video {data, ..} => {
+                    MediaNotificationContent::Video { data, .. } => {
                         if let Some(track) = &connection.video_track {
-                            let _ = track.write_sample(&Sample {
-                                data,
-                                duration: Duration::from_secs(1),
-                                ..Default::default()
-                            }).await;
+                            let _ = track
+                                .write_sample(&Sample {
+                                    data,
+                                    duration: Duration::from_secs(1),
+                                    ..Default::default()
+                                })
+                                .await;
                         }
                     }
 
-                    MediaNotificationContent::Audio {data, ..} => {
+                    MediaNotificationContent::Audio { data, .. } => {
                         if let Some(track) = &connection.audio_track {
-                            let _ = track.write_sample(&Sample {
-                                data,
-                                ..Default::default()
-                            }).await;
+                            let _ = track
+                                .write_sample(&Sample {
+                                    data,
+                                    ..Default::default()
+                                })
+                                .await;
                         }
                     }
 
@@ -211,19 +218,25 @@ impl WatcherConnectionHandler {
     }
 
     async fn create_connection(&mut self, offer_sdp: String) -> Result<Connection> {
-        let webrtc_connection = create_webrtc_connection(self.audio_codec, self.video_codec).await
+        let webrtc_connection = create_webrtc_connection(self.audio_codec, self.video_codec)
+            .await
             .with_context(|| "Creation of RTCPeerConnection failed")?;
 
         // Create audio and video tracks
         let video_track = if let Some(video_codec) = self.video_codec {
             if let Some(mime_type) = get_video_mime_type(video_codec) {
                 let video_track = Arc::new(TrackLocalStaticSample::new(
-                    RTCRtpCodecCapability { mime_type, ..Default::default() },
+                    RTCRtpCodecCapability {
+                        mime_type,
+                        ..Default::default()
+                    },
                     "video".to_string(),
                     format!("{}-video", self.connection_id.0),
                 ));
 
-                let rtp_sender = webrtc_connection.add_track(video_track.clone()).await
+                let rtp_sender = webrtc_connection
+                    .add_track(video_track.clone())
+                    .await
                     .with_context(|| "Failed to add video track")?;
 
                 read_track_rtcp_packets(rtp_sender);
@@ -232,17 +245,24 @@ impl WatcherConnectionHandler {
             } else {
                 return Err(anyhow!("No mime type for video codec {:?}", video_codec));
             }
-        } else { None };
+        } else {
+            None
+        };
 
         let audio_track = if let Some(audio_codec) = self.audio_codec {
             if let Some(mime_type) = get_audio_mime_type(audio_codec) {
                 let audio_track = Arc::new(TrackLocalStaticSample::new(
-                    RTCRtpCodecCapability { mime_type, ..Default::default() },
+                    RTCRtpCodecCapability {
+                        mime_type,
+                        ..Default::default()
+                    },
                     "audio".to_string(),
                     format!("{}-audio", self.connection_id.0),
                 ));
 
-                let rtp_sender = webrtc_connection.add_track(audio_track.clone()).await
+                let rtp_sender = webrtc_connection
+                    .add_track(audio_track.clone())
+                    .await
                     .with_context(|| "Failed to add audio track")?;
 
                 read_track_rtcp_packets(rtp_sender);
@@ -251,7 +271,9 @@ impl WatcherConnectionHandler {
             } else {
                 return Err(anyhow!("No mime type for audio codec {:?}", audio_codec));
             }
-        } else { None };
+        } else {
+            None
+        };
 
         let (notification_sender, notification_receiver) = unbounded_channel();
         self.futures
@@ -259,31 +281,32 @@ impl WatcherConnectionHandler {
 
         {
             let notification_sender = notification_sender.clone();
-            webrtc_connection.on_ice_connection_state_change(
-                Box::new(move |state: RTCIceConnectionState| {
+            webrtc_connection
+                .on_ice_connection_state_change(Box::new(move |state: RTCIceConnectionState| {
                     let _ = notification_sender
                         .send(WebRtcNotification::IceConnectionStateChanged(state));
 
                     Box::pin(async {})
-                })
-            ).await;
+                }))
+                .await;
         }
 
-        webrtc_connection.on_peer_connection_state_change(
-            Box::new(move |state: RTCPeerConnectionState| {
-                let _ = notification_sender
-                    .send(WebRtcNotification::PeerConnectionStateChanged(state));
+        webrtc_connection
+            .on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
+                let _ =
+                    notification_sender.send(WebRtcNotification::PeerConnectionStateChanged(state));
 
                 Box::pin(async {})
-            })
-        ).await;
+            }))
+            .await;
 
         let local_description = get_webrtc_connection_answer(&webrtc_connection, offer_sdp).await?;
 
         // We are now fully ready to accept the watcher
-        let _ = self.watcher_channel
+        let _ = self
+            .watcher_channel
             .send(WebrtcStreamWatcherNotification::WatchRequestAccepted {
-                answer_sdp: local_description.sdp
+                answer_sdp: local_description.sdp,
             });
 
         Ok(Connection {
@@ -309,7 +332,7 @@ async fn notify_on_request_received(
     mut receiver: UnboundedReceiver<WatcherConnectionHandlerRequest>,
 ) -> FutureResult {
     match receiver.recv().await {
-        Some(request) => FutureResult::RequestReceived {request, receiver},
+        Some(request) => FutureResult::RequestReceived { request, receiver },
         None => FutureResult::AllConsumersGone,
     }
 }
@@ -318,7 +341,10 @@ async fn notify_on_webrtc_notification(
     mut receiver: UnboundedReceiver<WebRtcNotification>,
 ) -> FutureResult {
     match receiver.recv().await {
-        Some(notification) => FutureResult::WebRtcNotificationReceived {notification, receiver},
+        Some(notification) => FutureResult::WebRtcNotificationReceived {
+            notification,
+            receiver,
+        },
         None => FutureResult::WebRtcNotificationSendersGone,
     }
 }

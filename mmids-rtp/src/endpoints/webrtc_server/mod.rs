@@ -9,8 +9,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 
 pub use actor::start_webrtc_server;
-use mmids_core::{StreamId};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::StreamId;
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub enum StreamNameRegistration {
@@ -113,9 +113,7 @@ pub enum WebrtcStreamPublisherNotification {
 #[derive(Debug)]
 pub enum WebrtcStreamWatcherNotification {
     WatchRequestRejected,
-    WatchRequestAccepted {
-        answer_sdp: String,
-    },
+    WatchRequestAccepted { answer_sdp: String },
 }
 
 #[derive(Debug)]
