@@ -23,6 +23,7 @@ use tracing::error;
 const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";
 const SEGMENT_COUNT: &str = "count";
+const STREAM_NAME: &str = "stream_name";
 
 /// Generates new instances of the ffmpeg HLS workflow step based on specified step definitions.
 pub struct FfmpegHlsStepGenerator {
@@ -64,6 +65,7 @@ struct ParamGenerator {
     path: String,
     segment_duration: u16,
     segment_count: u16,
+    stream_name: Option<String>,
 }
 
 impl FfmpegHlsStepGenerator {
@@ -111,11 +113,14 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             _ => 0,
         };
 
+        let stream_name = definition.parameters.get(STREAM_NAME).cloned().flatten();
+
         let param_generator = ParamGenerator {
             rtmp_app: get_rtmp_app(definition.get_id().to_string()),
             path: path.clone(),
             segment_duration: duration,
             segment_count: count,
+            stream_name,
         };
 
         let handler_generator =
@@ -215,7 +220,11 @@ impl FfmpegParameterGenerator for ParamGenerator {
             scale: None,
             bitrate_in_kbps: None,
             target: TargetParams::Hls {
-                path: format!("{}/{}.m3u8", self.path, stream_name),
+                path: format!(
+                    "{}/{}.m3u8",
+                    self.path,
+                    self.stream_name.as_deref().unwrap_or(stream_name)
+                ),
                 max_entries: Some(self.segment_count),
                 segment_length: self.segment_duration,
             },
