@@ -1,11 +1,11 @@
 use crate::endpoints::webrtc_server::{
     WebrtcServerRequest, WebrtcStreamPublisherNotification, WebrtcStreamWatcherNotification,
 };
-use async_trait;
+use async_trait::async_trait;
 use hyper::http::HeaderValue;
 use hyper::{header, Body, Request, Response, StatusCode};
 use mmids_core::http_api::routing::RouteHandler;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::log::warn;
@@ -173,13 +173,13 @@ impl RouteHandler for RequestWebRtcConnectionHandler {
                 request.application_name,
                 request.stream_name,
                 request.offer_sdp,
-            ),
+            ).await,
 
             RequestType::Watch => self.request_watch(
                 request.application_name,
                 request.stream_name,
                 request.offer_sdp,
-            ),
+            ).await,
 
             _ => {
                 warn!("Invalid request type specified");
