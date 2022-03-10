@@ -33,13 +33,15 @@ use mmids_gstreamer::encoders::{
 use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
 use mmids_gstreamer::steps::basic_transcoder::BasicTranscodeStepGenerator;
 use native_tls::Identity;
+use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::{channel, Sender};
-use tracing::{info, warn};
+use tracing::{info, warn, Level};
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt};
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
@@ -66,12 +68,27 @@ pub async fn main() {
     let mut app_log_path = PathBuf::from(log_dir.clone());
     app_log_path.push("application");
 
+    let log_level = match env::var("mmids_log") {
+        Ok(level) => match level.to_lowercase().as_str() {
+            "error" => Level::ERROR,
+            "warn" => Level::WARN,
+            "info" => Level::INFO,
+            "debug" => Level::DEBUG,
+            "trace" => Level::TRACE,
+            _ => Level::INFO,
+        },
+
+        Err(_) => Level::INFO,
+    };
+
     let appender = tracing_appender::rolling::hourly(app_log_path.clone(), "application.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(appender);
+    let stdout_writer = std::io::stdout.with_max_level(log_level);
+    let json_writer = non_blocking.with_max_level(log_level);
 
     let subscriber = tracing_subscriber::registry()
-        .with(fmt::Layer::new().with_writer(std::io::stdout).pretty())
-        .with(fmt::Layer::new().with_writer(non_blocking).json());
+        .with(fmt::Layer::new().with_writer(stdout_writer).pretty())
+        .with(fmt::Layer::new().with_writer(json_writer).json());
 
     tracing::subscriber::set_global_default(subscriber).expect("Unable to set a global collector");
 
