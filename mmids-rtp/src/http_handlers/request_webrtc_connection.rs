@@ -141,7 +141,7 @@ impl RouteHandler for RequestWebRtcConnectionHandler {
         &self,
         request: &mut Request<Body>,
         _path_parameters: HashMap<String, String>,
-        request_id: String,
+        _request_id: String,
     ) -> Result<Response<Body>, hyper::Error> {
         let body = hyper::body::to_bytes(request.body_mut()).await?;
         let body_string = match String::from_utf8(body.to_vec()) {
@@ -169,17 +169,23 @@ impl RouteHandler for RequestWebRtcConnectionHandler {
         };
 
         let response = match request.request_type {
-            RequestType::Publish => self.request_publish(
-                request.application_name,
-                request.stream_name,
-                request.offer_sdp,
-            ).await,
+            RequestType::Publish => {
+                self.request_publish(
+                    request.application_name,
+                    request.stream_name,
+                    request.offer_sdp,
+                )
+                .await
+            }
 
-            RequestType::Watch => self.request_watch(
-                request.application_name,
-                request.stream_name,
-                request.offer_sdp,
-            ).await,
+            RequestType::Watch => {
+                self.request_watch(
+                    request.application_name,
+                    request.stream_name,
+                    request.offer_sdp,
+                )
+                .await
+            }
 
             _ => {
                 warn!("Invalid request type specified");

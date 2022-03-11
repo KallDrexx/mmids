@@ -32,6 +32,8 @@ use mmids_gstreamer::encoders::{
 };
 use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
 use mmids_gstreamer::steps::basic_transcoder::BasicTranscodeStepGenerator;
+use mmids_rtp::endpoints::webrtc_server::{start_webrtc_server, WebrtcServerRequest};
+use mmids_rtp::workflow_steps::webrtc_receive::WebRtcReceiveStepGenerator;
 use native_tls::Identity;
 use std::env;
 use std::path::PathBuf;
@@ -48,6 +50,7 @@ const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
 const FORWARD_STEP: &str = "forward_to_workflow";
 const BASIC_TRANSCODE_STEP: &str = "basic_transcode";
+const WEBRTC_RECEIVE: &str = "webrtc_receive";
 
 // ffmpeg steps will be depreciated at some point
 const FFMPEG_TRANSCODE: &str = "ffmpeg_transcode";
@@ -59,6 +62,7 @@ struct Endpoints {
     rtmp: UnboundedSender<RtmpEndpointRequest>,
     ffmpeg: UnboundedSender<FfmpegEndpointRequest>,
     gst_transcoder: UnboundedSender<GstTranscoderRequest>,
+    webrtc_server: UnboundedSender<WebrtcServerRequest>,
 }
 
 #[tokio::main]
@@ -216,6 +220,13 @@ fn register_steps(
         )
         .expect("Failed to register the basic transcoder step");
 
+    step_factory
+        .register(
+            WorkflowStepType(WEBRTC_RECEIVE.to_string()),
+            Box::new(WebRtcReceiveStepGenerator::new(endpoints.webrtc_server)),
+        )
+        .expect("Failed to register the webrtc receive step");
+
     Arc::new(step_factory)
 }
 
@@ -305,10 +316,13 @@ fn start_endpoints(
     let gst_transcoder =
         start_gst_transcoder(Arc::new(encoder_factory)).expect("Failed to start gst transcoder");
 
+    let webrtc_server = start_webrtc_server();
+
     Endpoints {
         rtmp: rtmp_endpoint,
         ffmpeg: ffmpeg_endpoint,
         gst_transcoder,
+        webrtc_server,
     }
 }
 
