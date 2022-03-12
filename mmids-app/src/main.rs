@@ -33,6 +33,7 @@ use mmids_gstreamer::encoders::{
 use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
 use mmids_gstreamer::steps::basic_transcoder::BasicTranscodeStepGenerator;
 use mmids_rtp::endpoints::webrtc_server::{start_webrtc_server, WebrtcServerRequest};
+use mmids_rtp::http_handlers::request_webrtc_connection::RequestWebRtcConnectionHandler;
 use mmids_rtp::workflow_steps::webrtc_receive::WebRtcReceiveStepGenerator;
 use native_tls::Identity;
 use std::env;
@@ -104,9 +105,9 @@ pub async fn main() {
     let endpoints = start_endpoints(&config, tls_options, log_dir);
     let (pub_sender, sub_sender) = start_event_hub();
     let reactor_manager = start_reactor(&config, sub_sender.clone()).await;
-    let step_factory = register_steps(endpoints, sub_sender, reactor_manager);
+    let step_factory = register_steps(&endpoints, sub_sender, reactor_manager);
     let manager = start_workflows(&config, step_factory, pub_sender);
-    let http_api_shutdown = start_http_api(&config, manager);
+    let http_api_shutdown = start_http_api(&config, manager, &endpoints);
 
     tokio::signal::ctrl_c()
         .await
@@ -137,7 +138,7 @@ fn get_log_directory() -> String {
 }
 
 fn register_steps(
-    endpoints: Endpoints,
+    endpoints: &Endpoints,
     subscription_sender: UnboundedSender<SubscriptionRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
 ) -> Arc<WorkflowStepFactory> {
@@ -216,14 +217,18 @@ fn register_steps(
     step_factory
         .register(
             WorkflowStepType(BASIC_TRANSCODE_STEP.to_string()),
-            Box::new(BasicTranscodeStepGenerator::new(endpoints.gst_transcoder)),
+            Box::new(BasicTranscodeStepGenerator::new(
+                endpoints.gst_transcoder.clone(),
+            )),
         )
         .expect("Failed to register the basic transcoder step");
 
     step_factory
         .register(
             WorkflowStepType(WEBRTC_RECEIVE.to_string()),
-            Box::new(WebRtcReceiveStepGenerator::new(endpoints.webrtc_server)),
+            Box::new(WebRtcReceiveStepGenerator::new(
+                endpoints.webrtc_server.clone(),
+            )),
         )
         .expect("Failed to register the webrtc receive step");
 
@@ -348,6 +353,7 @@ fn start_workflows(
 fn start_http_api(
     config: &MmidsConfig,
     manager: UnboundedSender<WorkflowManagerRequest>,
+    endpoints: &Endpoints,
 ) -> Option<Sender<HttpApiShutdownSignal>> {
     let port = match config.settings.get("http_api_port") {
         Some(Some(value)) => match value.parse::<u16>() {
@@ -429,6 +435,23 @@ fn start_http_api(
             handler: Box::new(http_handlers::VersionHandler),
         })
         .expect("Failed to register version route");
+
+    routes
+        .register(Route {
+            method: Method::POST,
+            path: vec![
+                PathPart::Exact {
+                    value: "webrtc".to_string(),
+                },
+                PathPart::Exact {
+                    value: "connect".to_string(),
+                },
+            ],
+            handler: Box::new(RequestWebRtcConnectionHandler::new(
+                endpoints.webrtc_server.clone(),
+            )),
+        })
+        .expect("Failed to register webrtc connect route");
 
     let addr = ([127, 0, 0, 1], port).into();
     Some(mmids_core::http_api::start_http_api(addr, routes))

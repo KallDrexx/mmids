@@ -6,6 +6,7 @@ pub mod routing;
 
 use crate::http_api::routing::RoutingTable;
 use hyper::header::HeaderName;
+use hyper::http::HeaderValue;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
@@ -102,6 +103,11 @@ async fn execute_request(
                     headers.insert(
                         HeaderName::from_lowercase(b"x-request-id").unwrap(),
                         request_id.parse().unwrap(),
+                    );
+
+                    headers.insert(
+                        hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                        HeaderValue::from_static("*"),
                     );
 
                     Ok(response)
