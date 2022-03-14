@@ -2,6 +2,8 @@
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum VideoCodec {
     Unknown,
+
+    /// Represents H264 video, encoded with AVC
     H264,
 }
 

@@ -1,16 +1,14 @@
 use std::num::Wrapping;
 use std::time::Duration;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes};
 use crate::media_senders::RtpToMediaContentSender;
-use crate::utils::video_timestamp_from_rtp_packet;
 use mmids_core::codecs::VideoCodec;
 use mmids_core::workflows::MediaNotificationContent;
 use rtp::codecs::h264::H264Packet;
 use rtp::packet::Packet;
 use rtp::packetizer::Depacketizer;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::error;
-use webrtc::Error::new;
+use mmids_core::h264_utils::convert_to_avc_decoder_config_record;
 use mmids_core::VideoTimestamp;
 
 /// Takes h264 based RTP packets and sends them over to the specified tokio channel.
@@ -45,33 +43,6 @@ impl H264MediaSender {
             last_calculated_timestamp: None,
             last_rtp_timestamp: None,
         }
-    }
-
-    fn create_avc_sequence_header(&self) -> Option<Bytes> {
-        if self.sps.is_empty() || self.pps.is_empty() {
-            return None;
-        }
-
-        // based on algorithm from http://aviadr1.blogspot.com/2010/05/h264-extradata-partially-explained-for.html
-        let mut bytes = BytesMut::new();
-        bytes.put_u8(1); // version
-        bytes.put_u8(self.sps[0][1]); // profile
-        bytes.put_u8(self.sps[0][2]); // compatibility
-        bytes.put_u8(self.sps[0][3]); // level
-        bytes.put_u8(0xFC | 3); // reserved (6 bits), nalu length size - 1 (2 bits) ????
-        bytes.put_u8(0xE0 | (self.sps.len() as u8)); // reserved (3 bits), num of SPS (5 bits)
-        for sps in &self.sps {
-            bytes.put_u16(sps.len() as u16);
-            bytes.extend_from_slice(&sps);
-        }
-
-        bytes.put_u8(self.pps.len() as u8);
-        for pps in &self.pps {
-            bytes.put_u16(pps.len() as u16);
-            bytes.extend_from_slice(&pps);
-        }
-
-        Some(bytes.freeze())
     }
 }
 
@@ -127,9 +98,11 @@ impl RtpToMediaContentSender for H264MediaSender {
             };
 
             let parameters_updated = if nalu_info.is_sps {
+                println!("sps: {:02x?}", &nalu[..]);
                 self.sps.push(nalu.split_off(4));
                 true
             } else if nalu_info.is_pps {
+                println!("pps: {:02x?}", &nalu[..]);
                 self.pps.push(nalu.split_off(4));
                 true
             } else {
@@ -137,11 +110,12 @@ impl RtpToMediaContentSender for H264MediaSender {
             };
 
             if parameters_updated {
-                let sequence_header_bytes = match self.create_avc_sequence_header() {
+                let sequence_header_bytes = match convert_to_avc_decoder_config_record(&self.sps, &self.pps) {
                     Some(bytes) => bytes,
                     None => continue, // haven't received all sequence header information
                 };
 
+                println!("sequence header: {:02x?}", &sequence_header_bytes[..]);
                 let _ = self.media_channel.send(MediaNotificationContent::Video {
                     codec: VideoCodec::H264,
                     is_sequence_header: true,
