@@ -84,7 +84,7 @@ impl SocketManager {
             }
         }
 
-        debug!("Socket manager closing");
+        info!("Socket manager closing");
     }
 
     fn handle_request(&mut self, request: TcpSocketRequest, tls_options: Arc<Option<TlsOptions>>) {

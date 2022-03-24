@@ -61,6 +61,10 @@ pub enum FutureResult {
         receiver: UnboundedReceiver<RtmpEndpointMediaMessage>,
     },
 
+    PortGone {
+        port: u16,
+    },
+
     NoMoreEndpointRequesters,
     SocketManagerClosed,
     ValidationApprovalResponseReceived(u16, ConnectionId, ValidationResponse),
@@ -71,12 +75,14 @@ pub struct PublishingRegistrant {
     pub stream_id: Option<StreamId>,
     pub ip_restrictions: IpRestriction,
     pub requires_registrant_approval: bool,
+    pub cancellation_notifier: UnboundedReceiver<()>,
 }
 
 pub struct WatcherRegistrant {
     pub response_channel: UnboundedSender<RtmpEndpointWatcherNotification>,
     pub ip_restrictions: IpRestriction,
     pub requires_registrant_approval: bool,
+    pub cancellation_notifier: UnboundedReceiver<()>,
 }
 
 pub struct VideoSequenceHeader {

@@ -24,8 +24,6 @@ enum FutureResult {
 pub async fn main() {
     env_logger::init();
 
-    info!("Test");
-
     let socket_manager_sender = start_socket_manager(None);
     let (response_sender, mut response_receiver) = unbounded_channel();
     let message = TcpSocketRequest::OpenPort {

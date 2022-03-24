@@ -40,8 +40,13 @@ impl RtmpServerEndpointActor {
     ) {
         info!("Starting RTMP server endpoint");
 
-        self.futures
-            .push(internal_futures::wait_for_endpoint_request(endpoint_receiver).boxed());
+        self.futures.push(
+            internal_futures::wait_for_endpoint_request(endpoint_receiver).boxed()
+        );
+
+        self.futures.push(
+            internal_futures::notify_on_socket_manager_gone(socket_request_sender.clone()).boxed()
+        );
 
         while let Some(result) = self.futures.next().await {
             match result {
@@ -141,6 +146,12 @@ impl RtmpServerEndpointActor {
 
                 FutureResult::ValidationApprovalResponseReceived(port, connection_id, response) => {
                     self.handle_validation_response(port, connection_id, response);
+                }
+
+                FutureResult::PortGone {port} => {
+                    if let Some(_) = self.ports.remove(&port) {
+                        warn!("Port {port}'s response sender suddenly closed");
+                    }
                 }
             }
         }
@@ -378,7 +389,7 @@ impl RtmpServerEndpointActor {
                     ListenerRequest::Publisher {
                         channel: message_channel,
                         stream_id,
-                        requires_registrant_approval: requires_registrant_approval,
+                        requires_registrant_approval,
                     },
                     ip_restriction,
                     use_tls,
@@ -403,7 +414,7 @@ impl RtmpServerEndpointActor {
                     ListenerRequest::Watcher {
                         notification_channel,
                         media_channel,
-                        requires_registrant_approval: requires_registrant_approval,
+                        requires_registrant_approval,
                     },
                     ip_restrictions,
                     use_tls,
@@ -556,6 +567,7 @@ impl RtmpServerEndpointActor {
                     return;
                 }
 
+                let (cancel_sender, cancel_receiver) = unbounded_channel();
                 app_map.publisher_registrants.insert(
                     stream_key.clone(),
                     PublishingRegistrant {
@@ -563,6 +575,7 @@ impl RtmpServerEndpointActor {
                         stream_id,
                         ip_restrictions,
                         requires_registrant_approval,
+                        cancellation_notifier: cancel_receiver,
                     },
                 );
 
@@ -572,6 +585,7 @@ impl RtmpServerEndpointActor {
                         port,
                         rtmp_app,
                         stream_key,
+                        cancel_sender,
                     )
                     .boxed(),
                 );
@@ -631,12 +645,14 @@ impl RtmpServerEndpointActor {
                     return;
                 }
 
+                let (cancel_sender, cancel_receiver) = unbounded_channel();
                 app_map.watcher_registrants.insert(
                     stream_key.clone(),
                     WatcherRegistrant {
                         response_channel: notification_channel.clone(),
                         ip_restrictions,
                         requires_registrant_approval,
+                        cancellation_notifier: cancel_receiver,
                     },
                 );
 
@@ -646,6 +662,7 @@ impl RtmpServerEndpointActor {
                         port,
                         rtmp_app.clone(),
                         stream_key.clone(),
+                        cancel_sender,
                     )
                     .boxed(),
                 );
@@ -775,6 +792,7 @@ impl RtmpServerEndpointActor {
         }
 
         if remove_port {
+            info!("Port {port} removed");
             self.ports.remove(&port);
         }
     }
@@ -1525,7 +1543,7 @@ mod internal_futures {
     use crate::endpoints::rtmp_server::{
         RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification, ValidationResponse,
     };
-    use crate::net::tcp::TcpSocketResponse;
+    use crate::net::tcp::{TcpSocketRequest, TcpSocketResponse};
     use crate::net::ConnectionId;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio::sync::oneshot::Receiver;
@@ -1547,7 +1565,7 @@ mod internal_futures {
         port: u16,
     ) -> FutureResult {
         match socket_receiver.recv().await {
-            None => FutureResult::SocketManagerClosed,
+            None => FutureResult::PortGone {port},
             Some(response) => FutureResult::SocketResponseReceived {
                 port,
                 response,
@@ -1561,8 +1579,12 @@ mod internal_futures {
         port: u16,
         app_name: String,
         stream_key: StreamKeyRegistration,
+        cancellation_receiver: UnboundedSender<()>,
     ) -> FutureResult {
-        sender.closed().await;
+        tokio::select! {
+            _ = sender.closed() => (),
+            _ = cancellation_receiver.closed() => (),
+        }
 
         FutureResult::PublishingRegistrantGone {
             port,
@@ -1596,8 +1618,12 @@ mod internal_futures {
         port: u16,
         app_name: String,
         stream_key: StreamKeyRegistration,
+        cancellation_token: UnboundedSender<()>,
     ) -> FutureResult {
-        sender.closed().await;
+        tokio::select! {
+            _ = sender.closed() => (),
+            _ = cancellation_token.closed() => (),
+        }
 
         FutureResult::WatcherRegistrantGone {
             port,
@@ -1644,6 +1670,14 @@ mod internal_futures {
                 ValidationResponse::Reject,
             ),
         }
+    }
+
+    pub(super) async fn notify_on_socket_manager_gone(
+        sender: UnboundedSender<TcpSocketRequest>,
+    ) -> FutureResult {
+        sender.closed().await;
+
+        FutureResult::SocketManagerClosed
     }
 }
 
