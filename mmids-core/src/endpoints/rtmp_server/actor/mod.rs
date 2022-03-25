@@ -40,12 +40,11 @@ impl RtmpServerEndpointActor {
     ) {
         info!("Starting RTMP server endpoint");
 
-        self.futures.push(
-            internal_futures::wait_for_endpoint_request(endpoint_receiver).boxed()
-        );
+        self.futures
+            .push(internal_futures::wait_for_endpoint_request(endpoint_receiver).boxed());
 
         self.futures.push(
-            internal_futures::notify_on_socket_manager_gone(socket_request_sender.clone()).boxed()
+            internal_futures::notify_on_socket_manager_gone(socket_request_sender.clone()).boxed(),
         );
 
         while let Some(result) = self.futures.next().await {
@@ -148,7 +147,7 @@ impl RtmpServerEndpointActor {
                     self.handle_validation_response(port, connection_id, response);
                 }
 
-                FutureResult::PortGone {port} => {
+                FutureResult::PortGone { port } => {
                     if let Some(_) = self.ports.remove(&port) {
                         warn!("Port {port}'s response sender suddenly closed");
                     }
@@ -1565,7 +1564,7 @@ mod internal_futures {
         port: u16,
     ) -> FutureResult {
         match socket_receiver.recv().await {
-            None => FutureResult::PortGone {port},
+            None => FutureResult::PortGone { port },
             Some(response) => FutureResult::SocketResponseReceived {
                 port,
                 response,

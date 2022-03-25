@@ -447,7 +447,9 @@ impl WorkflowStep for RtmpReceiverStep {
 
             match future_result {
                 FutureResult::RtmpEndpointDroppedRegistration => {
-                    error!("Rtmp receive step stopping as the rtmp endpoint dropped the registration");
+                    error!(
+                        "Rtmp receive step stopping as the rtmp endpoint dropped the registration"
+                    );
                     self.status = StepStatus::Error {
                         message: "Rtmp receive step stopping as the rtmp endpoint dropped the registration"
                             .to_string(),
@@ -605,4 +607,3 @@ async fn notify_reactor_manager_gone(
     sender.closed().await;
     Box::new(FutureResult::ReactorManagerGone)
 }
-
