@@ -3,22 +3,24 @@
 //! Media packets that are received from previous steps are passed to the RTMP endpoint for ffmpeg
 //! consumption, and then passed on to the next step as-is.
 
-use crate::endpoints::ffmpeg::{
+use crate::endpoint::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,
 };
-use crate::endpoints::rtmp_server::RtmpEndpointRequest;
-use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::factory::StepGenerator;
-use crate::workflows::steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
-use crate::workflows::steps::{
+use mmids_core::endpoints::rtmp_server::RtmpEndpointRequest;
+use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
+use mmids_core::workflows::steps::{
     ExternalStreamReader, StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
     StepStatus, WorkflowStep,
 };
-use crate::StreamId;
+use mmids_core::StreamId;
 use futures::FutureExt;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
+use crate::endpoint::{AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams};
+use crate::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 
 const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";

@@ -3,5 +3,4 @@
 //! the logic for handling inbound or outbound RTMP connections).  Endpoints are usually idle until
 //! invoked by workflow steps.
 
-pub mod ffmpeg;
 pub mod rtmp_server;

@@ -5,27 +5,28 @@
 //!
 //! Media packets that come in from previous steps are ignored.
 
-use crate::endpoints::ffmpeg::{
+use crate::endpoint::ffmpeg::{
     AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams,
     TargetParams, VideoTranscodeParams,
 };
-use crate::endpoints::rtmp_server::{
+use mmids_core::endpoints::rtmp_server::{
     IpRestriction, RegistrationType, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
     StreamKeyRegistration,
 };
-use crate::workflows::definitions::WorkflowStepDefinition;
-use crate::workflows::steps::factory::StepGenerator;
-use crate::workflows::steps::{
+use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
-use crate::workflows::{MediaNotification, MediaNotificationContent};
-use crate::{StreamId, VideoTimestamp};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use futures::FutureExt;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info};
+use mmids_core::{StreamId, VideoTimestamp};
 use uuid::Uuid;
+use crate::endpoint::{FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams};
 
 pub const LOCATION: &'static str = "location";
 pub const STREAM_NAME: &'static str = "stream_name";
@@ -268,7 +269,7 @@ impl FfmpegPullStep {
                     outputs.media.push(MediaNotification {
                         stream_id: stream_id.clone(),
                         content: MediaNotificationContent::Metadata {
-                            data: crate::utils::stream_metadata_to_hash_map(metadata),
+                            data: mmids_core::utils::stream_metadata_to_hash_map(metadata),
                         },
                     });
                 } else {

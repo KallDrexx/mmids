@@ -1,3 +1,5 @@
+pub mod step_test_context;
+
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -24,8 +26,8 @@ pub async fn expect_oneshot_response<T>(receiver: Receiver<T>) -> T {
 }
 
 pub async fn expect_mpsc_timeout<T>(receiver: &mut UnboundedReceiver<T>)
-where
-    T: Debug,
+    where
+        T: Debug,
 {
     match timeout(Duration::from_millis(10), receiver.recv()).await {
         Ok(Some(response)) => panic!("Expected timeout, instead received {:?}", response),

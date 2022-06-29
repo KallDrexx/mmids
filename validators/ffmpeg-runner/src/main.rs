@@ -1,5 +1,5 @@
 use log::info;
-use mmids_core::endpoints::ffmpeg::{
+use mmids_ffmpeg::endpoint::{
     start_ffmpeg_endpoint, AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest,
     FfmpegParams, H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
 };

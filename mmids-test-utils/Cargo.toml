@@ -1,0 +1,10 @@
+[package]
+name = "mmids-test-utils"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.54"
+mmids-core = { path = "../mmids-core" }
+futures = "0.3"
+tokio = { version = "1.15", features = ["full"] }

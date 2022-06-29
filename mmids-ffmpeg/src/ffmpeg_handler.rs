@@ -1,15 +1,11 @@
-use crate::endpoints::ffmpeg::{FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams};
-use crate::workflows::steps::external_stream_handler::{
-    ExternalStreamHandler, ExternalStreamHandlerGenerator, ResolvedFutureStatus,
-    StreamHandlerFutureResult, StreamHandlerFutureWrapper,
-};
-use crate::workflows::steps::{StepFutureResult, StepOutputs};
-use crate::StreamId;
 use futures::FutureExt;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
+use mmids_core::StreamId;
+use mmids_core::workflows::steps::{ExternalStreamHandler, ExternalStreamHandlerGenerator, ResolvedFutureStatus, StepFutureResult, StepOutputs, StreamHandlerFutureResult, StreamHandlerFutureWrapper};
 use uuid::Uuid;
+use crate::endpoint::{FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams};
 
 pub struct FfmpegHandler {
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
@@ -35,6 +31,7 @@ enum FfmpegHandlerStatus {
     Active,
 }
 
+#[derive()]
 enum FutureResult {
     FfmpegChannelGone,
     NotificationReceived(
@@ -205,6 +202,7 @@ async fn wait_for_ffmpeg_notification(
 
 #[cfg(test)]
 mod tests {
+    use crate::endpoint::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
     use super::*;
     use crate::endpoints::ffmpeg::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
 

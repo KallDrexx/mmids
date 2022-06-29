@@ -1,0 +1,15 @@
+[package]
+name = "mmids-ffmpeg"
+version = "1.0.0"
+edition = "2021"
+description = "Mmids functionality reliant on the ffmpeg cli"
+authors = ["Matthew Shapiro <me@mshapiro.net>"]
+
+[dependencies]
+futures = "0.3"
+mmids-core = { path = "../mmids-core" }
+tokio = { version = "1.15", features = ["full"] }
+tracing = { version = "0.1", features = ["log"] }
+
+[dev-dependencies]
+mmids-test-utils = { path = "../mmids-test-utils" }

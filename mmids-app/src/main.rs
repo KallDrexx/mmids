@@ -19,10 +19,10 @@ use mmids_core::workflows::manager::{
     start_workflow_manager, WorkflowManagerRequest, WorkflowManagerRequestOperation,
 };
 use mmids_core::workflows::steps::factory::WorkflowStepFactory;
-use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStepGenerator;
-use mmids_core::workflows::steps::ffmpeg_pull::FfmpegPullStepGenerator;
-use mmids_core::workflows::steps::ffmpeg_rtmp_push::FfmpegRtmpPushStepGenerator;
-use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoderStepGenerator;
+use mmids_ffmpeg::workflow_steps::FfmpegHlsStepGenerator;
+use mmids_ffmpeg::workflow_steps::FfmpegPullStepGenerator;
+use mmids_ffmpeg::workflow_steps::FfmpegRtmpPushStepGenerator;
+use mmids_ffmpeg::workflow_steps::FfmpegTranscoderStepGenerator;
 use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
 use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
 use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
