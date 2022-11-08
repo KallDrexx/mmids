@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::timeout;
 
-pub const CONNECTION_ID: &'static str = "test-1234";
+pub const CONNECTION_ID: &str = "test-1234";
 
 pub struct RtmpTestClient {
     socket_manager_receiver: UnboundedReceiver<TcpSocketRequest>,
@@ -115,14 +115,12 @@ impl RtmpTestClient {
             .as_mut()
             .expect("Connection not established yet");
 
-        match timeout(
-            Duration::from_millis(10),
-            connection.incoming_bytes.closed(),
-        )
-        .await
+        let wait_time = Duration::from_millis(10);
+        if timeout(wait_time, connection.incoming_bytes.closed())
+            .await
+            .is_err()
         {
-            Ok(()) => return,
-            Err(_) => panic!("Response sender not closed as expected (not disconnected"),
+            panic!("Response sender not closed as expected (not disconnected");
         }
     }
 

@@ -196,7 +196,7 @@ impl Actor {
                 let channels = self
                     .stream_response_channels
                     .entry(stream_name.clone())
-                    .or_insert(Vec::new());
+                    .or_default();
 
                 channels.push(response_channel.clone());
 
@@ -410,7 +410,7 @@ async fn wait_for_executor_response(
     let result = future.await;
     FutureResult::ExecutorResponseReceived {
         stream_name,
-        result: result,
+        result,
     }
 }
 
@@ -491,15 +491,9 @@ mod tests {
         fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
             let future = if self.expected_name == stream_name {
                 let workflows = self.workflows.clone();
-                async {
-                    return ReactorExecutionResult::valid(workflows);
-                }
-                .boxed()
+                async { ReactorExecutionResult::valid(workflows) }.boxed()
             } else {
-                async {
-                    return ReactorExecutionResult::invalid();
-                }
-                .boxed()
+                async { ReactorExecutionResult::invalid() }.boxed()
             };
 
             future
@@ -704,6 +698,7 @@ mod tests {
 
         let mut context =
             TestContext::new("reactor".to_string(), Duration::from_millis(500), executor).await;
+
         let (sender, _receiver) = unbounded_channel();
         context
             .reactor
@@ -713,11 +708,12 @@ mod tests {
             })
             .expect("Channel closed");
 
-        loop {
-            match timeout(Duration::from_millis(10), context.workflow_manager.recv()).await {
-                Ok(_) => (),
-                Err(_) => break,
-            }
+        let wait_time = Duration::from_millis(10);
+        while timeout(wait_time, context.workflow_manager.recv())
+            .await
+            .is_ok()
+        {
+            // Keep looping until we time out, thus the workflow manager channel becomes empty
         }
 
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -782,11 +778,12 @@ mod tests {
             })
             .expect("Channel closed");
 
-        loop {
-            match timeout(Duration::from_millis(10), context.workflow_manager.recv()).await {
-                Ok(_) => (),
-                Err(_) => break,
-            }
+        let wait_time = Duration::from_millis(10);
+        while timeout(wait_time, context.workflow_manager.recv())
+            .await
+            .is_ok()
+        {
+            // Keep looping until we time out, thus the workflow manager channel becomes empty
         }
 
         tokio::time::sleep(Duration::from_millis(500)).await;

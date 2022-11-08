@@ -7,7 +7,7 @@ use crate::endpoints::rtmp_server::{
 use crate::{test_utils, StreamId};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-const RTMP_APP: &'static str = "app";
+const RTMP_APP: &str = "app";
 
 pub struct TestContextBuilder {
     port: Option<u16>,
@@ -59,7 +59,7 @@ impl TestContextBuilder {
             requires_registrant_approval: self.requires_registrant_approval.unwrap_or(false),
             stream_id: self.stream_id.unwrap_or(None),
             ip_restrictions: self.ip_restriction.unwrap_or(IpRestriction::None),
-            rtmp_app: self.rtmp_app.unwrap_or(RTMP_APP.to_string()),
+            rtmp_app: self.rtmp_app.unwrap_or_else(|| RTMP_APP.to_string()),
             rtmp_stream_key: self.rtmp_stream_key.unwrap_or(StreamKeyRegistration::Any),
             message_channel: sender,
         };
@@ -75,7 +75,7 @@ impl TestContextBuilder {
             use_tls: self.use_tls.unwrap_or(false),
             requires_registrant_approval: self.requires_registrant_approval.unwrap_or(false),
             ip_restrictions: self.ip_restriction.unwrap_or(IpRestriction::None),
-            rtmp_app: self.rtmp_app.unwrap_or(RTMP_APP.to_string()),
+            rtmp_app: self.rtmp_app.unwrap_or_else(|| RTMP_APP.to_string()),
             rtmp_stream_key: self.rtmp_stream_key.unwrap_or(StreamKeyRegistration::Any),
             notification_channel: notification_sender,
             media_channel: media_receiver,

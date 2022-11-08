@@ -30,13 +30,13 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info};
 
-pub const PORT_PROPERTY_NAME: &'static str = "port";
-pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
-pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
-pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
-pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
-pub const RTMPS_FLAG: &'static str = "rtmps";
-pub const REACTOR_NAME: &'static str = "reactor";
+pub const PORT_PROPERTY_NAME: &str = "port";
+pub const APP_PROPERTY_NAME: &str = "rtmp_app";
+pub const STREAM_KEY_PROPERTY_NAME: &str = "stream_key";
+pub const IP_ALLOW_PROPERTY_NAME: &str = "allow_ips";
+pub const IP_DENY_PROPERTY_NAME: &str = "deny_ips";
+pub const RTMPS_FLAG: &str = "rtmps";
+pub const REACTOR_NAME: &str = "reactor";
 
 /// Generates new rtmp receiver workflow step instances based on specified step definitions.
 pub struct RtmpReceiverStepGenerator {
@@ -100,28 +100,28 @@ enum StepStartupError {
         "No RTMP app specified.  A non-empty parameter of '{}' is required",
         PORT_PROPERTY_NAME
     )]
-    NoRtmpAppSpecified,
+    NoRtmpApp,
 
     #[error(
         "No stream key specified.  A non-empty parameter of '{}' is required",
         APP_PROPERTY_NAME
     )]
-    NoStreamKeySpecified,
+    NoStreamKey,
 
     #[error(
         "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
     )]
-    InvalidPortSpecified(String),
+    InvalidPort(String),
 
     #[error("Failed to parse ip address")]
-    InvalidIpAddressSpecified(#[from] IpAddressParseError),
+    InvalidIpAddress(#[from] IpAddressParseError),
 
     #[error(
         "Both {} and {} were specified, but only one is allowed",
         IP_ALLOW_PROPERTY_NAME,
         IP_DENY_PROPERTY_NAME
     )]
-    BothDenyAndAllowIpRestrictionsSpecified,
+    BothDenyAndAllowIpRestrictions,
 }
 
 impl RtmpReceiverStepGenerator {
@@ -147,9 +147,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             Some(Some(value)) => match value.parse::<u16>() {
                 Ok(num) => num,
                 Err(_) => {
-                    return Err(Box::new(StepStartupError::InvalidPortSpecified(
-                        value.clone(),
-                    )));
+                    return Err(Box::new(StepStartupError::InvalidPort(value.clone())));
                 }
             },
 
@@ -164,12 +162,12 @@ impl StepGenerator for RtmpReceiverStepGenerator {
 
         let app = match definition.parameters.get(APP_PROPERTY_NAME) {
             Some(Some(x)) => x.trim(),
-            _ => return Err(Box::new(StepStartupError::NoRtmpAppSpecified)),
+            _ => return Err(Box::new(StepStartupError::NoRtmpApp)),
         };
 
         let stream_key = match definition.parameters.get(STREAM_KEY_PROPERTY_NAME) {
             Some(Some(x)) => x.trim(),
-            _ => return Err(Box::new(StepStartupError::NoStreamKeySpecified)),
+            _ => return Err(Box::new(StepStartupError::NoStreamKey)),
         };
 
         let allowed_ips = match definition.parameters.get(IP_ALLOW_PROPERTY_NAME) {
@@ -184,9 +182,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
 
         let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
             (true, true) => {
-                return Err(Box::new(
-                    StepStartupError::BothDenyAndAllowIpRestrictionsSpecified,
-                ));
+                return Err(Box::new(StepStartupError::BothDenyAndAllowIpRestrictions));
             }
             (true, false) => IpRestriction::Allow(allowed_ips),
             (false, true) => IpRestriction::Deny(denied_ips),
@@ -587,7 +583,7 @@ async fn wait_for_reactor_update(
                 Some(update) => FutureResult::ReactorUpdateReceived{
                     connection_id,
                     update,
-                    reactor_receiver: reactor_receiver,
+                    reactor_receiver,
                     cancellation_channel: cancellation_receiver,
                 },
 

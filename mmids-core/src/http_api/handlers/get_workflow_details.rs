@@ -138,13 +138,13 @@ impl From<WorkflowState> for WorkflowStateResponse {
             active_steps: workflow
                 .active_steps
                 .into_iter()
-                .map(|x| WorkflowStepStateResponse::from(x))
+                .map(WorkflowStepStateResponse::from)
                 .collect(),
 
             pending_steps: workflow
                 .pending_steps
                 .into_iter()
-                .map(|x| WorkflowStepStateResponse::from(x))
+                .map(WorkflowStepStateResponse::from)
                 .collect(),
         }
     }

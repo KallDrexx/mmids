@@ -432,9 +432,7 @@ impl RtmpServerConnectionHandler {
                     return;
                 }
 
-                self.state = ConnectionState::ConnectedToApp {
-                    rtmp_app: app_name.clone(),
-                };
+                self.state = ConnectionState::ConnectedToApp { rtmp_app: app_name };
                 let _ = self
                     .request_sender
                     .send(ConnectionRequest::PlaybackFinished);
@@ -447,7 +445,6 @@ impl RtmpServerConnectionHandler {
                 );
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -480,9 +477,8 @@ impl RtmpServerConnectionHandler {
                     return;
                 }
 
-                self.state = ConnectionState::ConnectedToApp {
-                    rtmp_app: app_name.clone(),
-                };
+                self.state = ConnectionState::ConnectedToApp { rtmp_app: app_name };
+
                 let _ = self.request_sender.send(ConnectionRequest::PublishFinished);
             }
 
@@ -493,7 +489,6 @@ impl RtmpServerConnectionHandler {
                 );
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -536,7 +531,6 @@ impl RtmpServerConnectionHandler {
                     self.id, self.state
                 );
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -588,7 +582,6 @@ impl RtmpServerConnectionHandler {
                 );
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -643,7 +636,6 @@ impl RtmpServerConnectionHandler {
                 );
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -687,7 +679,6 @@ impl RtmpServerConnectionHandler {
                 );
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -842,7 +833,6 @@ impl RtmpServerConnectionHandler {
                 );
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }
@@ -887,7 +877,6 @@ impl RtmpServerConnectionHandler {
                 error!("Connection had a request accepted, but isn't in a requesting state (current state: {:?})", state);
 
                 self.force_disconnect = true;
-                return;
             }
         }
     }

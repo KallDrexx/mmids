@@ -39,13 +39,13 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, warn};
 
-pub const PORT_PROPERTY_NAME: &'static str = "port";
-pub const APP_PROPERTY_NAME: &'static str = "rtmp_app";
-pub const STREAM_KEY_PROPERTY_NAME: &'static str = "stream_key";
-pub const IP_ALLOW_PROPERTY_NAME: &'static str = "allow_ips";
-pub const IP_DENY_PROPERTY_NAME: &'static str = "deny_ips";
-pub const RTMPS_FLAG: &'static str = "rtmps";
-pub const REACTOR_NAME: &'static str = "reactor";
+pub const PORT_PROPERTY_NAME: &str = "port";
+pub const APP_PROPERTY_NAME: &str = "rtmp_app";
+pub const STREAM_KEY_PROPERTY_NAME: &str = "stream_key";
+pub const IP_ALLOW_PROPERTY_NAME: &str = "allow_ips";
+pub const IP_DENY_PROPERTY_NAME: &str = "deny_ips";
+pub const RTMPS_FLAG: &str = "rtmps";
+pub const REACTOR_NAME: &str = "reactor";
 
 /// Generates new rtmp watch workflow step instances based on a given step definition.
 pub struct RtmpWatchStepGenerator {

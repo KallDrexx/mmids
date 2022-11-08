@@ -98,7 +98,7 @@ pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
             Rule::EOI => (),
             x => {
                 return Err(ConfigParseError::UnexpectedRule {
-                    rule: x.clone(),
+                    rule: *x,
                     section: "root".to_string(),
                 })
             }
@@ -139,7 +139,7 @@ fn read_settings(config: &mut MmidsConfig, pairs: Pairs<Rule>) -> Result<(), Con
                     });
                 }
 
-                if let Some(key) = child_node.arguments.keys().nth(0) {
+                if let Some(key) = child_node.arguments.keys().next() {
                     if let Some(Some(_value)) = child_node.arguments.get(key) {
                         return Err(ConfigParseError::InvalidSettingArgumentFormat {
                             line: get_line_number(&pair),
@@ -276,37 +276,35 @@ fn read_reactor(
                     }
 
                     name = Some(key);
-                } else {
-                    if key == "executor" {
-                        if let Some(value) = value {
-                            executor_name = Some(value);
-                        }
-                    } else if key == "update_interval" {
-                        if let Some(value) = value {
-                            if let Ok(num) = value.parse() {
-                                update_interval = num;
-                            } else {
-                                return Err(ConfigParseError::InvalidUpdateIntervalValue {
-                                    line: get_line_number(&pair),
-                                    argument: value,
-                                });
-                            }
+                } else if key == "executor" {
+                    if let Some(value) = value {
+                        executor_name = Some(value);
+                    }
+                } else if key == "update_interval" {
+                    if let Some(value) = value {
+                        if let Ok(num) = value.parse() {
+                            update_interval = num;
                         } else {
                             return Err(ConfigParseError::InvalidUpdateIntervalValue {
                                 line: get_line_number(&pair),
-                                argument: "".to_string(),
+                                argument: value,
                             });
                         }
                     } else {
-                        let line = get_line_number(&pair);
-                        warn!(
-                            line = %line,
-                            argument = %key,
-                            reactor_name = %name.as_ref().unwrap(),
-                            "Unknown argument '{}' for reactor {} on line {}",
-                            key, name.as_ref().unwrap(), line,
-                        );
+                        return Err(ConfigParseError::InvalidUpdateIntervalValue {
+                            line: get_line_number(&pair),
+                            argument: "".to_string(),
+                        });
                     }
+                } else {
+                    let line = get_line_number(&pair);
+                    warn!(
+                        line = %line,
+                        argument = %key,
+                        reactor_name = %name.as_ref().unwrap(),
+                        "Unknown argument '{}' for reactor {} on line {}",
+                        key, name.as_ref().unwrap(), line,
+                    );
                 }
             }
 
@@ -319,7 +317,7 @@ fn read_reactor(
                     });
                 }
 
-                if let Some(key) = child_node.arguments.keys().nth(0) {
+                if let Some(key) = child_node.arguments.keys().next() {
                     if let Some(Some(_)) = child_node.arguments.get(key) {
                         return Err(ConfigParseError::InvalidReactorParameterValueFormat {
                             line: line_number,
@@ -373,7 +371,7 @@ fn read_reactor(
 fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), ConfigParseError> {
     let result;
     // Each argument should have a single child rule based on grammar
-    let argument = pair.into_inner().nth(0).unwrap();
+    let argument = pair.into_inner().next().unwrap();
     match argument.as_rule() {
         Rule::argument_flag => {
             result = (argument.as_str().to_string(), None);
@@ -397,8 +395,8 @@ fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), ConfigPar
                             .into_inner()
                             .filter(|p| p.as_rule() == Rule::quoted_string_value)
                             .map(|p| p.as_str().to_string())
-                            .nth(0)
-                            .unwrap_or(inner.as_str().to_string());
+                            .next()
+                            .unwrap_or_else(|| inner.as_str().to_string());
                     }
 
                     rule => {
@@ -652,7 +650,7 @@ workflow name {
 ";
         match parse(content) {
             Err(ConfigParseError::DuplicateWorkflowName { name }) => {
-                if name != "name".to_string() {
+                if name.as_str() != "name" {
                     panic!("Unexpected name in workflow: '{}'", name);
                 }
             }

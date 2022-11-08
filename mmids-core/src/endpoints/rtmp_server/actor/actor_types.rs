@@ -112,7 +112,7 @@ pub struct RtmpAppMapping {
     pub active_stream_keys: HashMap<String, StreamKeyConnections>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum PortStatus {
     Requested,
     Open,

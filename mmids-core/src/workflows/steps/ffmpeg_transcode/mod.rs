@@ -38,11 +38,11 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-const VIDEO_CODEC_NAME: &'static str = "vcodec";
-const AUDIO_CODEC_NAME: &'static str = "acodec";
-const H264_PRESET_NAME: &'static str = "h264_preset";
-const SIZE_NAME: &'static str = "size";
-const BITRATE_NAME: &'static str = "kbps";
+const VIDEO_CODEC_NAME: &str = "vcodec";
+const AUDIO_CODEC_NAME: &str = "acodec";
+const H264_PRESET_NAME: &str = "h264_preset";
+const SIZE_NAME: &str = "size";
+const BITRATE_NAME: &str = "kbps";
 
 /// Generates new ffmpeg transcoding step instances based on specified step definitions.
 pub struct FfmpegTranscoderStepGenerator {
@@ -125,22 +125,22 @@ impl StepFutureResult for FutureResult {}
 #[derive(Error, Debug)]
 enum StepStartupError {
     #[error("Invalid video codec specified ({0}).  {} is a required field and valid values are: 'copy' and 'h264'", VIDEO_CODEC_NAME)]
-    InvalidVideoCodecSpecified(String),
+    InvalidVideoCodec(String),
 
     #[error("Invalid audio codec specified ({0}).  {} is a required field and valid values are: 'copy' and 'aac'", AUDIO_CODEC_NAME)]
-    InvalidAudioCodecSpecified(String),
+    InvalidAudioCodec(String),
 
     #[error("Invalid h264 preset specified ({0}).  {} is the name of any h264 profile (e.g. veryfast, medium, etc...)", H264_PRESET_NAME)]
-    InvalidH264PresetSpecified(String),
+    InvalidH264Preset(String),
 
     #[error(
         "Invalid video size specified ({0}).  {} must be in the format of '<width>x<height>'",
         SIZE_NAME
     )]
-    InvalidVideoSizeSpecified(String),
+    InvalidVideoSize(String),
 
     #[error("Invalid bitrate specified ({0}).  {} must be a number", BITRATE_NAME)]
-    InvalidBitrateSpecified(String),
+    InvalidBitrate(String),
 }
 
 impl FfmpegTranscoderStepGenerator {
@@ -190,7 +190,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                             preset: H264Preset::VerySlow,
                         },
                         x => {
-                            return Err(Box::new(StepStartupError::InvalidH264PresetSpecified(
+                            return Err(Box::new(StepStartupError::InvalidH264Preset(
                                 x.to_string(),
                             )))
                         }
@@ -199,15 +199,11 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                         preset: H264Preset::VeryFast,
                     },
                 },
-                x => {
-                    return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified(
-                        x.to_string(),
-                    )))
-                }
+                x => return Err(Box::new(StepStartupError::InvalidVideoCodec(x.to_string()))),
             },
 
             _ => {
-                return Err(Box::new(StepStartupError::InvalidVideoCodecSpecified(
+                return Err(Box::new(StepStartupError::InvalidVideoCodec(
                     "".to_string(),
                 )))
             }
@@ -217,15 +213,11 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
             Some(Some(value)) => match value.to_lowercase().trim() {
                 "copy" => AudioTranscodeParams::Copy,
                 "aac" => AudioTranscodeParams::Aac,
-                x => {
-                    return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified(
-                        x.to_string(),
-                    )))
-                }
+                x => return Err(Box::new(StepStartupError::InvalidAudioCodec(x.to_string()))),
             },
 
             _ => {
-                return Err(Box::new(StepStartupError::InvalidAudioCodecSpecified(
+                return Err(Box::new(StepStartupError::InvalidAudioCodec(
                     "".to_string(),
                 )))
             }
@@ -238,17 +230,13 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                     match part.parse::<u16>() {
                         Ok(num) => dimensions.push(num),
                         Err(_) => {
-                            return Err(Box::new(StepStartupError::InvalidVideoSizeSpecified(
-                                value.clone(),
-                            )))
+                            return Err(Box::new(StepStartupError::InvalidVideoSize(value.clone())))
                         }
                     }
                 }
 
                 if dimensions.len() != 2 {
-                    return Err(Box::new(StepStartupError::InvalidVideoSizeSpecified(
-                        value.clone(),
-                    )));
+                    return Err(Box::new(StepStartupError::InvalidVideoSize(value.clone())));
                 }
 
                 Some(VideoScale {
@@ -265,9 +253,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
                 if let Ok(num) = value.parse() {
                     Some(num)
                 } else {
-                    return Err(Box::new(StepStartupError::InvalidBitrateSpecified(
-                        value.clone(),
-                    )));
+                    return Err(Box::new(StepStartupError::InvalidBitrate(value.clone())));
                 }
             }
 
@@ -275,7 +261,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
         };
 
         let step = FfmpegTranscoder {
-            definition: definition.clone(),
+            definition,
             active_streams: HashMap::new(),
             audio_codec_params: acodec,
             rtmp_server_endpoint: self.rtmp_server_endpoint.clone(),
@@ -321,7 +307,7 @@ impl FfmpegTranscoder {
                     message: "Ffmpeg endpoint is gone".to_string(),
                 };
 
-                let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
+                let ids: Vec<StreamId> = self.active_streams.keys().cloned().collect();
                 for id in ids {
                     self.stop_stream(&id);
                 }
@@ -333,7 +319,7 @@ impl FfmpegTranscoder {
                     message: "Rtmp endpoint is gone".to_string(),
                 };
 
-                let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
+                let ids: Vec<StreamId> = self.active_streams.keys().cloned().collect();
                 for id in ids {
                     self.stop_stream(&id);
                 }
@@ -549,42 +535,35 @@ impl FfmpegTranscoder {
                 PublishRegistrationStatus::Active => true,
             };
 
-            match &stream.ffmpeg_status {
-                FfmpegStatus::Inactive => {
-                    // Not worth starting ffmpeg until both input and outputs registrations are complete
-                    if input_is_active && output_is_active {
-                        let parameters = FfmpegParams {
-                            read_in_real_time: true,
-                            bitrate_in_kbps: self.bitrate,
-                            input: format!("rtmp://localhost/{}/{}", source_rtmp_app, stream.id.0),
-                            video_transcode: self.video_codec_params.clone(),
-                            audio_transcode: self.audio_codec_params.clone(),
-                            scale: self.video_scale_params.clone(),
-                            target: TargetParams::Rtmp {
-                                url: format!(
-                                    "rtmp://localhost/{}/{}",
-                                    result_rtmp_app, stream.id.0
-                                ),
-                            },
-                        };
+            if let FfmpegStatus::Inactive = &stream.ffmpeg_status {
+                // Not worth starting ffmpeg until both input and outputs registrations are complete
+                if input_is_active && output_is_active {
+                    let parameters = FfmpegParams {
+                        read_in_real_time: true,
+                        bitrate_in_kbps: self.bitrate,
+                        input: format!("rtmp://localhost/{}/{}", source_rtmp_app, stream.id.0),
+                        video_transcode: self.video_codec_params.clone(),
+                        audio_transcode: self.audio_codec_params.clone(),
+                        scale: self.video_scale_params.clone(),
+                        target: TargetParams::Rtmp {
+                            url: format!("rtmp://localhost/{}/{}", result_rtmp_app, stream.id.0),
+                        },
+                    };
 
-                        let (sender, receiver) = unbounded_channel();
-                        let _ = self
-                            .ffmpeg_endpoint
-                            .send(FfmpegEndpointRequest::StartFfmpeg {
-                                id: stream.ffmpeg_id.clone(),
-                                params: parameters,
-                                notification_channel: sender,
-                            });
+                    let (sender, receiver) = unbounded_channel();
+                    let _ = self
+                        .ffmpeg_endpoint
+                        .send(FfmpegEndpointRequest::StartFfmpeg {
+                            id: stream.ffmpeg_id,
+                            params: parameters,
+                            notification_channel: sender,
+                        });
 
-                        outputs.futures.push(
-                            wait_for_ffmpeg_notification(stream.id.clone(), receiver).boxed(),
-                        );
-                        stream.ffmpeg_status = FfmpegStatus::Pending;
-                    }
+                    outputs
+                        .futures
+                        .push(wait_for_ffmpeg_notification(stream.id.clone(), receiver).boxed());
+                    stream.ffmpeg_status = FfmpegStatus::Pending;
                 }
-
-                _ => (),
             }
         }
     }

@@ -77,7 +77,7 @@ pub enum FfmpegEndpointStartError {
 }
 
 /// H264 presets
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum H264Preset {
     UltraFast,
     SuperFast,
@@ -91,21 +91,21 @@ pub enum H264Preset {
 }
 
 /// Video transcode instructions
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VideoTranscodeParams {
     Copy,
     H264 { preset: H264Preset },
 }
 
 /// Audio transcode instructions
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AudioTranscodeParams {
     Copy,
     Aac,
 }
 
 /// Where should ffmpeg send the media
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TargetParams {
     /// Send the media stream to an RTMP server
     Rtmp { url: String },
@@ -125,14 +125,14 @@ pub enum TargetParams {
 }
 
 /// The dimensions video should be scaled to
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VideoScale {
     pub width: u16,
     pub height: u16,
 }
 
 /// Parameters to pass to the ffmpeg process
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FfmpegParams {
     pub read_in_real_time: bool,
     pub input: String,
@@ -312,7 +312,7 @@ impl Actor {
                     return;
                 }
 
-                let log_file_name = format!("{}.log", id.to_string());
+                let log_file_name = format!("{}.log", id);
                 let log_path = self.log_path.as_path().join(log_file_name.as_str());
                 let log_file_result = OpenOptions::new()
                     .append(true)
@@ -358,7 +358,7 @@ impl Actor {
                     }
                 };
 
-                self.futures.push(wait_for_next_check(id.clone()).boxed());
+                self.futures.push(wait_for_next_check(id).boxed());
                 let _ = notification_channel.send(FfmpegEndpointNotification::FfmpegStarted);
                 self.processes.insert(
                     id,
@@ -368,9 +368,8 @@ impl Actor {
                     },
                 );
 
-                self.futures.push(
-                    wait_for_notification_channel_gone(id.clone(), notification_channel).boxed(),
-                );
+                self.futures
+                    .push(wait_for_notification_channel_gone(id, notification_channel).boxed());
             }
         }
     }
@@ -419,7 +418,7 @@ impl Actor {
             args.push(rate.clone());
 
             args.push("-maxrate".to_string());
-            args.push(rate.clone());
+            args.push(rate);
         }
 
         if let Some(scale) = &params.scale {

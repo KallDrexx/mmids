@@ -23,8 +23,8 @@ use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, span, Level};
 
-pub const TARGET_WORKFLOW: &'static str = "target_workflow";
-pub const REACTOR_NAME: &'static str = "reactor";
+pub const TARGET_WORKFLOW: &str = "target_workflow";
+pub const REACTOR_NAME: &str = "reactor";
 
 /// Generates a new workflow forwarder step
 pub struct WorkflowForwarderStepGenerator {
@@ -144,7 +144,7 @@ impl StepGenerator for WorkflowForwarderStepGenerator {
             global_workflow_name: target_workflow_name,
             reactor_name,
             stream_for_workflow_name: HashMap::new(),
-            definition: definition.clone(),
+            definition,
             status: StepStatus::Active,
             active_streams: HashMap::new(),
             reactor_manager: self.reactor_manager.clone(),
@@ -223,10 +223,11 @@ impl WorkflowForwarderStep {
                         stream_details
                             .target_workflow_names
                             .insert(workflow.clone());
+
                         let entry = self
                             .stream_for_workflow_name
                             .entry(workflow.clone())
-                            .or_insert(HashSet::new());
+                            .or_default();
 
                         entry.insert(media.stream_id.clone());
                     }
@@ -334,14 +335,14 @@ impl WorkflowForwarderStep {
                     .routable_workflow_names
                     .iter()
                     .filter(|x| !stream.target_workflow_names.contains(*x))
-                    .map(|x| x.clone())
+                    .cloned()
                     .collect::<Vec<_>>();
 
                 let removed_workflows = stream
                     .target_workflow_names
                     .iter()
                     .filter(|x| !update.routable_workflow_names.contains(*x))
-                    .map(|x| x.clone())
+                    .cloned()
                     .collect::<Vec<_>>();
 
                 if !new_workflows.is_empty() || !removed_workflows.is_empty() {
@@ -398,7 +399,7 @@ impl WorkflowForwarderStep {
                     let entry = self
                         .stream_for_workflow_name
                         .entry(workflow.clone())
-                        .or_insert(HashSet::new());
+                        .or_default();
 
                     entry.insert(stream_id.clone());
                 }

@@ -4,7 +4,7 @@ use serde::Deserialize;
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-const DIRECTORY: &'static str = "workflows";
+const DIRECTORY: &str = "workflows";
 
 #[derive(Deserialize)]
 struct RequestContent {
@@ -31,7 +31,7 @@ async fn get_response(req: Request<Body>) -> Result<Response<Body>> {
         (&Method::POST, "/") => Ok(not_found()),
 
         (&Method::POST, path) => {
-            let sub_directory = (&path[1..]).to_string();
+            let sub_directory = (path[1..]).to_string();
             let whole_body = hyper::body::to_bytes(req.into_body()).await?;
             let content: RequestContent = match serde_json::from_slice(&whole_body) {
                 Ok(content) => content,

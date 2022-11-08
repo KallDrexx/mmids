@@ -319,7 +319,7 @@ fn start_workflows(
 ) -> UnboundedSender<WorkflowManagerRequest> {
     info!("Starting workflow manager");
     let manager = start_workflow_manager(step_factory, event_hub_publisher);
-    for (_, workflow) in &config.workflows {
+    for workflow in config.workflows.values() {
         let _ = manager.send(WorkflowManagerRequest {
             request_id: "mmids-app-startup".to_string(),
             operation: WorkflowManagerRequestOperation::UpsertWorkflow {
@@ -402,9 +402,7 @@ fn start_http_api(
             path: vec![PathPart::Exact {
                 value: "workflows".to_string(),
             }],
-            handler: Box::new(handlers::start_workflow::StartWorkflowHandler::new(
-                manager.clone(),
-            )),
+            handler: Box::new(handlers::start_workflow::StartWorkflowHandler::new(manager)),
         })
         .expect("Failed to register start workflow route");
 

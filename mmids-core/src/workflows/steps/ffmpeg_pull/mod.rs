@@ -27,8 +27,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info};
 use uuid::Uuid;
 
-pub const LOCATION: &'static str = "location";
-pub const STREAM_NAME: &'static str = "stream_name";
+pub const LOCATION: &str = "location";
+pub const STREAM_NAME: &str = "stream_name";
 
 /// Generates new instances of the ffmpeg pull workflow step based on specified step definitions.
 pub struct FfmpegPullStepGenerator {
@@ -356,7 +356,7 @@ impl FfmpegPullStep {
             let _ = self
                 .ffmpeg_endpoint
                 .send(FfmpegEndpointRequest::StartFfmpeg {
-                    id: id.clone(),
+                    id,
                     notification_channel: sender,
                     params: FfmpegParams {
                         read_in_real_time: true,
@@ -381,7 +381,7 @@ impl FfmpegPullStep {
         if let Some(id) = &self.ffmpeg_id {
             let _ = self
                 .ffmpeg_endpoint
-                .send(FfmpegEndpointRequest::StopFfmpeg { id: id.clone() });
+                .send(FfmpegEndpointRequest::StopFfmpeg { id: *id });
         }
 
         self.ffmpeg_id = None;

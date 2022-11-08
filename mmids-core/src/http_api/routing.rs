@@ -54,6 +54,7 @@ pub enum RouteRegistrationError {
 
 /// A system that contains all available routes.  Routes may be registered with it and can then be
 /// looked up from.
+#[derive(Default)]
 pub struct RoutingTable {
     routes: HashMap<Method, RouteNode>,
 }
@@ -72,9 +73,7 @@ struct RouteNode {
 impl RoutingTable {
     /// Creates an empty routing table
     pub fn new() -> Self {
-        RoutingTable {
-            routes: HashMap::new(),
-        }
+        Default::default()
     }
 
     /// Registers a route to be available by the routing table
@@ -114,7 +113,7 @@ impl RoutingTable {
             None => return None,
         };
 
-        find_route(0, &path_parts, node)
+        find_route(0, path_parts, node)
     }
 }
 
@@ -149,7 +148,7 @@ fn find_route<'a>(
 }
 
 impl Route {
-    pub(super) fn get_parameters(&self, path_parts: &Vec<&str>) -> HashMap<String, String> {
+    pub(super) fn get_parameters(&self, path_parts: &[&str]) -> HashMap<String, String> {
         let mut results = HashMap::new();
         for x in 0..self.path.len() {
             if let PathPart::Parameter { name } = &self.path[x] {

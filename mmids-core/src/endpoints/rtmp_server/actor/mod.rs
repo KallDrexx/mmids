@@ -148,7 +148,7 @@ impl RtmpServerEndpointActor {
                 }
 
                 FutureResult::PortGone { port } => {
-                    if let Some(_) = self.ports.remove(&port) {
+                    if self.ports.remove(&port).is_some() {
                         warn!("Port {port}'s response sender suddenly closed");
                     }
                 }
@@ -317,15 +317,16 @@ impl RtmpServerEndpointActor {
             None => return,
         };
 
-        let key_details = app_map
-            .active_stream_keys
-            .entry(stream_key.clone())
-            .or_insert(StreamKeyConnections {
-                watchers: HashMap::new(),
-                publisher: None,
-                latest_video_sequence_header: None,
-                latest_audio_sequence_header: None,
-            });
+        let key_details =
+            app_map
+                .active_stream_keys
+                .entry(stream_key)
+                .or_insert(StreamKeyConnections {
+                    watchers: HashMap::new(),
+                    publisher: None,
+                    latest_video_sequence_header: None,
+                    latest_audio_sequence_header: None,
+                });
 
         match &data {
             RtmpEndpointMediaData::NewVideoData {
@@ -336,7 +337,7 @@ impl RtmpServerEndpointActor {
             } => {
                 if *is_sequence_header {
                     key_details.latest_video_sequence_header = Some(VideoSequenceHeader {
-                        codec: codec.clone(),
+                        codec: *codec,
                         data: data.clone(),
                     });
                 }
@@ -350,7 +351,7 @@ impl RtmpServerEndpointActor {
             } => {
                 if *is_sequence_header {
                     key_details.latest_audio_sequence_header = Some(AudioSequenceHeader {
-                        codec: codec.clone(),
+                        codec: *codec,
                         data: data.clone(),
                     });
                 }
@@ -359,7 +360,7 @@ impl RtmpServerEndpointActor {
             _ => (),
         };
 
-        for (_, watcher_details) in &key_details.watchers {
+        for watcher_details in key_details.watchers.values() {
             let _ = watcher_details.media_sender.send(data.clone());
         }
     }
@@ -702,14 +703,14 @@ impl RtmpServerEndpointActor {
                 TcpSocketResponse::RequestDenied { reason } => {
                     warn!("Port {} could not be opened: {:?}", port, reason);
 
-                    for (_, app_map) in &port_map.rtmp_applications {
-                        for (_, publisher) in &app_map.publisher_registrants {
+                    for app_map in port_map.rtmp_applications.values() {
+                        for publisher in app_map.publisher_registrants.values() {
                             let _ = publisher
                                 .response_channel
                                 .send(RtmpEndpointPublisherMessage::PublisherRegistrationFailed {});
                         }
 
-                        for (_, watcher) in &app_map.watcher_registrants {
+                        for watcher in app_map.watcher_registrants.values() {
                             let _ = watcher
                                 .response_channel
                                 .send(RtmpEndpointWatcherNotification::WatcherRegistrationFailed);
@@ -730,14 +731,14 @@ impl RtmpServerEndpointActor {
 
                     // Since the port was successfully opened, any pending registrants need to be
                     // informed that their registration has now been successful
-                    for (_, app_map) in &port_map.rtmp_applications {
-                        for (_, publisher) in &app_map.publisher_registrants {
+                    for app_map in port_map.rtmp_applications.values() {
+                        for publisher in app_map.publisher_registrants.values() {
                             let _ = publisher.response_channel.send(
                                 RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful {},
                             );
                         }
 
-                        for (_, watcher) in &app_map.watcher_registrants {
+                        for watcher in app_map.watcher_registrants.values() {
                             let _ = watcher.response_channel.send(
                                 RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful,
                             );
@@ -883,7 +884,7 @@ impl RtmpServerEndpointActor {
             None => return,
         };
 
-        if let None = app_map.publisher_registrants.remove(&stream_key) {
+        if app_map.publisher_registrants.remove(&stream_key).is_none() {
             return;
         }
 
@@ -892,7 +893,7 @@ impl RtmpServerEndpointActor {
         if let StreamKeyRegistration::Exact(key) = stream_key {
             keys_to_remove.push(key);
         } else {
-            keys_to_remove.extend(app_map.active_stream_keys.keys().map(|x| x.clone()));
+            keys_to_remove.extend(app_map.active_stream_keys.keys().cloned());
         }
 
         for key in keys_to_remove {
@@ -930,7 +931,7 @@ impl RtmpServerEndpointActor {
             None => return,
         };
 
-        if let None = app_map.watcher_registrants.remove(&stream_key) {
+        if app_map.watcher_registrants.remove(&stream_key).is_none() {
             return;
         }
 
@@ -939,7 +940,7 @@ impl RtmpServerEndpointActor {
         if let StreamKeyRegistration::Exact(key) = stream_key {
             keys_to_remove.push(key);
         } else {
-            keys_to_remove.extend(app_map.active_stream_keys.keys().map(|x| x.clone()));
+            keys_to_remove.extend(app_map.active_stream_keys.keys().cloned());
         }
 
         for key in keys_to_remove {
@@ -973,46 +974,41 @@ fn handle_connection_stop_watch(connection_id: ConnectionId, port_map: &mut Port
         }
     };
 
-    match &connection.state {
-        ConnectionState::Watching {
-            rtmp_app,
-            stream_key,
-        } => {
-            let rtmp_app = rtmp_app.clone();
-            let stream_key = stream_key.clone();
-            connection.state = ConnectionState::None;
-            match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+    if let ConnectionState::Watching {
+        rtmp_app,
+        stream_key,
+    } = &connection.state
+    {
+        let rtmp_app = rtmp_app.clone();
+        let stream_key = stream_key.clone();
+        connection.state = ConnectionState::None;
+        match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+            None => (),
+            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
                 None => (),
-                Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
-                    None => (),
-                    Some(active_key) => {
-                        active_key.watchers.remove(&connection_id);
+                Some(active_key) => {
+                    active_key.watchers.remove(&connection_id);
 
-                        if active_key.watchers.is_empty() {
-                            let registrant = match app_map
-                                .watcher_registrants
-                                .get(&StreamKeyRegistration::Any)
-                            {
+                    if active_key.watchers.is_empty() {
+                        let registrant =
+                            match app_map.watcher_registrants.get(&StreamKeyRegistration::Any) {
                                 Some(x) => Some(x),
                                 None => app_map
                                     .watcher_registrants
                                     .get(&StreamKeyRegistration::Exact(stream_key.clone())),
                             };
 
-                            if let Some(registrant) = registrant {
-                                let _ = registrant.response_channel.send(
-                                    RtmpEndpointWatcherNotification::StreamKeyBecameInactive {
-                                        stream_key,
-                                    },
-                                );
-                            }
+                        if let Some(registrant) = registrant {
+                            let _ = registrant.response_channel.send(
+                                RtmpEndpointWatcherNotification::StreamKeyBecameInactive {
+                                    stream_key,
+                                },
+                            );
                         }
                     }
-                },
-            }
+                }
+            },
         }
-
-        _ => (),
     }
 }
 
@@ -1030,54 +1026,51 @@ fn handle_connection_stop_publish(connection_id: ConnectionId, port_map: &mut Po
         }
     };
 
-    match &connection.state {
-        ConnectionState::Publishing {
-            rtmp_app,
-            stream_key,
-        } => {
-            let rtmp_app = rtmp_app.clone();
-            let stream_key = stream_key.clone();
-            connection.state = ConnectionState::None;
+    if let ConnectionState::Publishing {
+        rtmp_app,
+        stream_key,
+    } = &connection.state
+    {
+        let rtmp_app = rtmp_app.clone();
+        let stream_key = stream_key.clone();
+        connection.state = ConnectionState::None;
 
-            match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+            None => (),
+            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
                 None => (),
-                Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
-                    None => (),
-                    Some(active_key) => {
-                        match &active_key.publisher {
-                            None => (),
-                            Some(publisher_id) => {
-                                if *publisher_id == connection_id {
-                                    active_key.publisher = None;
-                                    active_key.latest_video_sequence_header = None;
-                                    active_key.latest_audio_sequence_header = None;
+                Some(active_key) => {
+                    match &active_key.publisher {
+                        None => (),
+                        Some(publisher_id) => {
+                            if *publisher_id == connection_id {
+                                active_key.publisher = None;
+                                active_key.latest_video_sequence_header = None;
+                                active_key.latest_audio_sequence_header = None;
 
-                                    let registrant = match app_map
+                                let registrant = match app_map
+                                    .publisher_registrants
+                                    .get(&StreamKeyRegistration::Any)
+                                {
+                                    Some(x) => Some(x),
+                                    None => app_map
                                         .publisher_registrants
-                                        .get(&StreamKeyRegistration::Any)
-                                    {
-                                        Some(x) => Some(x),
-                                        None => app_map
-                                            .publisher_registrants
-                                            .get(&StreamKeyRegistration::Exact(stream_key.clone())),
-                                    };
+                                        .get(&StreamKeyRegistration::Exact(stream_key.clone())),
+                                };
 
-                                    if let Some(registrant) = registrant {
-                                        let _ = registrant.response_channel.send(
-                                            RtmpEndpointPublisherMessage::PublishingStopped {
-                                                connection_id,
-                                            },
-                                        );
-                                    }
+                                if let Some(registrant) = registrant {
+                                    let _ = registrant.response_channel.send(
+                                        RtmpEndpointPublisherMessage::PublishingStopped {
+                                            connection_id,
+                                        },
+                                    );
                                 }
                             }
-                        };
-                    }
-                },
-            }
+                        }
+                    };
+                }
+            },
         }
-
-        _ => (),
     }
 }
 
@@ -1220,7 +1213,7 @@ fn handle_connection_request_watch(
     // start decoding video
     if let Some(sequence_header) = &active_stream_key.latest_video_sequence_header {
         let _ = media_sender.send(RtmpEndpointMediaData::NewVideoData {
-            codec: sequence_header.codec.clone(),
+            codec: sequence_header.codec,
             is_sequence_header: true,
             is_keyframe: true,
             data: sequence_header.data.clone(),
@@ -1231,7 +1224,7 @@ fn handle_connection_request_watch(
 
     if let Some(sequence_header) = &active_stream_key.latest_audio_sequence_header {
         let _ = media_sender.send(RtmpEndpointMediaData::NewAudioData {
-            codec: sequence_header.codec.clone(),
+            codec: sequence_header.codec,
             data: sequence_header.data.clone(),
             is_sequence_header: true,
             timestamp: RtmpTimestamp::new(0),
@@ -1248,7 +1241,7 @@ fn handle_connection_request_watch(
             channel: media_receiver,
         });
 
-    return None;
+    None
 }
 
 #[instrument(skip(port_map))]
@@ -1260,7 +1253,7 @@ fn handle_connection_request_publish(
     stream_key: &String,
     reactor_response_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 ) -> Option<BoxFuture<'static, FutureResult>> {
-    let connection = match port_map.connections.get_mut(&connection_id) {
+    let connection = match port_map.connections.get_mut(connection_id) {
         Some(x) => x,
         None => {
             warn!("Connection handler for connection {:?} sent a request to publish on port {}, but that \
@@ -1411,7 +1404,7 @@ fn handle_connection_request_publish(
             reactor_update_channel: reactor_response_channel,
         });
 
-    return None;
+    None
 }
 
 #[instrument(skip(port_map))]
@@ -1421,7 +1414,7 @@ fn handle_connection_request_connect_to_app(
     port: u16,
     rtmp_app: String,
 ) {
-    let connection = match port_map.connections.get_mut(&connection_id) {
+    let connection = match port_map.connections.get_mut(connection_id) {
         Some(x) => x,
         None => {
             warn!("Connection handler for connection {} sent a request to connect to an rtmp app on port {}, \
@@ -1682,21 +1675,21 @@ mod internal_futures {
 
 fn is_ip_allowed(client_socket: &SocketAddr, ip_restrictions: &IpRestriction) -> bool {
     match ip_restrictions {
-        IpRestriction::None => return true,
+        IpRestriction::None => true,
         IpRestriction::Allow(allowed_ips) => {
             if let SocketAddr::V4(client_ip) = client_socket {
-                return allowed_ips.into_iter().any(|ip| ip.matches(client_ip.ip()));
+                allowed_ips.iter().any(|ip| ip.matches(client_ip.ip()))
+            } else {
+                false // ipv6 clients not supported atm
             }
-
-            return false; // ipv6 clients not supported atm
         }
 
         IpRestriction::Deny(denied_ips) => {
             if let SocketAddr::V4(client_ip) = client_socket {
-                return denied_ips.into_iter().all(|ip| !ip.matches(client_ip.ip()));
+                denied_ips.iter().all(|ip| !ip.matches(client_ip.ip()))
+            } else {
+                false // ipv6
             }
-
-            return false; // ipv6
         }
-    };
+    }
 }

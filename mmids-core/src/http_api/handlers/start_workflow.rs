@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
 
-const MMIDS_MIME_TYPE: &'static str = "application/vnd.mmids.workflow";
+const MMIDS_MIME_TYPE: &str = "application/vnd.mmids.workflow";
 
 /// Handles requests to start a workflow. Every workflow must have a name, and if a workflow is
 /// specified with a name that matches an already running workflow then the existing workflow
@@ -70,14 +70,14 @@ impl RouteHandler for StartWorkflowHandler {
                 let error = ErrorResponse {
                     error: format!("Invalid content type specified: {}", x),
                 };
-                return Ok(error.to_json_bad_request());
+                return Ok(error.into_json_bad_request());
             }
         };
 
         let workflow = match workflow {
             Ok(workflow) => workflow,
             Err(error) => {
-                return Ok(error.to_json_bad_request());
+                return Ok(error.into_json_bad_request());
             }
         };
 
@@ -103,7 +103,7 @@ impl RouteHandler for StartWorkflowHandler {
 }
 
 impl ErrorResponse {
-    fn to_json_bad_request(self) -> Response<Body> {
+    fn into_json_bad_request(self) -> Response<Body> {
         let json = match serde_json::to_string_pretty(&self) {
             Ok(json) => json,
             Err(error) => {
@@ -124,7 +124,7 @@ impl ErrorResponse {
             HeaderValue::from_static("application/json"),
         );
 
-        return response;
+        response
     }
 }
 
@@ -156,12 +156,12 @@ fn parse_mmids_mime_type(body: Bytes) -> Result<Result<WorkflowDefinition, Error
         }));
     }
 
-    if config.workflows.len() == 0 {
+    if config.workflows.is_empty() {
         return Ok(Err(ErrorResponse {
             error: "No workflows specified".to_string(),
         }));
     }
 
-    let workflow = config.workflows.drain().nth(0).unwrap().1;
+    let workflow = config.workflows.drain().next().unwrap().1;
     Ok(Ok(workflow))
 }
