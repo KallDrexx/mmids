@@ -238,9 +238,8 @@ fn error_if_no_app_provided() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(APP_PROPERTY_NAME);
 
-    match TestContext::new(definition) {
-        Ok(_) => panic!("Expecected failure"),
-        Err(_) => (),
+    if TestContext::new(definition).is_ok() {
+        panic!("Expected failure");
     }
 }
 
@@ -249,9 +248,8 @@ fn error_if_no_stream_key_provided() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(STREAM_KEY_PROPERTY_NAME);
 
-    match TestContext::new(definition) {
-        Ok(_) => panic!("Expecected failure"),
-        Err(_) => (),
+    if TestContext::new(definition).is_ok() {
+        panic!("Expected failure");
     }
 }
 

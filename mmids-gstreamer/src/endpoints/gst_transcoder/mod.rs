@@ -65,14 +65,14 @@ pub enum GstTranscoderNotification {
     TranscodingStopped(GstTranscoderStoppedCause),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum EncoderType {
     Video,
     Audio,
 }
 
 /// Reasons transcoding have stopped
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum GstTranscoderStoppedCause {
     /// No encoder generator has been registered with the encoder factory with the specified name
     InvalidEncoderName {
@@ -106,6 +106,16 @@ pub enum GstTranscoderStoppedCause {
 pub enum EndpointStartError {
     #[error("Gstreamer failed to initialize")]
     GstreamerError(#[from] &'static glib::Error),
+}
+
+struct StartTranscodeParams {
+    id: Uuid,
+    notification_channel: UnboundedSender<GstTranscoderNotification>,
+    input_media: UnboundedReceiver<MediaNotificationContent>,
+    video_encoder_name: String,
+    video_parameters: HashMap<String, Option<String>>,
+    audio_encoder_name: String,
+    audio_parameters: HashMap<String, Option<String>>,
 }
 
 /// Starts the gstreamer transcode process, and returns a channel in which communication with the
@@ -206,7 +216,7 @@ impl EndpointActor {
                 audio_encoder_name,
                 audio_parameters,
             } => {
-                self.handle_start_transcode_request(
+                self.handle_start_transcode_request(StartTranscodeParams {
                     id,
                     notification_channel,
                     input_media,
@@ -214,7 +224,7 @@ impl EndpointActor {
                     video_parameters,
                     audio_encoder_name,
                     audio_parameters,
-                );
+                });
             }
 
             GstTranscoderRequest::StopTranscoding { id } => {
@@ -234,37 +244,31 @@ impl EndpointActor {
         }
     }
 
-    fn handle_start_transcode_request(
-        &mut self,
-        id: Uuid,
-        notification_channel: UnboundedSender<GstTranscoderNotification>,
-        input_media: UnboundedReceiver<MediaNotificationContent>,
-        video_encoder_name: String,
-        video_parameters: HashMap<String, Option<String>>,
-        audio_encoder_name: String,
-        audio_parameters: HashMap<String, Option<String>>,
-    ) {
-        if self.active_transcodes.contains_key(&id) {
+    fn handle_start_transcode_request(&mut self, params: StartTranscodeParams) {
+        if self.active_transcodes.contains_key(&params.id) {
             warn!(
                 "Transcoding requested with id {}, but that id is already active",
-                id
+                params.id
             );
-            let _ = notification_channel.send(GstTranscoderNotification::TranscodingStopped(
-                GstTranscoderStoppedCause::IdAlreadyActive(id),
-            ));
+            let _ =
+                params
+                    .notification_channel
+                    .send(GstTranscoderNotification::TranscodingStopped(
+                        GstTranscoderStoppedCause::IdAlreadyActive(params.id),
+                    ));
 
             return;
         }
 
         let (outbound_media_sender, outbound_media_receiver) = unbounded_channel();
 
-        let pipeline_name = format!("transcode_pipeline_{}", id);
+        let pipeline_name = format!("transcode_pipeline_{}", params.id);
         let pipeline = Pipeline::new(Some(pipeline_name.as_str()));
 
         let video_encoder = self.encoder_factory.get_video_encoder(
-            video_encoder_name.clone(),
+            params.video_encoder_name.clone(),
             &pipeline,
-            &video_parameters,
+            &params.video_parameters,
             outbound_media_sender.clone(),
         );
 
@@ -273,24 +277,26 @@ impl EndpointActor {
             Err(error) => {
                 error!(
                     "Failed to create the {} video encoder: {:?}",
-                    video_encoder_name, error,
+                    params.video_encoder_name, error,
                 );
 
-                let _ = notification_channel.send(GstTranscoderNotification::TranscodingStopped(
-                    GstTranscoderStoppedCause::EncoderCreationFailure {
-                        encoder_type: EncoderType::Video,
-                        details: format!("{:?}", error),
-                    },
-                ));
+                let _ = params.notification_channel.send(
+                    GstTranscoderNotification::TranscodingStopped(
+                        GstTranscoderStoppedCause::EncoderCreationFailure {
+                            encoder_type: EncoderType::Video,
+                            details: format!("{:?}", error),
+                        },
+                    ),
+                );
 
                 return;
             }
         };
 
         let audio_encoder = self.encoder_factory.get_audio_encoder(
-            audio_encoder_name.clone(),
+            params.audio_encoder_name.clone(),
             &pipeline,
-            &audio_parameters,
+            &params.audio_parameters,
             outbound_media_sender.clone(),
         );
 
@@ -299,15 +305,17 @@ impl EndpointActor {
             Err(error) => {
                 error!(
                     "Failed to create the {} audio encoder: {:?}",
-                    audio_encoder_name, error,
+                    params.audio_encoder_name, error,
                 );
 
-                let _ = notification_channel.send(GstTranscoderNotification::TranscodingStopped(
-                    GstTranscoderStoppedCause::EncoderCreationFailure {
-                        encoder_type: EncoderType::Audio,
-                        details: format!("{:?}", error),
-                    },
-                ));
+                let _ = params.notification_channel.send(
+                    GstTranscoderNotification::TranscodingStopped(
+                        GstTranscoderStoppedCause::EncoderCreationFailure {
+                            encoder_type: EncoderType::Audio,
+                            details: format!("{:?}", error),
+                        },
+                    ),
+                );
 
                 return;
             }
@@ -317,25 +325,27 @@ impl EndpointActor {
             pipeline,
             video_encoder,
             audio_encoder,
-            inbound_media: input_media,
+            inbound_media: params.input_media,
             outbound_media: outbound_media_sender,
-            process_id: id.clone(),
+            process_id: params.id,
         };
 
         let manager = start_transcode_manager(parameters);
 
-        let _ = notification_channel.send(GstTranscoderNotification::TranscodingStarted {
-            output_media: outbound_media_receiver,
-        });
+        let _ = params
+            .notification_channel
+            .send(GstTranscoderNotification::TranscodingStarted {
+                output_media: outbound_media_receiver,
+            });
 
         self.futures
-            .push(notify_manager_gone(id.clone(), manager.clone()).boxed());
+            .push(notify_manager_gone(params.id, manager.clone()).boxed());
 
         self.active_transcodes.insert(
-            id,
+            params.id,
             ActiveTranscode {
                 sender: manager,
-                notification_channel,
+                notification_channel: params.notification_channel,
             },
         );
     }

@@ -115,28 +115,24 @@ impl FfmpegHandler {
 
 impl ExternalStreamHandler for FfmpegHandler {
     fn prepare_stream(&mut self, stream_name: &str, outputs: &mut StepOutputs) {
-        match &self.status {
-            FfmpegHandlerStatus::Inactive => {
-                let parameters = self
-                    .param_generator
-                    .form_parameters(&self.stream_id, stream_name);
-                let (sender, receiver) = unbounded_channel();
-                let _ = self
-                    .ffmpeg_endpoint
-                    .send(FfmpegEndpointRequest::StartFfmpeg {
-                        id: self.ffmpeg_id.clone(),
-                        params: parameters,
-                        notification_channel: sender,
-                    });
+        if let FfmpegHandlerStatus::Inactive = &self.status {
+            let parameters = self
+                .param_generator
+                .form_parameters(&self.stream_id, stream_name);
+            let (sender, receiver) = unbounded_channel();
+            let _ = self
+                .ffmpeg_endpoint
+                .send(FfmpegEndpointRequest::StartFfmpeg {
+                    id: self.ffmpeg_id,
+                    params: parameters,
+                    notification_channel: sender,
+                });
 
-                outputs
-                    .futures
-                    .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
+            outputs
+                .futures
+                .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
 
-                self.status = FfmpegHandlerStatus::Pending;
-            }
-
-            _ => (),
+            self.status = FfmpegHandlerStatus::Pending;
         }
     }
 
@@ -145,17 +141,13 @@ impl ExternalStreamHandler for FfmpegHandler {
             FfmpegHandlerStatus::Pending => {
                 let _ = self
                     .ffmpeg_endpoint
-                    .send(FfmpegEndpointRequest::StopFfmpeg {
-                        id: self.ffmpeg_id.clone(),
-                    });
+                    .send(FfmpegEndpointRequest::StopFfmpeg { id: self.ffmpeg_id });
             }
 
             FfmpegHandlerStatus::Active => {
                 let _ = self
                     .ffmpeg_endpoint
-                    .send(FfmpegEndpointRequest::StopFfmpeg {
-                        id: self.ffmpeg_id.clone(),
-                    });
+                    .send(FfmpegEndpointRequest::StopFfmpeg { id: self.ffmpeg_id });
             }
 
             FfmpegHandlerStatus::Inactive => (),

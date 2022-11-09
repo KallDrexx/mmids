@@ -34,7 +34,7 @@ pub type CreateFactoryFnResult =
     Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>;
 
 /// Various statuses of an individual step
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StepStatus {
     /// The step has been created but it is not yet ready to handle media
     Created,
@@ -52,6 +52,7 @@ pub enum StepStatus {
 }
 
 /// Inputs to be passed in for execution of a workflow step.
+#[derive(Default)]
 pub struct StepInputs {
     /// Media notifications that the step may be interested in
     pub media: Vec<MediaNotification>,
@@ -62,10 +63,7 @@ pub struct StepInputs {
 
 impl StepInputs {
     pub fn new() -> Self {
-        StepInputs {
-            media: Vec::new(),
-            notifications: Vec::new(),
-        }
+        Default::default()
     }
 
     pub fn clear(&mut self) {
@@ -75,6 +73,7 @@ impl StepInputs {
 }
 
 /// Resulting outputs that come from executing a workflow step.
+#[derive(Default)]
 pub struct StepOutputs {
     /// Media notifications that the workflow step intends to pass to the next workflow step
     pub media: Vec<MediaNotification>,
@@ -85,10 +84,7 @@ pub struct StepOutputs {
 
 impl StepOutputs {
     pub fn new() -> Self {
-        StepOutputs {
-            media: Vec::new(),
-            futures: Vec::new(),
-        }
+        Default::default()
     }
 
     pub fn clear(&mut self) {
@@ -147,7 +143,7 @@ impl StepTestContext {
     fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Result<Self> {
         let (step, futures) = generator
             .generate(definition)
-            .or_else(|error| Err(anyhow!("Failed to generate workflow step: {:?}", error)))?;
+            .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 
         Ok(StepTestContext {
             step,
@@ -211,7 +207,7 @@ impl StepTestContext {
     }
 
     fn assert_media_not_passed_through(&mut self, media: MediaNotification) {
-        self.execute_with_media(media.clone());
+        self.execute_with_media(media);
 
         assert!(self.media_outputs.is_empty(), "Expected no media outputs");
     }

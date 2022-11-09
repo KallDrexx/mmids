@@ -12,6 +12,7 @@ pub trait StepGenerator {
 /// The workflow step factory allows consumers to register different workflow step generation
 /// instances to use for specific workflow step types.  Consumers can then request the factory
 /// to generate workflow steps based on the passed in step definition.
+#[derive(Default)]
 pub struct WorkflowStepFactory {
     generators: HashMap<WorkflowStepType, Box<dyn StepGenerator + Sync + Send>>,
 }
@@ -35,9 +36,7 @@ pub enum FactoryCreateError {
 impl WorkflowStepFactory {
     /// Creates a new workflow step factory, with an empty registration
     pub fn new() -> Self {
-        WorkflowStepFactory {
-            generators: HashMap::new(),
-        }
+        Default::default()
     }
 
     /// Attempts to register a specific generator instance with the specified
@@ -51,7 +50,7 @@ impl WorkflowStepFactory {
         }
 
         self.generators.insert(step_type, generator);
-        return Ok(());
+        Ok(())
     }
 
     /// Attempts to create a new instance of a workflow step based on a specified definition

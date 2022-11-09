@@ -86,7 +86,7 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
         );
 
         let step = FfmpegRtmpPushStep {
-            definition: definition.clone(),
+            definition,
             status: StepStatus::Active,
             stream_reader: reader,
         };

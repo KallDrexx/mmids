@@ -22,7 +22,7 @@ use std::time::Duration;
 pub use runner::{WorkflowState, WorkflowStepState};
 
 /// Notification about media coming across a specific stream
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaNotification {
     /// The identifier for the stream that this notification pertains to
     pub stream_id: StreamId,
@@ -32,7 +32,7 @@ pub struct MediaNotification {
 }
 
 /// The detailed information contained within a media notification
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MediaNotificationContent {
     /// Announces that this stream has now connected, and steps that receive this notification
     /// should prepare for media data to start coming through
@@ -72,11 +72,11 @@ impl MediaNotificationContent {
     /// Creates an RTMP representation of the media data from the specified media content
     pub fn to_rtmp_media_data(&self) -> Option<RtmpEndpointMediaData> {
         match self {
-            MediaNotificationContent::StreamDisconnected => return None,
-            MediaNotificationContent::NewIncomingStream { stream_name: _ } => return None,
+            MediaNotificationContent::StreamDisconnected => None,
+            MediaNotificationContent::NewIncomingStream { stream_name: _ } => None,
             MediaNotificationContent::Metadata { data } => {
                 Some(RtmpEndpointMediaData::NewStreamMetaData {
-                    metadata: hash_map_to_stream_metadata(&data),
+                    metadata: hash_map_to_stream_metadata(data),
                 })
             }
 
@@ -88,7 +88,7 @@ impl MediaNotificationContent {
                 timestamp,
             } => Some(RtmpEndpointMediaData::NewVideoData {
                 data: data.clone(),
-                codec: codec.clone(),
+                codec: *codec,
                 is_keyframe: *is_keyframe,
                 is_sequence_header: *is_sequence_header,
                 timestamp: RtmpTimestamp::new(timestamp.dts.as_millis() as u32),
@@ -102,7 +102,7 @@ impl MediaNotificationContent {
                 data,
             } => Some(RtmpEndpointMediaData::NewAudioData {
                 data: data.clone(),
-                codec: codec.clone(),
+                codec: *codec,
                 timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
                 is_sequence_header: *is_sequence_header,
             }),

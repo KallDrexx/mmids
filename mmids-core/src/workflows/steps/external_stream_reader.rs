@@ -51,8 +51,8 @@ struct ActiveStream {
 
 enum FutureResult {
     RtmpEndpointGone,
-    RtmpWatchChannelGone(StreamId),
-    RtmpWatchNotificationReceived(
+    WatchChannelGone(StreamId),
+    WatchNotificationReceived(
         StreamId,
         RtmpEndpointWatcherNotification,
         UnboundedReceiver<RtmpEndpointWatcherNotification>,
@@ -123,13 +123,13 @@ impl ExternalStreamReader {
                 self.stop_all_streams();
             }
 
-            FutureResult::RtmpWatchChannelGone(stream_id) => {
+            FutureResult::WatchChannelGone(stream_id) => {
                 if self.stop_stream(&stream_id) {
                     error!(stream_id = ?stream_id, "Rtmp watch channel disappeared for stream id {:?}", stream_id);
                 }
             }
 
-            FutureResult::RtmpWatchNotificationReceived(stream_id, notification, receiver) => {
+            FutureResult::WatchNotificationReceived(stream_id, notification, receiver) => {
                 if !self.active_streams.contains_key(&stream_id) {
                     // late notification after stopping a stream
                     return;
@@ -267,7 +267,7 @@ impl ExternalStreamReader {
     }
 
     pub fn stop_all_streams(&mut self) {
-        let ids: Vec<StreamId> = self.active_streams.keys().map(|x| x.clone()).collect();
+        let ids: Vec<StreamId> = self.active_streams.keys().cloned().collect();
         for id in ids {
             self.stop_stream(&id);
         }
@@ -283,13 +283,13 @@ impl ExternalStreamReader {
                     registration_type: RegistrationType::Watcher,
                     port: 1935,
                     rtmp_app: self.watcher_app_name.clone(),
-                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0),
                 });
 
             return true;
         }
 
-        return false;
+        false
     }
 
     fn handle_rtmp_watch_notification(
@@ -369,8 +369,8 @@ async fn wait_for_watch_notification(
     mut receiver: UnboundedReceiver<RtmpEndpointWatcherNotification>,
 ) -> Box<dyn StepFutureResult> {
     let result = match receiver.recv().await {
-        Some(msg) => FutureResult::RtmpWatchNotificationReceived(stream_id, msg, receiver),
-        None => FutureResult::RtmpWatchChannelGone(stream_id),
+        Some(msg) => FutureResult::WatchNotificationReceived(stream_id, msg, receiver),
+        None => FutureResult::WatchChannelGone(stream_id),
     };
 
     Box::new(result)
@@ -760,7 +760,7 @@ mod tests {
             .handle_media(media, &mut outputs);
         context.futures.extend(outputs.futures.drain(..));
 
-        let _ = test_utils::expect_mpsc_response(&mut context.stop_stream_receiver).await;
+        test_utils::expect_mpsc_response(&mut context.stop_stream_receiver).await;
     }
 
     #[tokio::test]

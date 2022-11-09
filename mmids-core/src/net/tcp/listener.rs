@@ -146,7 +146,7 @@ async fn handle_new_connection(
         socket_address: client_info,
     };
 
-    if let Err(_) = response_channel.send(message) {
+    if response_channel.send(message).is_err() {
         info!("Port owner disconnected before connection was handled");
 
         return;
@@ -196,7 +196,7 @@ async fn socket_reader(
                 let bytes = buffer.split_off(bytes_read);
                 let received_bytes = buffer.freeze();
 
-                if let Err(_) = incoming_sender.send(received_bytes) {
+                if incoming_sender.send(received_bytes).is_err() {
                     break;
                 }
 

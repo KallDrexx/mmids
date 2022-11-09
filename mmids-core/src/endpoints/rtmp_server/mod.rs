@@ -57,7 +57,7 @@ pub enum StreamKeyRegistration {
 }
 
 /// Specifies if there are any IP address restrictions as part of an RTMP server registration
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum IpRestriction {
     /// All IP addresses are allowed
     None,

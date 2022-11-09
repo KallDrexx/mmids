@@ -150,8 +150,8 @@ fn find_route<'a>(
 impl Route {
     pub(super) fn get_parameters(&self, path_parts: &[&str]) -> HashMap<String, String> {
         let mut results = HashMap::new();
-        for x in 0..self.path.len() {
-            if let PathPart::Parameter { name } = &self.path[x] {
+        for (x, path_part) in self.path.iter().enumerate() {
+            if let PathPart::Parameter { name } = path_part {
                 results.insert(name.clone(), path_parts[x].to_string());
             }
         }

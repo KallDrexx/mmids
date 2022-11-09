@@ -28,6 +28,16 @@ use tokio::sync::oneshot::channel;
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
+struct RegisterListenerParams {
+    port: u16,
+    rtmp_app: String,
+    stream_key: StreamKeyRegistration,
+    socket_sender: UnboundedSender<TcpSocketRequest>,
+    listener: ListenerRequest,
+    ip_restrictions: IpRestriction,
+    use_tls: bool,
+}
+
 impl RtmpServerEndpointActor {
     #[instrument(
         name = "RtmpServer Endpoint Execution",
@@ -381,19 +391,19 @@ impl RtmpServerEndpointActor {
                 use_tls,
                 requires_registrant_approval,
             } => {
-                self.register_listener(
+                self.register_listener(RegisterListenerParams {
                     port,
                     rtmp_app,
-                    rtmp_stream_key,
-                    socket_request_sender,
-                    ListenerRequest::Publisher {
+                    stream_key: rtmp_stream_key,
+                    socket_sender: socket_request_sender,
+                    listener: ListenerRequest::Publisher {
                         channel: message_channel,
                         stream_id,
                         requires_registrant_approval,
                     },
-                    ip_restriction,
+                    ip_restrictions: ip_restriction,
                     use_tls,
-                );
+                });
             }
 
             RtmpEndpointRequest::ListenForWatchers {
@@ -406,19 +416,19 @@ impl RtmpServerEndpointActor {
                 use_tls,
                 requires_registrant_approval,
             } => {
-                self.register_listener(
+                self.register_listener(RegisterListenerParams {
                     port,
                     rtmp_app,
-                    rtmp_stream_key,
-                    socket_request_sender,
-                    ListenerRequest::Watcher {
+                    stream_key: rtmp_stream_key,
+                    socket_sender: socket_request_sender,
+                    listener: ListenerRequest::Watcher {
                         notification_channel,
                         media_channel,
                         requires_registrant_approval,
                     },
                     ip_restrictions,
                     use_tls,
-                );
+                });
             }
 
             RtmpEndpointRequest::RemoveRegistration {
@@ -448,24 +458,21 @@ impl RtmpServerEndpointActor {
         }
     }
 
-    #[instrument(skip(self, socket_sender, listener))]
-    fn register_listener(
-        &mut self,
-        port: u16,
-        rtmp_app: String,
-        stream_key: StreamKeyRegistration,
-        socket_sender: UnboundedSender<TcpSocketRequest>,
-        listener: ListenerRequest,
-        ip_restrictions: IpRestriction,
-        use_tls: bool,
-    ) {
+    #[instrument(
+        skip(self, params),
+        fields(
+            port = %params.port, rtmp_app = %params.rtmp_app, stream_key = ?params.stream_key,
+            ip_restrictions = ?params.ip_restrictions, use_tls = %params.use_tls,
+        )
+    )]
+    fn register_listener(&mut self, params: RegisterListenerParams) {
         let mut new_port_requested = false;
-        let port_map = self.ports.entry(port).or_insert_with(|| {
+        let port_map = self.ports.entry(params.port).or_insert_with(|| {
             let port_map = PortMapping {
                 rtmp_applications: HashMap::new(),
                 status: PortStatus::Requested,
                 connections: HashMap::new(),
-                tls: use_tls,
+                tls: params.use_tls,
             };
 
             new_port_requested = true;
@@ -473,14 +480,14 @@ impl RtmpServerEndpointActor {
             port_map
         });
 
-        if port_map.tls != use_tls {
+        if port_map.tls != params.use_tls {
             error!(
                 "Request to open port {} with tls set to {} failed, as the port is already mapped \
             with tls set to {}",
-                port, use_tls, port_map.tls
+                params.port, params.use_tls, port_map.tls
             );
 
-            match listener {
+            match params.listener {
                 ListenerRequest::Publisher { channel, .. } => {
                     let _ = channel.send(RtmpEndpointPublisherMessage::PublisherRegistrationFailed);
                 }
@@ -500,36 +507,36 @@ impl RtmpServerEndpointActor {
         if new_port_requested {
             let (sender, receiver) = unbounded_channel();
             let request = TcpSocketRequest::OpenPort {
-                port,
+                port: params.port,
                 response_channel: sender,
-                use_tls,
+                use_tls: params.use_tls,
             };
 
-            let _ = socket_sender.send(request);
+            let _ = params.socket_sender.send(request);
             self.futures
-                .push(internal_futures::wait_for_socket_response(receiver, port).boxed());
+                .push(internal_futures::wait_for_socket_response(receiver, params.port).boxed());
         }
 
         let app_map = port_map
             .rtmp_applications
-            .entry(rtmp_app.clone())
+            .entry(params.rtmp_app.clone())
             .or_insert(RtmpAppMapping {
                 publisher_registrants: HashMap::new(),
                 watcher_registrants: HashMap::new(),
                 active_stream_keys: HashMap::new(),
             });
 
-        match listener {
+        match params.listener {
             ListenerRequest::Publisher {
                 channel,
                 stream_id,
                 requires_registrant_approval,
             } => {
-                let can_be_added = match &stream_key {
+                let can_be_added = match &params.stream_key {
                     StreamKeyRegistration::Any => {
                         if !app_map.publisher_registrants.is_empty() {
                             warn!("Rtmp server publish request registration failed for port {}, app '{}', all stream keys': \
-                                    Another system is registered for at least one stream key on this port and app", port, rtmp_app);
+                                    Another system is registered for at least one stream key on this port and app", params.port, params.rtmp_app);
 
                             false
                         } else {
@@ -543,7 +550,7 @@ impl RtmpServerEndpointActor {
                             .contains_key(&StreamKeyRegistration::Any)
                         {
                             warn!("Rtmp server publish request registration failed for port {}, app '{}', stream key '{}': \
-                                    Another system is registered for all stream keys on this port/app", port, rtmp_app, key);
+                                    Another system is registered for all stream keys on this port/app", params.port, params.rtmp_app, key);
 
                             false
                         } else if app_map
@@ -551,7 +558,7 @@ impl RtmpServerEndpointActor {
                             .contains_key(&StreamKeyRegistration::Exact(key.clone()))
                         {
                             warn!("Rtmp server publish request registration failed for port {}, app '{}', stream key '{}': \
-                                    Another system is registered for this port/app/stream key combo", port, rtmp_app, key);
+                                    Another system is registered for this port/app/stream key combo", params.port, params.rtmp_app, key);
 
                             false
                         } else {
@@ -569,11 +576,11 @@ impl RtmpServerEndpointActor {
 
                 let (cancel_sender, cancel_receiver) = unbounded_channel();
                 app_map.publisher_registrants.insert(
-                    stream_key.clone(),
+                    params.stream_key.clone(),
                     PublishingRegistrant {
                         response_channel: channel.clone(),
                         stream_id,
-                        ip_restrictions,
+                        ip_restrictions: params.ip_restrictions,
                         requires_registrant_approval,
                         cancellation_notifier: cancel_receiver,
                     },
@@ -582,9 +589,9 @@ impl RtmpServerEndpointActor {
                 self.futures.push(
                     internal_futures::wait_for_publisher_channel_closed(
                         channel.clone(),
-                        port,
-                        rtmp_app,
-                        stream_key,
+                        params.port,
+                        params.rtmp_app,
+                        params.stream_key,
                         cancel_sender,
                     )
                     .boxed(),
@@ -603,11 +610,11 @@ impl RtmpServerEndpointActor {
                 notification_channel,
                 requires_registrant_approval,
             } => {
-                let can_be_added = match &stream_key {
+                let can_be_added = match &params.stream_key {
                     StreamKeyRegistration::Any => {
                         if !app_map.watcher_registrants.is_empty() {
                             warn!("Rtmp server watcher registration failed for port {}, app '{}', all stream keys': \
-                                    Another system is registered for at least one stream key on this port and app", port, rtmp_app);
+                                    Another system is registered for at least one stream key on this port and app", params.port, params.rtmp_app);
 
                             false
                         } else {
@@ -621,7 +628,7 @@ impl RtmpServerEndpointActor {
                             .contains_key(&StreamKeyRegistration::Any)
                         {
                             warn!("Rtmp server watcher registration failed for port {}, app '{}', stream key '{}': \
-                                    Another system is registered for all stream keys on this port/app", port, rtmp_app, key);
+                                    Another system is registered for all stream keys on this port/app", params.port, params.rtmp_app, key);
 
                             false
                         } else if app_map
@@ -629,7 +636,7 @@ impl RtmpServerEndpointActor {
                             .contains_key(&StreamKeyRegistration::Exact(key.clone()))
                         {
                             warn!("Rtmp server watcher registration failed for port {}, app '{}', stream key '{}': \
-                                    Another system is registered for this port/app/stream key combo", port, rtmp_app, key);
+                                    Another system is registered for this port/app/stream key combo", params.port, params.rtmp_app, key);
 
                             false
                         } else {
@@ -647,10 +654,10 @@ impl RtmpServerEndpointActor {
 
                 let (cancel_sender, cancel_receiver) = unbounded_channel();
                 app_map.watcher_registrants.insert(
-                    stream_key.clone(),
+                    params.stream_key.clone(),
                     WatcherRegistrant {
                         response_channel: notification_channel.clone(),
-                        ip_restrictions,
+                        ip_restrictions: params.ip_restrictions,
                         requires_registrant_approval,
                         cancellation_notifier: cancel_receiver,
                     },
@@ -659,9 +666,9 @@ impl RtmpServerEndpointActor {
                 self.futures.push(
                     internal_futures::wait_for_watcher_notification_channel_closed(
                         notification_channel.clone(),
-                        port,
-                        rtmp_app.clone(),
-                        stream_key.clone(),
+                        params.port,
+                        params.rtmp_app.clone(),
+                        params.stream_key.clone(),
                         cancel_sender,
                     )
                     .boxed(),
@@ -670,9 +677,9 @@ impl RtmpServerEndpointActor {
                 self.futures.push(
                     internal_futures::wait_for_watcher_media(
                         media_channel,
-                        port,
-                        rtmp_app,
-                        stream_key,
+                        params.port,
+                        params.rtmp_app,
+                        params.stream_key,
                     )
                     .boxed(),
                 );

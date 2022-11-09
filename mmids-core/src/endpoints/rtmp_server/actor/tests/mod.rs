@@ -879,9 +879,7 @@ async fn notification_raised_when_video_published() {
 
     let data = Bytes::from(vec![1, 2, 3, 4, 5, 6, 7]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -918,9 +916,7 @@ async fn published_video_detects_h264_codec_when_first_byte_masks_to_0x07() {
 
     let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -948,9 +944,7 @@ async fn published_video_detects_unknown_codec_when_first_byte_does_not_mask_to_
 
     let data = Bytes::from(vec![0x08, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -978,9 +972,7 @@ async fn published_video_sequence_header_when_h264_and_second_byte_is_zero() {
 
     let data = Bytes::from(vec![0x07, 0, 0, 0, 0, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1008,9 +1000,7 @@ async fn published_video_not_sequence_header_when_h264_and_second_byte_is_not_ze
 
     let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 1, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1038,9 +1028,7 @@ async fn published_video_not_key_frame_when_first_4_half_octet_is_not_one() {
 
     let data = Bytes::from(vec![0x27, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1068,9 +1056,7 @@ async fn published_video_key_frame_when_first_4_half_octet_is_one() {
 
     let data = Bytes::from(vec![0x17, 1, 0, 0, 0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_video(data.clone(), timestamp.clone());
+    context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1131,9 +1117,7 @@ async fn notification_raised_when_audio_published() {
 
     let data = Bytes::from(vec![1, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_audio(data.clone(), timestamp.clone());
+    context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1168,9 +1152,7 @@ async fn published_audio_aac_codec_if_first_byte_0xa0() {
 
     let data = Bytes::from(vec![0xa0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_audio(data.clone(), timestamp.clone());
+    context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1196,9 +1178,7 @@ async fn published_audio_unknown_codec_if_first_byte_not_0xa0() {
 
     let data = Bytes::from(vec![1, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_audio(data.clone(), timestamp.clone());
+    context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1224,9 +1204,7 @@ async fn published_audio_aac_sequence_header_if_second_byte_is_zero() {
 
     let data = Bytes::from(vec![0xa0, 0, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_audio(data.clone(), timestamp.clone());
+    context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1252,9 +1230,7 @@ async fn published_audio_aac_not_sequence_header_if_second_byte_is_not_zero() {
 
     let data = Bytes::from(vec![0xa0, 1, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
-    context
-        .client
-        .publish_audio(data.clone(), timestamp.clone());
+    context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
@@ -1399,7 +1375,7 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_non_keyframe() {
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: false,
-                timestamp: sent_timestamp.clone(),
+                timestamp: sent_timestamp,
                 composition_time_offset: 0,
             },
         }) {
@@ -1446,7 +1422,7 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: true,
-                timestamp: sent_timestamp.clone(),
+                timestamp: sent_timestamp,
                 composition_time_offset: 0,
             },
         }) {
@@ -1493,7 +1469,7 @@ async fn watcher_does_not_receive_non_h264_video() {
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: false,
-                timestamp: sent_timestamp.clone(),
+                timestamp: sent_timestamp,
                 composition_time_offset: 0,
             },
         }) {
@@ -1525,7 +1501,7 @@ async fn aac_audio_has_flv_headers_added_for_sequence_header() {
                 codec: AudioCodec::Aac,
                 data: sent_data.clone(),
                 is_sequence_header: true,
-                timestamp: sent_timestamp.clone(),
+                timestamp: sent_timestamp,
             },
         }) {
         Ok(_) => (),
@@ -1565,7 +1541,7 @@ async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
                 codec: AudioCodec::Aac,
                 data: sent_data.clone(),
                 is_sequence_header: false,
-                timestamp: sent_timestamp.clone(),
+                timestamp: sent_timestamp,
             },
         }) {
         Ok(_) => (),
@@ -1605,7 +1581,7 @@ async fn watcher_does_not_receives_unknown_audio_codec() {
                 codec: AudioCodec::Unknown,
                 data: sent_data.clone(),
                 is_sequence_header: false,
-                timestamp: sent_timestamp.clone(),
+                timestamp: sent_timestamp,
             },
         }) {
         Ok(_) => (),

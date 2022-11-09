@@ -74,9 +74,9 @@ async fn execute_simple_http_executor(url: String, stream_name: String) -> React
     ReactorExecutionResult::valid(workflows)
 }
 
-fn build_request(url: &String, stream_name: &String) -> Result<Request<Body>, ()> {
+fn build_request(url: &String, stream_name: &str) -> Result<Request<Body>, ()> {
     let content = match serde_json::to_string_pretty(&RequestContent {
-        stream_name: stream_name.clone(),
+        stream_name: stream_name.to_owned(),
     }) {
         Ok(json) => json,
         Err(error) => {
@@ -98,7 +98,7 @@ fn build_request(url: &String, stream_name: &String) -> Result<Request<Body>, ()
         Ok(request) => Ok(request),
         Err(error) => {
             error!("Failed to build request: {}", error);
-            return Err(());
+            Err(())
         }
     }
 }
@@ -120,7 +120,7 @@ async fn execute_with_retry(
         info!("Attempting retry #{}", times_retried);
     }
 
-    let request = match build_request(&url, &stream_name) {
+    let request = match build_request(url, stream_name) {
         Ok(request) => request,
         Err(_) => return Err(()), // retry wont' help building the request
     };
@@ -186,5 +186,5 @@ async fn execute_http_call(request: Request<Body>) -> Result<Option<MmidsConfig>
         }
     };
 
-    return Ok(Some(config));
+    Ok(Some(config))
 }

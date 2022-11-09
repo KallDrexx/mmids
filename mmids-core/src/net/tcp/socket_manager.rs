@@ -4,6 +4,7 @@ use crate::net::tcp::{RequestFailureReason, TlsOptions};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -106,32 +107,32 @@ impl SocketManager {
                     return;
                 }
 
-                if self.open_ports.contains_key(&port) {
-                    debug!(port = port, "Port is already in use!");
-                    let message = TcpSocketResponse::RequestDenied {
-                        reason: RequestFailureReason::PortInUse,
-                    };
-
-                    let _ = response_channel.send(message);
-                } else {
+                if let Entry::Vacant(entry) = self.open_ports.entry(port) {
                     debug!(port = port, use_tls = use_tls, "TCP port being opened");
                     let details = OpenPort {
                         response_channel: response_channel.clone(),
                     };
 
-                    self.open_ports.insert(port, details);
+                    entry.insert(details);
 
                     let listener_shutdown = start_listener(ListenerParams {
                         port,
                         response_channel: response_channel.clone(),
                         use_tls,
-                        tls_options: tls_options.clone(),
+                        tls_options,
                     });
 
                     self.futures
                         .push(listener_shutdown_future(port, listener_shutdown).boxed());
 
                     let _ = response_channel.send(TcpSocketResponse::RequestAccepted {});
+                } else {
+                    debug!(port = port, "Port is already in use!");
+                    let message = TcpSocketResponse::RequestDenied {
+                        reason: RequestFailureReason::PortInUse,
+                    };
+
+                    let _ = response_channel.send(message);
                 }
             }
         }

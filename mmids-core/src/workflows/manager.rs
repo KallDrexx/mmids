@@ -135,7 +135,7 @@ impl Actor {
                 }
 
                 FutureResult::WorkflowGone(name) => {
-                    if let Some(_) = self.workflows.remove(&name) {
+                    if self.workflows.remove(&name).is_some() {
                         let event =
                             WorkflowStartedOrStoppedEvent::WorkflowEnded { name: name.clone() };
                         let _ = self
@@ -184,7 +184,7 @@ impl Actor {
                     self.workflows.insert(name.clone(), sender.clone());
 
                     let event = WorkflowStartedOrStoppedEvent::WorkflowStarted {
-                        name: name.clone(),
+                        name,
                         channel: sender,
                     };
 

@@ -201,16 +201,15 @@ impl TestContext {
         Uuid,
     ) {
         let request = test_utils::expect_mpsc_response(&mut self.ffmpeg_endpoint).await;
-        let result = match request {
+        match request {
             FfmpegEndpointRequest::StartFfmpeg {
                 notification_channel,
                 params,
                 id,
             } => (notification_channel, params, id),
-            request => panic!("Unexpected request: {:?}", request),
-        };
 
-        result
+            request => panic!("Unexpected request: {:?}", request),
+        }
     }
 }
 

@@ -36,8 +36,8 @@ lazy_static! {
 
         // Add custom logging handler
         gstreamer::debug_add_log_function(|category, level, file, function, _line, object, message| {
-            let message = message.get().map(|o| o.to_string()).unwrap_or("".to_string());
-            let object_name = object.map(|o| o.to_string()).unwrap_or("<NO OBJECT>".to_string());
+            let message = message.get().map(|o| o.to_string()).unwrap_or_else(|| "".to_string());
+            let object_name = object.map(|o| o.to_string()).unwrap_or_else(|| "<NO OBJECT>".to_string());
 
             match &level {
                 DebugLevel::Error => error!(

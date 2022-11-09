@@ -50,11 +50,11 @@ impl X264Encoder {
         parameters: &HashMap<String, Option<String>>,
         pipeline: &Pipeline,
     ) -> Result<X264Encoder> {
-        let height = get_number(&parameters, "height");
-        let width = get_number(&parameters, "width");
+        let height = get_number(parameters, "height");
+        let width = get_number(parameters, "width");
         let preset = parameters.get("preset").unwrap_or(&None);
-        let fps = get_number(&parameters, "fps");
-        let bitrate = get_number(&parameters, "bitrate");
+        let fps = get_number(parameters, "fps");
+        let bitrate = get_number(parameters, "bitrate");
 
         let appsrc = create_gst_element("appsrc")?;
         let queue = create_gst_element("queue")?;
@@ -94,7 +94,7 @@ impl X264Encoder {
         .with_context(|| "Failed to link scale to sink")?;
 
         // decodebin's video pad is added dynamically
-        let link_destination = scale.clone();
+        let link_destination = scale;
         decoder.connect_pad_added(move |src, src_pad| {
             match src.link_pads(
                 Some(&src_pad.name()),
@@ -139,7 +139,7 @@ impl X264Encoder {
 
         let appsink = appsink
             .dynamic_cast::<AppSink>()
-            .or_else(|_| Err(anyhow!("appsink could not be cast to 'AppSink'")))?;
+            .map_err(|_| anyhow!("appsink could not be cast to 'AppSink'"))?;
 
         let mut sent_codec_data = false;
         appsink.set_callbacks(
@@ -163,7 +163,7 @@ impl X264Encoder {
 
         let appsrc = appsrc
             .dynamic_cast::<AppSrc>()
-            .or_else(|_| Err(anyhow!("source element could not be cast to 'Appsrc'")))?;
+            .map_err(|_| anyhow!("source element could not be cast to 'Appsrc'"))?;
 
         Ok(X264Encoder { source: appsrc })
     }
@@ -195,12 +195,10 @@ impl VideoEncoder for X264Encoder {
 }
 
 fn get_number(parameters: &HashMap<String, Option<String>>, key: &str) -> Option<u32> {
-    if let Some(outer) = parameters.get(key) {
-        if let Some(inner) = outer {
-            match inner.parse() {
-                Ok(num) => return Some(num),
-                Err(_) => warn!("Parameter {key} had a value of '{inner}', which is not a number"),
-            }
+    if let Some(Some(inner)) = parameters.get(key) {
+        match inner.parse() {
+            Ok(num) => return Some(num),
+            Err(_) => warn!("Parameter {key} had a value of '{inner}', which is not a number"),
         }
     }
 
@@ -215,7 +213,7 @@ fn sample_received(
 ) -> Result<()> {
     if !*codec_data_sent {
         // Pull the codec_data/sequence header out from the output parser
-        let codec_data = get_codec_data_from_element(&output_parser)?;
+        let codec_data = get_codec_data_from_element(output_parser)?;
 
         let _ = media_sender.send(MediaNotificationContent::Video {
             codec: VideoCodec::H264,

@@ -16,6 +16,7 @@ use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
+use std::default::Default;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -95,6 +96,7 @@ pub trait AudioEncoderGenerator {
 /// Allows encoder generators to be registered and be referred to via a name that given at
 /// registration time.  When an encoder instance is required, the encoder generator requested is
 /// invoked and the resulting encoder (or error) is returned.
+#[derive(Default)]
 pub struct EncoderFactory {
     video_encoders: HashMap<String, Box<dyn VideoEncoderGenerator>>,
     audio_encoders: HashMap<String, Box<dyn AudioEncoderGenerator>>,
@@ -103,10 +105,7 @@ pub struct EncoderFactory {
 impl EncoderFactory {
     /// Creates a new encoder factory
     pub fn new() -> EncoderFactory {
-        EncoderFactory {
-            video_encoders: HashMap::new(),
-            audio_encoders: HashMap::new(),
-        }
+        Default::default()
     }
 
     /// Registers a video encoder generator that can be invoked with a specific name
@@ -157,7 +156,7 @@ impl EncoderFactory {
             None => return Err(EncoderFactoryCreationError::NoEncoderWithName(name)),
         };
 
-        let encoder = generator.create(&pipeline, parameters, media_sender)?;
+        let encoder = generator.create(pipeline, parameters, media_sender)?;
 
         Ok(encoder)
     }
@@ -176,7 +175,7 @@ impl EncoderFactory {
             None => return Err(EncoderFactoryCreationError::NoEncoderWithName(name)),
         };
 
-        let encoder = generator.create(&pipeline, parameters, media_sender)?;
+        let encoder = generator.create(pipeline, parameters, media_sender)?;
 
         Ok(encoder)
     }

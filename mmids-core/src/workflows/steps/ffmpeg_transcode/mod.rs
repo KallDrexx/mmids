@@ -575,7 +575,7 @@ impl FfmpegTranscoder {
                     let _ = self
                         .ffmpeg_endpoint
                         .send(FfmpegEndpointRequest::StopFfmpeg {
-                            id: stream.ffmpeg_id.clone(),
+                            id: stream.ffmpeg_id,
                         });
                 }
 
@@ -583,7 +583,7 @@ impl FfmpegTranscoder {
                     let _ = self
                         .ffmpeg_endpoint
                         .send(FfmpegEndpointRequest::StopFfmpeg {
-                            id: stream.ffmpeg_id.clone(),
+                            id: stream.ffmpeg_id,
                         });
                 }
 
@@ -605,13 +605,13 @@ impl FfmpegTranscoder {
                     registration_type: RegistrationType::Publisher,
                     port: 1935,
                     rtmp_app: self.get_result_rtmp_app(),
-                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
+                    rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0),
                 });
 
             return true;
         }
 
-        return false;
+        false
     }
 
     fn handle_rtmp_watch_notification(

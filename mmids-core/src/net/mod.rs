@@ -32,7 +32,7 @@ impl Hash for ConnectionId {
 }
 
 /// Enumeration to make handling ip addresses vs subnets easier
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum IpAddress {
     Exact(Ipv4Addr),
     Cidr(Ipv4Cidr),
@@ -66,7 +66,7 @@ impl IpAddress {
         match input {
             None => (),
             Some(input) => {
-                for input in input.split(",") {
+                for input in input.split(',') {
                     let ip = if let Ok(ip) = input.parse::<Ipv4Addr>() {
                         Some(IpAddress::Exact(ip))
                     } else if let Ok(cidr) = IpCidr::from_str(input) {

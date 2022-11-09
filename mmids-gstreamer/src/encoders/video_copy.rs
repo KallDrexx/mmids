@@ -58,7 +58,7 @@ impl VideoCopyEncoder {
 
         let appsink = appsink
             .dynamic_cast::<AppSink>()
-            .or_else(|_| Err(anyhow!("Video copy encoder's appsink could not be casted")))?;
+            .map_err(|_| anyhow!("Video copy encoder's appsink could not be casted"))?;
 
         let codec_data: Arc<Mutex<Option<CodecInfo>>> = Arc::new(Mutex::new(None));
         let copy_of_codec_data = codec_data.clone();
@@ -83,25 +83,23 @@ impl VideoCopyEncoder {
 
                         if let Some(info) = &*data {
                             let _ = media_sender.send(MediaNotificationContent::Video {
-                                codec: info.codec.clone(),
+                                codec: info.codec,
                                 data: info.sequence_header.clone(),
                                 timestamp: VideoTimestamp::from_zero(),
                                 is_keyframe: false,
                                 is_sequence_header: true,
                             });
 
-                            codec = info.codec.clone();
+                            codec = info.codec;
                             sent_codec_data = true;
-                        } else {
-                            if !codec_data_error_raised {
-                                error!("Received data prior to codec data being set. This shouldn't happen");
-                                codec_data_error_raised = true;
-                            }
+                        } else if !codec_data_error_raised {
+                            error!("Received data prior to codec data being set. This shouldn't happen");
+                            codec_data_error_raised = true;
                         }
                     }
 
                     let sample = SampleResult::from_sink(sink)
-                        .or_else(|_| Err(FlowError::CustomError))?;
+                        .map_err(|_| FlowError::CustomError)?;
 
                     let timestamp = sample.to_video_timestamp();
                     let _ = media_sender.send(MediaNotificationContent::Video {
@@ -119,7 +117,7 @@ impl VideoCopyEncoder {
 
         let appsrc = appsrc
             .dynamic_cast::<AppSrc>()
-            .or_else(|_| Err(anyhow!("Video copy encoder's appsrc could not be casted")))?;
+            .map_err(|_| anyhow!("Video copy encoder's appsrc could not be casted"))?;
 
         Ok(VideoCopyEncoder {
             source: appsrc,
@@ -140,7 +138,7 @@ impl VideoEncoder for VideoCopyEncoder {
             let mut codec_data = self
                 .codec_data
                 .lock()
-                .or_else(|_| Err(anyhow!("Video copy encoder's lock was poisoned")))?;
+                .map_err(|_| anyhow!("Video copy encoder's lock was poisoned"))?;
 
             *codec_data = Some(CodecInfo {
                 codec,

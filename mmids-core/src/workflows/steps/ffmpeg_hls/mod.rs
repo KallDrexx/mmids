@@ -132,15 +132,16 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             Box::new(handler_generator),
         );
 
+        let path = path.clone();
         let step = FfmpegHlsStep {
-            definition: definition.clone(),
+            definition,
             status: StepStatus::Created,
             stream_reader: reader,
             path: path.clone(),
         };
 
         futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());
-        futures.push(notify_when_path_created(path.clone()).boxed());
+        futures.push(notify_when_path_created(path).boxed());
 
         Ok((Box::new(step), futures))
     }

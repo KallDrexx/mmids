@@ -83,24 +83,26 @@ struct ChildNode {
 }
 
 /// Parses configuration from a text block.
-pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
+pub fn parse(content: &str) -> Result<MmidsConfig, Box<ConfigParseError>> {
     let mut config = MmidsConfig {
         settings: HashMap::new(),
         reactors: HashMap::new(),
         workflows: HashMap::new(),
     };
 
-    let pairs = RawConfigParser::parse(Rule::content, content)?;
+    let pairs = RawConfigParser::parse(Rule::content, content)
+        .map_err(|error| Box::new(ConfigParseError::InvalidConfig(error)))?;
+
     for pair in pairs {
         let rule = pair.as_rule();
         match &rule {
             Rule::node_block => handle_node_block(&mut config, pair)?,
             Rule::EOI => (),
             x => {
-                return Err(ConfigParseError::UnexpectedRule {
+                return Err(Box::new(ConfigParseError::UnexpectedRule {
                     rule: *x,
                     section: "root".to_string(),
-                })
+                }))
             }
         }
     }
@@ -108,7 +110,10 @@ pub fn parse(content: &str) -> Result<MmidsConfig, ConfigParseError> {
     Ok(config)
 }
 
-fn handle_node_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(), ConfigParseError> {
+fn handle_node_block(
+    config: &mut MmidsConfig,
+    pair: Pair<Rule>,
+) -> Result<(), Box<ConfigParseError>> {
     let mut rules = pair.into_inner();
     let name_node = rules.next().unwrap(); // grammar requires a node name
     let name = name_node.as_str().trim();
@@ -118,32 +123,35 @@ fn handle_node_block(config: &mut MmidsConfig, pair: Pair<Rule>) -> Result<(), C
         "workflow" => read_workflow(config, rules, name_node.as_span().start_pos().line_col().0)?,
         "reactor" => read_reactor(config, rules, name_node.as_span().start_pos().line_col().0)?,
         _ => {
-            return Err(ConfigParseError::InvalidNodeName {
+            return Err(Box::new(ConfigParseError::InvalidNodeName {
                 name: name.to_string(),
                 line: name_node.as_span().start_pos().line_col().0,
-            })
+            }));
         }
     }
 
     Ok(())
 }
 
-fn read_settings(config: &mut MmidsConfig, pairs: Pairs<Rule>) -> Result<(), ConfigParseError> {
+fn read_settings(
+    config: &mut MmidsConfig,
+    pairs: Pairs<Rule>,
+) -> Result<(), Box<ConfigParseError>> {
     for pair in pairs {
         match pair.as_rule() {
             Rule::child_node => {
                 let child_node = read_child_node(pair.clone())?;
                 if child_node.arguments.len() > 1 {
-                    return Err(ConfigParseError::TooManySettingArguments {
+                    return Err(Box::new(ConfigParseError::TooManySettingArguments {
                         line: get_line_number(&pair),
-                    });
+                    }));
                 }
 
                 if let Some(key) = child_node.arguments.keys().next() {
                     if let Some(Some(_value)) = child_node.arguments.get(key) {
-                        return Err(ConfigParseError::InvalidSettingArgumentFormat {
+                        return Err(Box::new(ConfigParseError::InvalidSettingArgumentFormat {
                             line: get_line_number(&pair),
-                        });
+                        }));
                     }
 
                     config.settings.insert(child_node.name, Some(key.clone()));
@@ -153,16 +161,18 @@ fn read_settings(config: &mut MmidsConfig, pairs: Pairs<Rule>) -> Result<(), Con
             }
 
             Rule::argument => {
-                return Err(ConfigParseError::ArgumentsSpecifiedOnSettingNode {
-                    line: get_line_number(&pair),
-                })
+                return Err(Box::new(
+                    ConfigParseError::ArgumentsSpecifiedOnSettingNode {
+                        line: get_line_number(&pair),
+                    },
+                ));
             }
 
             rule => {
-                return Err(ConfigParseError::UnexpectedRule {
+                return Err(Box::new(ConfigParseError::UnexpectedRule {
                     rule,
                     section: "settings".to_string(),
-                })
+                }));
             }
         }
     }
@@ -174,7 +184,7 @@ fn read_workflow(
     config: &mut MmidsConfig,
     pairs: Pairs<Rule>,
     starting_line: usize,
-) -> Result<(), ConfigParseError> {
+) -> Result<(), Box<ConfigParseError>> {
     let mut steps = Vec::new();
     let mut workflow_name = None;
     let mut routed_by_reactor = false;
@@ -193,9 +203,11 @@ fn read_workflow(
                 if workflow_name.is_some() {
                     if &key == "routed_by_reactor" {
                         if value.is_some() {
-                            return Err(ConfigParseError::InvalidRoutedByReactorArgument {
-                                line: get_line_number(&pair),
-                            });
+                            return Err(Box::new(
+                                ConfigParseError::InvalidRoutedByReactorArgument {
+                                    line: get_line_number(&pair),
+                                },
+                            ));
                         }
 
                         routed_by_reactor = true;
@@ -211,10 +223,10 @@ fn read_workflow(
                     }
                 } else {
                     if value.is_some() {
-                        return Err(ConfigParseError::InvalidWorkflowName {
+                        return Err(Box::new(ConfigParseError::InvalidWorkflowName {
                             name: pair.as_str().to_string(),
                             line: get_line_number(&pair),
-                        });
+                        }));
                     }
 
                     workflow_name = Some(key);
@@ -222,17 +234,17 @@ fn read_workflow(
             }
 
             rule => {
-                return Err(ConfigParseError::UnexpectedRule {
+                return Err(Box::new(ConfigParseError::UnexpectedRule {
                     rule,
                     section: "workflow".to_string(),
-                })
+                }));
             }
         }
     }
 
     if let Some(name) = workflow_name {
         if config.workflows.contains_key(&name) {
-            return Err(ConfigParseError::DuplicateWorkflowName { name });
+            return Err(Box::new(ConfigParseError::DuplicateWorkflowName { name }));
         }
 
         config.workflows.insert(
@@ -244,9 +256,9 @@ fn read_workflow(
             },
         );
     } else {
-        return Err(ConfigParseError::NoNameOnWorkflow {
+        return Err(Box::new(ConfigParseError::NoNameOnWorkflow {
             line: starting_line,
-        });
+        }));
     }
 
     Ok(())
@@ -256,7 +268,7 @@ fn read_reactor(
     config: &mut MmidsConfig,
     pairs: Pairs<Rule>,
     starting_line: usize,
-) -> Result<(), ConfigParseError> {
+) -> Result<(), Box<ConfigParseError>> {
     let mut name = None;
     let mut parameters = HashMap::new();
     let mut executor_name = None;
@@ -269,10 +281,10 @@ fn read_reactor(
                 if name.is_none() {
                     // Name must come first and only have a key, no pair
                     if value.is_some() {
-                        return Err(ConfigParseError::InvalidReactorName {
+                        return Err(Box::new(ConfigParseError::InvalidReactorName {
                             line: get_line_number(&pair),
                             name: pair.as_str().to_string(),
-                        });
+                        }));
                     }
 
                     name = Some(key);
@@ -285,16 +297,16 @@ fn read_reactor(
                         if let Ok(num) = value.parse() {
                             update_interval = num;
                         } else {
-                            return Err(ConfigParseError::InvalidUpdateIntervalValue {
+                            return Err(Box::new(ConfigParseError::InvalidUpdateIntervalValue {
                                 line: get_line_number(&pair),
                                 argument: value,
-                            });
+                            }));
                         }
                     } else {
-                        return Err(ConfigParseError::InvalidUpdateIntervalValue {
+                        return Err(Box::new(ConfigParseError::InvalidUpdateIntervalValue {
                             line: get_line_number(&pair),
                             argument: "".to_string(),
-                        });
+                        }));
                     }
                 } else {
                     let line = get_line_number(&pair);
@@ -312,16 +324,18 @@ fn read_reactor(
                 let line_number = pair.as_span().start_pos().line_col().0;
                 let child_node = read_child_node(pair)?;
                 if child_node.arguments.len() > 1 {
-                    return Err(ConfigParseError::TooManyReactorParameterValues {
+                    return Err(Box::new(ConfigParseError::TooManyReactorParameterValues {
                         line: line_number,
-                    });
+                    }));
                 }
 
                 if let Some(key) = child_node.arguments.keys().next() {
                     if let Some(Some(_)) = child_node.arguments.get(key) {
-                        return Err(ConfigParseError::InvalidReactorParameterValueFormat {
-                            line: line_number,
-                        });
+                        return Err(Box::new(
+                            ConfigParseError::InvalidReactorParameterValueFormat {
+                                line: line_number,
+                            },
+                        ));
                     }
 
                     parameters.insert(child_node.name, Some(key.clone()));
@@ -331,17 +345,17 @@ fn read_reactor(
             }
 
             rule => {
-                return Err(ConfigParseError::UnexpectedRule {
+                return Err(Box::new(ConfigParseError::UnexpectedRule {
                     rule,
                     section: "settings".to_string(),
-                })
+                }));
             }
         }
     }
 
     if let Some(name) = name {
         if config.reactors.contains_key(&name) {
-            return Err(ConfigParseError::DuplicateReactorName { name });
+            return Err(Box::new(ConfigParseError::DuplicateReactorName { name }));
         }
 
         if let Some(executor) = executor_name {
@@ -355,20 +369,20 @@ fn read_reactor(
                 },
             );
         } else {
-            return Err(ConfigParseError::NoExecutorForReactor {
+            return Err(Box::new(ConfigParseError::NoExecutorForReactor {
                 line: starting_line,
-            });
+            }));
         }
     } else {
-        return Err(ConfigParseError::NoNameOnReactor {
+        return Err(Box::new(ConfigParseError::NoNameOnReactor {
             line: starting_line,
-        });
+        }));
     }
 
     Ok(())
 }
 
-fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), ConfigParseError> {
+fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), Box<ConfigParseError>> {
     let result;
     // Each argument should have a single child rule based on grammar
     let argument = pair.into_inner().next().unwrap();
@@ -400,10 +414,10 @@ fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), ConfigPar
                     }
 
                     rule => {
-                        return Err(ConfigParseError::UnexpectedRule {
+                        return Err(Box::new(ConfigParseError::UnexpectedRule {
                             rule,
                             section: "argument".to_string(),
-                        })
+                        }))
                     }
                 }
             }
@@ -412,17 +426,17 @@ fn read_argument(pair: Pair<Rule>) -> Result<(String, Option<String>), ConfigPar
         }
 
         _ => {
-            return Err(ConfigParseError::UnexpectedRule {
+            return Err(Box::new(ConfigParseError::UnexpectedRule {
                 rule: argument.as_rule(),
                 section: "child_node argument".to_string(),
-            })
+            }));
         }
     }
 
     Ok(result)
 }
 
-fn read_child_node(child_node: Pair<Rule>) -> Result<ChildNode, ConfigParseError> {
+fn read_child_node(child_node: Pair<Rule>) -> Result<ChildNode, Box<ConfigParseError>> {
     let mut pairs = child_node.into_inner();
     let name_node = pairs.next().unwrap(); // Grammar requires a node name first
     let mut parsed_node = ChildNode {
@@ -438,10 +452,10 @@ fn read_child_node(child_node: Pair<Rule>) -> Result<ChildNode, ConfigParseError
             }
 
             rule => {
-                return Err(ConfigParseError::UnexpectedRule {
+                return Err(Box::new(ConfigParseError::UnexpectedRule {
                     rule,
                     section: "child_node".to_string(),
-                })
+                }));
             }
         }
     }
@@ -649,15 +663,19 @@ workflow name {
 }
 ";
         match parse(content) {
-            Err(ConfigParseError::DuplicateWorkflowName { name }) => {
-                if name.as_str() != "name" {
-                    panic!("Unexpected name in workflow: '{}'", name);
+            Err(error) => match *error {
+                ConfigParseError::DuplicateWorkflowName { name } => {
+                    if name.as_str() != "name" {
+                        panic!("Unexpected name in workflow: '{}'", name);
+                    }
                 }
-            }
-            Err(e) => panic!(
-                "Expected duplicate workflow name error, instead got: {:?}",
-                e
-            ),
+
+                other => panic!(
+                    "Expected duplicate workflow name error, instead got: {:?}",
+                    other
+                ),
+            },
+
             Ok(_) => panic!("Received successful parse, but an error was expected"),
         }
     }

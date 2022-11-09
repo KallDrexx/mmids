@@ -47,7 +47,7 @@ impl StepGenerator for TestInputStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let step = TestInputStep {
             status: StepStatus::Created,
-            definition: definition.clone(),
+            definition,
         };
 
         let futures = vec![
@@ -63,7 +63,7 @@ impl StepGenerator for TestOutputStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let step = TestOutputStep {
             status: StepStatus::Created,
-            definition: definition.clone(),
+            definition,
             media: self.media_sender.clone(),
         };
 

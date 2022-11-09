@@ -15,6 +15,7 @@ use crate::StreamId;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -64,7 +65,7 @@ pub struct WorkflowStepState {
     pub status: StepStatus,
 }
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum WorkflowStatus {
     Running,
     Error {
@@ -196,8 +197,8 @@ impl Actor {
                 };
 
                 for id in &self.pending_steps {
-                    if let Some(definition) = self.step_definitions.get(&id) {
-                        if let Some(step) = self.steps_by_definition_id.get(&id) {
+                    if let Some(definition) = self.step_definitions.get(id) {
+                        if let Some(step) = self.steps_by_definition_id.get(id) {
                             state.pending_steps.push(WorkflowStepState {
                                 step_id: *id,
                                 definition: definition.clone(),
@@ -218,8 +219,8 @@ impl Actor {
                 }
 
                 for id in &self.active_steps {
-                    if let Some(definition) = self.step_definitions.get(&id) {
-                        if let Some(step) = self.steps_by_definition_id.get(&id) {
+                    if let Some(definition) = self.step_definitions.get(id) {
+                        if let Some(step) = self.steps_by_definition_id.get(id) {
                             state.active_steps.push(WorkflowStepState {
                                 step_id: *id,
                                 definition: definition.clone(),
@@ -263,7 +264,7 @@ impl Actor {
                 self.update_inbound_media_cache(&media);
                 self.step_inputs.clear();
                 self.step_inputs.media.push(media);
-                if let Some(id) = self.active_steps.get(0) {
+                if let Some(id) = self.active_steps.first() {
                     let id = *id;
                     self.execute_steps(id, None, true, true);
                 }
@@ -313,7 +314,7 @@ impl Actor {
 
             self.pending_steps.push(id);
 
-            if !self.steps_by_definition_id.contains_key(&id) {
+            if let Entry::Vacant(entry) = self.steps_by_definition_id.entry(id) {
                 let span = span!(Level::INFO, "Step Creation", step_id = id);
                 let _enter = span.enter();
 
@@ -354,7 +355,7 @@ impl Actor {
                     self.futures.push(wait_for_step_future(id, future).boxed());
                 }
 
-                self.steps_by_definition_id.insert(id, step);
+                entry.insert(step);
                 info!("Step type '{}' created", step_type);
             }
         }
@@ -444,9 +445,7 @@ impl Actor {
         self.update_stream_details(step_id);
         self.update_media_cache_from_outputs(step_id);
         self.step_inputs.clear();
-        self.step_inputs
-            .media
-            .extend(self.step_outputs.media.drain(..));
+        self.step_inputs.media.append(&mut self.step_outputs.media);
 
         self.step_outputs.clear();
     }
@@ -486,8 +485,8 @@ impl Actor {
             }
         }
 
-        if (self.pending_steps.len() > 0 && all_are_active)
-            || (self.pending_steps.len() == 0 && swap_if_pending_is_empty)
+        if (!self.pending_steps.is_empty() && all_are_active)
+            || (self.pending_steps.is_empty() && swap_if_pending_is_empty)
         {
             // Since we have pending steps and all are now ready to become active, we need to
             // swap all active steps for pending steps to make them active.
@@ -557,16 +556,12 @@ impl Actor {
                         self.cached_inbound_media
                             .values()
                             .flatten()
-                            .map(|x| x.clone())
+                            .cloned()
                             .collect::<Vec<_>>()
                     } else {
                         let previous_step_id = self.pending_steps[index - 1];
                         if let Some(cache) = self.cached_step_media.get(&previous_step_id) {
-                            cache
-                                .values()
-                                .flatten()
-                                .map(|x| x.clone())
-                                .collect::<Vec<_>>()
+                            cache.values().flatten().cloned().collect::<Vec<_>>()
                         } else {
                             Vec::new()
                         }
@@ -661,10 +656,7 @@ impl Actor {
     }
 
     fn update_media_cache_from_outputs(&mut self, step_id: u64) {
-        let step_cache = self
-            .cached_step_media
-            .entry(step_id)
-            .or_insert(HashMap::new());
+        let step_cache = self.cached_step_media.entry(step_id).or_default();
 
         for media in &self.step_outputs.media {
             enum Operation {
@@ -715,9 +707,7 @@ impl Actor {
                 }
 
                 Operation::Add => {
-                    let collection = step_cache
-                        .entry(media.stream_id.clone())
-                        .or_insert(Vec::new());
+                    let collection = step_cache.entry(media.stream_id.clone()).or_default();
 
                     collection.push(media.clone());
                 }

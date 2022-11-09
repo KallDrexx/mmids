@@ -37,7 +37,7 @@ pub struct StreamId(pub String);
 
 /// Represents timestamps relevant to video data.  Contains the decoding time stamp (dts) and
 /// presentation time stamp (dts).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VideoTimestamp {
     dts: Duration,
     pts_offset: i32,
@@ -49,7 +49,7 @@ impl VideoTimestamp {
     /// timestamp is the decoding timestamp (dts), while the composition time offset is added to the
     /// dts to get the presentation timestamp (pts).
     pub fn from_rtmp_data(rtmp_timestamp: RtmpTimestamp, mut composition_time_offset: i32) -> Self {
-        if composition_time_offset < -8388608 || composition_time_offset > 8388607 {
+        if !(-8388608..838607).contains(&composition_time_offset) {
             error!("Composition time offset of {composition_time_offset} is out of 24 bit range.  Leaving at zero");
             composition_time_offset = 0;
         }
@@ -63,7 +63,7 @@ impl VideoTimestamp {
     /// Creates a new video timestamp based on absolute dts and pts values.
     pub fn from_durations(dts: Duration, pts: Duration) -> Self {
         let mut pts_offset = pts.as_millis() as i64 - dts.as_millis() as i64;
-        if pts_offset < -8388608 || pts_offset > 8388607 {
+        if !(-8388608..838607).contains(&pts_offset) {
             error!("PTS ({pts:?}) and DTS ({dts:?}) differ by more than a 24 bit number. Setting pts = dts");
             pts_offset = 0;
         }
@@ -93,7 +93,7 @@ impl VideoTimestamp {
         if self.pts_offset > 0 {
             dts += Wrapping(self.pts_offset as u64);
         } else {
-            dts -= Wrapping((self.pts_offset * -1) as u64);
+            dts -= Wrapping((-self.pts_offset) as u64);
         }
 
         Duration::from_millis(dts.0)

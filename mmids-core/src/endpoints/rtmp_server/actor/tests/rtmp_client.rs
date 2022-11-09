@@ -182,7 +182,7 @@ impl RtmpTestClient {
             HandshakeProcessResult::Completed {
                 remaining_bytes, ..
             } => {
-                if remaining_bytes.len() > 0 {
+                if !remaining_bytes.is_empty() {
                     panic!("Expected no leftover bytes after handshake completed");
                 }
             }
@@ -216,14 +216,10 @@ impl RtmpTestClient {
                 .expect("Error processing bytes");
 
             for result in results {
-                match result {
-                    ClientSessionResult::OutboundResponse(packet) => {
-                        incoming_sender
-                            .send(Bytes::from(packet.bytes))
-                            .expect("Incoming bytes channel closed");
-                    }
-
-                    _ => (),
+                if let ClientSessionResult::OutboundResponse(packet) = result {
+                    incoming_sender
+                        .send(Bytes::from(packet.bytes))
+                        .expect("Incoming bytes channel closed");
                 }
             }
         }
@@ -249,12 +245,11 @@ impl RtmpTestClient {
             // Client will send back an event and a window acknowledgement message
             let mut event_raised = false;
             for result in results {
-                match result {
-                    ClientSessionResult::RaisedEvent(
-                        ClientSessionEvent::ConnectionRequestAccepted,
-                    ) => event_raised = true,
-
-                    _ => (),
+                if let ClientSessionResult::RaisedEvent(
+                    ClientSessionEvent::ConnectionRequestAccepted,
+                ) = result
+                {
+                    event_raised = true;
                 }
             }
 
@@ -340,12 +335,11 @@ impl RtmpTestClient {
 
             let mut accepted_event_received = false;
             for result in all_results {
-                match result {
-                    ClientSessionResult::RaisedEvent(
-                        ClientSessionEvent::PlaybackRequestAccepted,
-                    ) => accepted_event_received = true,
-
-                    _ => (),
+                if let ClientSessionResult::RaisedEvent(
+                    ClientSessionEvent::PlaybackRequestAccepted,
+                ) = result
+                {
+                    accepted_event_received = true;
                 }
             }
 
@@ -449,13 +443,12 @@ impl RtmpTestClient {
                 .expect("Failed to handle packet");
 
             for result in results {
-                match result {
-                    ClientSessionResult::RaisedEvent(event) => return Some(event),
-                    _ => (),
+                if let ClientSessionResult::RaisedEvent(event) = result {
+                    return Some(event);
                 }
             }
         }
 
-        return None;
+        None
     }
 }

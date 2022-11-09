@@ -29,6 +29,7 @@ pub trait ReactorExecutorGenerator {
     ) -> Result<Box<dyn ReactorExecutor>, Box<dyn std::error::Error + Sync + Send>>;
 }
 
+#[derive(Default)]
 pub struct ReactorExecutorFactory {
     generators: HashMap<String, Box<dyn ReactorExecutorGenerator>>,
 }
@@ -63,9 +64,7 @@ impl ReactorExecutionResult {
 
 impl ReactorExecutorFactory {
     pub fn new() -> Self {
-        ReactorExecutorFactory {
-            generators: HashMap::new(),
-        }
+        Default::default()
     }
 
     pub fn register(
@@ -84,10 +83,10 @@ impl ReactorExecutorFactory {
     pub fn get_generator(
         &self,
         name: &str,
-    ) -> Result<&Box<dyn ReactorExecutorGenerator>, GenerationError> {
+    ) -> Result<&dyn ReactorExecutorGenerator, GenerationError> {
         match self.generators.get(name) {
-            Some(generator) => Ok(generator),
-            None => return Err(GenerationError::NoRegisteredGenerator(name.to_string())),
+            Some(generator) => Ok(generator.as_ref()),
+            None => Err(GenerationError::NoRegisteredGenerator(name.to_string())),
         }
     }
 }

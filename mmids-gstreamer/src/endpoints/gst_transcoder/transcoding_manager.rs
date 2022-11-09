@@ -258,7 +258,7 @@ async fn notify_bus_message(mut bus: BusStream) -> TranscoderFutureResult {
                     source_name: error
                         .src()
                         .map(|s| s.path_string().to_string())
-                        .unwrap_or("<none>".to_string()),
+                        .unwrap_or_else(|| "<none>".to_string()),
 
                     error_description: error.error().to_string(),
                     debug_info: error.debug(),

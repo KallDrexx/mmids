@@ -58,7 +58,7 @@ impl AudioCopyEncoder {
 
         let appsink = appsink
             .dynamic_cast::<AppSink>()
-            .or_else(|_| Err(anyhow!("Audio copy encoder's appsink could not be casted")))?;
+            .map_err(|_| anyhow!("Audio copy encoder's appsink could not be casted"))?;
 
         let codec_data: Arc<Mutex<Option<CodecInfo>>> = Arc::new(Mutex::new(None));
         let copy_of_codec_data = codec_data.clone();
@@ -83,24 +83,22 @@ impl AudioCopyEncoder {
 
                         if let Some(info) = &*data {
                             let _ = media_sender.send(MediaNotificationContent::Audio {
-                                codec: info.codec.clone(),
+                                codec: info.codec,
                                 data: info.sequence_header.clone(),
                                 timestamp: Duration::new(0, 0),
                                 is_sequence_header: true,
                             });
 
-                            codec = info.codec.clone();
+                            codec = info.codec;
                             sent_codec_data = true;
-                        } else {
-                            if !codec_data_error_raised {
-                                error!("Received data prior to codec data being set. This shouldn't happen");
-                                codec_data_error_raised = true;
-                            }
+                        } else if !codec_data_error_raised {
+                            error!("Received data prior to codec data being set. This shouldn't happen");
+                            codec_data_error_raised = true;
                         }
                     }
 
                     let sample = SampleResult::from_sink(sink)
-                        .or_else(|_| Err(FlowError::CustomError))?;
+                        .map_err(|_| FlowError::CustomError)?;
 
                     let _ = media_sender.send(MediaNotificationContent::Audio {
                         codec,
@@ -116,7 +114,7 @@ impl AudioCopyEncoder {
 
         let appsrc = appsrc
             .dynamic_cast::<AppSrc>()
-            .or_else(|_| Err(anyhow!("Audio copy encoder's appsrc could not be casted")))?;
+            .map_err(|_| anyhow!("Audio copy encoder's appsrc could not be casted"))?;
 
         Ok(AudioCopyEncoder {
             source: appsrc,
@@ -137,7 +135,7 @@ impl AudioEncoder for AudioCopyEncoder {
             let mut codec_data = self
                 .codec_data
                 .lock()
-                .or_else(|_| Err(anyhow!("Audio copy encoder's lock was poisoned")))?;
+                .map_err(|_| anyhow!("Audio copy encoder's lock was poisoned"))?;
 
             *codec_data = Some(CodecInfo {
                 codec,

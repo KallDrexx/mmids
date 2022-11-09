@@ -109,28 +109,28 @@ enum StepStartupError {
         "No RTMP app specified.  A non-empty parameter of '{}' is required",
         PORT_PROPERTY_NAME
     )]
-    NoRtmpAppSpecified,
+    NoRtmpApp,
 
     #[error(
         "No stream key specified.  A non-empty parameter of '{}' is required",
         APP_PROPERTY_NAME
     )]
-    NoStreamKeySpecified,
+    NoStreamKey,
 
     #[error(
         "Invalid port value of '{0}' specified.  A number from 0 to 65535 should be specified"
     )]
-    InvalidPortSpecified(String),
+    InvalidPort(String),
 
     #[error("Failed to parse ip address")]
-    InvalidIpAddressSpecified(#[from] IpAddressParseError),
+    InvalidIpAddress(#[from] IpAddressParseError),
 
     #[error(
         "Both {} and {} were specified, but only one is allowed",
         IP_ALLOW_PROPERTY_NAME,
         IP_DENY_PROPERTY_NAME
     )]
-    BothDenyAndAllowIpRestrictionsSpecified,
+    BothDenyAndAllowIpRestrictions,
 }
 
 impl RtmpWatchStepGenerator {
@@ -147,18 +147,12 @@ impl RtmpWatchStepGenerator {
 
 impl StepGenerator for RtmpWatchStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
-        let use_rtmps = match definition.parameters.get(RTMPS_FLAG) {
-            Some(_) => true,
-            None => false,
-        };
-
+        let use_rtmps = definition.parameters.get(RTMPS_FLAG).is_some();
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(Some(value)) => match value.parse::<u16>() {
                 Ok(num) => num,
                 Err(_) => {
-                    return Err(Box::new(StepStartupError::InvalidPortSpecified(
-                        value.clone(),
-                    )));
+                    return Err(Box::new(StepStartupError::InvalidPort(value.clone())));
                 }
             },
 
@@ -173,12 +167,12 @@ impl StepGenerator for RtmpWatchStepGenerator {
 
         let app = match definition.parameters.get(APP_PROPERTY_NAME) {
             Some(Some(x)) => x.trim(),
-            _ => return Err(Box::new(StepStartupError::NoRtmpAppSpecified)),
+            _ => return Err(Box::new(StepStartupError::NoRtmpApp)),
         };
 
         let stream_key = match definition.parameters.get(STREAM_KEY_PROPERTY_NAME) {
             Some(Some(x)) => x.trim(),
-            _ => return Err(Box::new(StepStartupError::NoStreamKeySpecified)),
+            _ => return Err(Box::new(StepStartupError::NoStreamKey)),
         };
 
         let stream_key = if stream_key == "*" {
@@ -197,11 +191,9 @@ impl StepGenerator for RtmpWatchStepGenerator {
             _ => Vec::new(),
         };
 
-        let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
+        let ip_restriction = match (!allowed_ips.is_empty(), !denied_ips.is_empty()) {
             (true, true) => {
-                return Err(Box::new(
-                    StepStartupError::BothDenyAndAllowIpRestrictionsSpecified,
-                ));
+                return Err(Box::new(StepStartupError::BothDenyAndAllowIpRestrictions));
             }
             (true, false) => IpRestriction::Allow(allowed_ips),
             (false, true) => IpRestriction::Deny(denied_ips),
@@ -215,11 +207,12 @@ impl StepGenerator for RtmpWatchStepGenerator {
 
         let (media_sender, media_receiver) = unbounded_channel();
 
+        let app = app.to_owned();
         let step = RtmpWatchStep {
-            definition: definition.clone(),
+            definition,
             status: StepStatus::Created,
             port,
-            rtmp_app: app.to_string(),
+            rtmp_app: app,
             rtmp_endpoint_sender: self.rtmp_endpoint_sender.clone(),
             reactor_manager: self.reactor_manager.clone(),
             media_channel: media_sender,
@@ -442,7 +435,7 @@ impl RtmpWatchStep {
                         data: RtmpEndpointMediaData::NewVideoData {
                             is_keyframe: *is_keyframe,
                             is_sequence_header: *is_sequence_header,
-                            codec: codec.clone(),
+                            codec: *codec,
                             data: data.clone(),
                             timestamp: RtmpTimestamp::new(timestamp.dts.as_millis() as u32),
                             composition_time_offset: timestamp.pts_offset,
@@ -467,7 +460,7 @@ impl RtmpWatchStep {
                         stream_key: stream_key.clone(),
                         data: RtmpEndpointMediaData::NewAudioData {
                             is_sequence_header: *is_sequence_header,
-                            codec: codec.clone(),
+                            codec: *codec,
                             data: data.clone(),
                             timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
                         },
@@ -588,7 +581,7 @@ impl WorkflowStep for RtmpWatchStep {
                 }
 
                 RtmpWatchStepFutureResult::ReactorReceiverCanceled { stream_name } => {
-                    if let Some(_) = self.stream_watchers.remove(&stream_name) {
+                    if self.stream_watchers.remove(&stream_name).is_some() {
                         info!(
                             "Stream {}'s reactor updating has been cancelled",
                             stream_name

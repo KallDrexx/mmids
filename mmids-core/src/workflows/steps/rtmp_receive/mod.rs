@@ -138,11 +138,7 @@ impl RtmpReceiverStepGenerator {
 
 impl StepGenerator for RtmpReceiverStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
-        let use_rtmps = match definition.parameters.get(RTMPS_FLAG) {
-            Some(_) => true,
-            None => false,
-        };
-
+        let use_rtmps = definition.parameters.get(RTMPS_FLAG).is_some();
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(Some(value)) => match value.parse::<u16>() {
                 Ok(num) => num,
@@ -180,7 +176,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             _ => Vec::new(),
         };
 
-        let ip_restriction = match (allowed_ips.len() > 0, denied_ips.len() > 0) {
+        let ip_restriction = match (!allowed_ips.is_empty(), !denied_ips.is_empty()) {
             (true, true) => {
                 return Err(Box::new(StepStartupError::BothDenyAndAllowIpRestrictions));
             }
@@ -194,19 +190,21 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             _ => None,
         };
 
+        let app = app.to_string();
+        let stream_key = stream_key.to_owned();
         let step = RtmpReceiverStep {
-            definition: definition.clone(),
+            definition,
             status: StepStatus::Created,
             rtmp_endpoint_sender: self.rtmp_endpoint_sender.clone(),
             reactor_manager: self.reactor_manager.clone(),
             port,
-            rtmp_app: app.to_string(),
+            rtmp_app: app,
             connection_details: HashMap::new(),
             reactor_name,
             stream_key: if stream_key == "*" {
                 StreamKeyRegistration::Any
             } else {
-                StreamKeyRegistration::Exact(stream_key.to_string())
+                StreamKeyRegistration::Exact(stream_key)
             },
         };
 
@@ -247,15 +245,11 @@ impl RtmpReceiverStep {
                     message: "Rtmp receive step failed to register for publish registration"
                         .to_string(),
                 };
-
-                return;
             }
 
             RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
                 info!("Rtmp receive step successfully registered for publishing");
                 self.status = StepStatus::Active;
-
-                return;
             }
 
             RtmpEndpointPublisherMessage::NewPublisherConnected {

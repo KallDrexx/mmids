@@ -23,10 +23,10 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
-pub const VIDEO_ENCODER: &'static str = "video";
-pub const AUDIO_ENCODER: &'static str = "audio";
-pub const VIDEO_PARAM_PREFIX: &'static str = "video_";
-pub const AUDIO_PARAM_PREFIX: &'static str = "audio_";
+pub const VIDEO_ENCODER: &str = "video";
+pub const AUDIO_ENCODER: &str = "audio";
+pub const VIDEO_PARAM_PREFIX: &str = "video_";
+pub const AUDIO_PARAM_PREFIX: &str = "audio_";
 
 /// Creates a new instance of the basic transcode workflow step.
 pub struct BasicTranscodeStepGenerator {
@@ -112,7 +112,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         }
 
         let step = BasicTranscodeStep {
-            definition: definition.clone(),
+            definition,
             status: StepStatus::Active,
             transcoder_endpoint: self.transcode_endpoint.clone(),
             active_transcodes: HashMap::new(),
@@ -130,11 +130,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
 
 impl BasicTranscodeStep {
     fn stop_all_transcodes(&mut self) {
-        let stream_ids = self
-            .active_transcodes
-            .keys()
-            .map(|k| k.clone())
-            .collect::<Vec<_>>();
+        let stream_ids = self.active_transcodes.keys().cloned().collect::<Vec<_>>();
 
         for stream_id in stream_ids {
             self.stop_transcode(stream_id);
@@ -149,7 +145,7 @@ impl BasicTranscodeStep {
             let _ = self
                 .transcoder_endpoint
                 .send(GstTranscoderRequest::StopTranscoding {
-                    id: transcode.transcode_process_id.clone(),
+                    id: transcode.transcode_process_id,
                 });
         }
     }
@@ -175,7 +171,7 @@ impl BasicTranscodeStep {
         self.active_transcodes.insert(
             stream_id.clone(),
             ActiveTranscode {
-                transcode_process_id: process_id.clone(),
+                transcode_process_id: process_id,
                 media_sender,
                 stream_name: stream_name.clone(),
             },
