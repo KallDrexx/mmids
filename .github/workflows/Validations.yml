@@ -29,4 +29,7 @@ jobs:
       run: cargo test --verbose
     - name: Formatting validations
       run: cargo fmt -- --check
+    - name: Clippy Validations
+      run: cargo clippy --all-targets --all-features
+
       
