@@ -4,19 +4,19 @@
 //! Any incoming media packets are passed to the rtmp endpoint for sending to ffmpeg, and then
 //! passed along as is for the next workflow step.
 
-use mmids_rtmp::workflow_steps::external_stream_reader::ExternalStreamReader;
 use crate::endpoint::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,
 };
-use mmids_rtmp::rtmp_server::RtmpEndpointRequest;
+use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
+use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::steps::factory::StepGenerator;
-use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use mmids_core::StreamId;
-use futures::FutureExt;
+use mmids_rtmp::rtmp_server::RtmpEndpointRequest;
+use mmids_rtmp::workflow_steps::external_stream_reader::ExternalStreamReader;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;

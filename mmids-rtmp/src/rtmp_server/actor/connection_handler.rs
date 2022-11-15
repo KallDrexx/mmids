@@ -1,20 +1,20 @@
-use mmids_core::net::ConnectionId;
-use rml_rtmp::sessions::{
-    PublishMode, ServerSession, ServerSessionConfig, ServerSessionEvent, ServerSessionResult,
-    StreamMetadata,
-};
-use std::io::Cursor;
 use super::RtmpEndpointPublisherMessage;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
 use crate::rtmp_server::RtmpEndpointMediaData;
-use mmids_core::net::tcp::OutboundPacket;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
+use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::net::tcp::OutboundPacket;
+use mmids_core::net::ConnectionId;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
+use rml_rtmp::sessions::{
+    PublishMode, ServerSession, ServerSessionConfig, ServerSessionEvent, ServerSessionResult,
+    StreamMetadata,
+};
 use rml_rtmp::time::RtmpTimestamp;
+use std::io::Cursor;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, error, info, instrument};
 
@@ -1142,8 +1142,8 @@ fn wrap_audio_into_flv(
 mod internal_futures {
     use super::{ConnectionResponse, FutureResult};
     use crate::rtmp_server::RtmpEndpointMediaData;
-    use mmids_core::net::tcp::OutboundPacket;
     use bytes::Bytes;
+    use mmids_core::net::tcp::OutboundPacket;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
     pub(super) async fn wait_for_request_response(

@@ -6,17 +6,16 @@
 use crate::endpoint::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,
 };
-use mmids_rtmp::rtmp_server::RtmpEndpointRequest;
+use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
+use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::steps::factory::StepGenerator;
-use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
-use mmids_rtmp::workflow_steps::external_stream_reader::ExternalStreamReader;
 use mmids_core::workflows::steps::{
-    StepCreationResult, StepFutureResult, StepInputs, StepOutputs,
-    StepStatus, WorkflowStep,
+    StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use mmids_core::StreamId;
-use futures::FutureExt;
+use mmids_rtmp::rtmp_server::RtmpEndpointRequest;
+use mmids_rtmp::workflow_steps::external_stream_reader::ExternalStreamReader;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;

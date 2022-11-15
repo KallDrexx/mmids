@@ -1,12 +1,15 @@
 use super::external_stream_handler::{ExternalStreamHandler, StreamHandlerFutureWrapper};
-use crate::rtmp_server::{IpRestriction, RegistrationType, RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration};
+use crate::rtmp_server::{
+    IpRestriction, RegistrationType, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
+    RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration,
+};
 use crate::workflow_steps::external_stream_handler::{
     ExternalStreamHandlerGenerator, ResolvedFutureStatus,
 };
+use futures::FutureExt;
 use mmids_core::workflows::steps::{FutureList, StepFutureResult, StepOutputs, StepStatus};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
-use futures::FutureExt;
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
@@ -377,14 +380,14 @@ async fn wait_for_watch_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmids_core::codecs::{AudioCodec, VideoCodec};
     use crate::rtmp_server::RtmpEndpointMediaData;
     use crate::utils::hash_map_to_stream_metadata;
     use crate::workflow_steps::external_stream_handler::StreamHandlerFutureResult;
-    use mmids_core::{test_utils, VideoTimestamp};
     use bytes::Bytes;
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
+    use mmids_core::codecs::{AudioCodec, VideoCodec};
+    use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
     use std::time::Duration;
 
@@ -857,7 +860,8 @@ mod tests {
                 assert!(is_keyframe, "Expected key frame to be true");
                 assert_eq!(codec, &VideoCodec::H264, "Expected h264 codec");
                 assert_eq!(
-                    composition_time_offset, &video_timestamp.pts_offset(),
+                    composition_time_offset,
+                    &video_timestamp.pts_offset(),
                     "Unexpected composition time offset"
                 );
             }

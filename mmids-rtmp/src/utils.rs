@@ -1,15 +1,18 @@
+use mmids_core::VideoTimestamp;
 use rml_rtmp::sessions::StreamMetadata;
+use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
-use rml_rtmp::time::RtmpTimestamp;
 use tracing::error;
-use mmids_core::VideoTimestamp;
 
 /// Creates a new video timestamp from RTMP data.  RTMP packets contain a timestamp in the
 /// RTMP header itself and a composition time offset in the `AVCVIDEOPACKET` header.  The RTMP
 /// timestamp is the decoding timestamp (dts), while the composition time offset is added to the
 /// dts to get the presentation timestamp (pts).
-pub fn video_timestamp_from_rtmp_data(rtmp_timestamp: RtmpTimestamp, mut composition_time_offset: i32) -> VideoTimestamp {
+pub fn video_timestamp_from_rtmp_data(
+    rtmp_timestamp: RtmpTimestamp,
+    mut composition_time_offset: i32,
+) -> VideoTimestamp {
     if !(-8388608..838607).contains(&composition_time_offset) {
         error!("Composition time offset of {composition_time_offset} is out of 24 bit range.  Leaving at zero");
         composition_time_offset = 0;

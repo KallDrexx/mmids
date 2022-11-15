@@ -106,29 +106,32 @@ pub trait WorkflowStep {
     fn shutdown(&mut self);
 }
 
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 use crate::workflows::steps::factory::StepGenerator;
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 use futures::stream::FuturesUnordered;
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 use futures::StreamExt;
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 use std::iter::FromIterator;
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 use std::time::Duration;
 
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 pub struct StepTestContext {
     pub step: Box<dyn WorkflowStep>,
     pub futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     pub media_outputs: Vec<MediaNotification>,
 }
 
-#[cfg(feature="test-utils")]
+#[cfg(feature = "test-utils")]
 impl StepTestContext {
-    pub fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Result<Self> {
+    pub fn new(
+        generator: Box<dyn StepGenerator>,
+        definition: WorkflowStepDefinition,
+    ) -> Result<Self> {
         let (step, futures) = generator
             .generate(definition)
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;

@@ -1,7 +1,9 @@
-use mmids_core::net::tcp::{OutboundPacket, RequestFailureReason, TcpSocketRequest, TcpSocketResponse};
+use bytes::Bytes;
+use mmids_core::net::tcp::{
+    OutboundPacket, RequestFailureReason, TcpSocketRequest, TcpSocketResponse,
+};
 use mmids_core::net::ConnectionId;
 use mmids_core::test_utils;
-use bytes::Bytes;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
 use rml_rtmp::sessions::{
     ClientSession, ClientSessionConfig, ClientSessionError, ClientSessionEvent,
