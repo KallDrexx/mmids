@@ -13,11 +13,10 @@ documentation = "https://kalldrexx.github.io/mmids/"
 test-utils = []
 
 [dependencies]
-tokio = { version = "1.15", features = ["full"] }
+tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros"] }
 futures = "0.3"
 bytes = "1"
-uuid = { version = "0.8", features = ["v4"] }
-rml_rtmp = "0.6.1"
+uuid = { version = "1.2", features = ["v4"] }
 downcast-rs = "1.2.0"
 thiserror = "1.0"
 pest = "2.1"

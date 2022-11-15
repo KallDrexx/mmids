@@ -2,8 +2,8 @@ mod http_handlers;
 
 use hyper::Method;
 use mmids_core::config::{parse as parse_config_file, MmidsConfig};
-use mmids_core::endpoints::ffmpeg::{start_ffmpeg_endpoint, FfmpegEndpointRequest};
-use mmids_core::endpoints::rtmp_server::{start_rtmp_server_endpoint, RtmpEndpointRequest};
+use mmids_ffmpeg::endpoint::{start_ffmpeg_endpoint, FfmpegEndpointRequest};
+use mmids_rtmp::rtmp_server::{start_rtmp_server_endpoint, RtmpEndpointRequest};
 use mmids_core::event_hub::{start_event_hub, PublishEventRequest, SubscriptionRequest};
 use mmids_core::http_api::handlers;
 use mmids_core::http_api::routing::{PathPart, Route, RoutingTable};
@@ -19,12 +19,12 @@ use mmids_core::workflows::manager::{
     start_workflow_manager, WorkflowManagerRequest, WorkflowManagerRequestOperation,
 };
 use mmids_core::workflows::steps::factory::WorkflowStepFactory;
-use mmids_core::workflows::steps::ffmpeg_hls::FfmpegHlsStepGenerator;
-use mmids_core::workflows::steps::ffmpeg_pull::FfmpegPullStepGenerator;
-use mmids_core::workflows::steps::ffmpeg_rtmp_push::FfmpegRtmpPushStepGenerator;
-use mmids_core::workflows::steps::ffmpeg_transcode::FfmpegTranscoderStepGenerator;
-use mmids_core::workflows::steps::rtmp_receive::RtmpReceiverStepGenerator;
-use mmids_core::workflows::steps::rtmp_watch::RtmpWatchStepGenerator;
+use mmids_ffmpeg::workflow_steps::ffmpeg_hls::FfmpegHlsStepGenerator;
+use mmids_ffmpeg::workflow_steps::ffmpeg_pull::FfmpegPullStepGenerator;
+use mmids_ffmpeg::workflow_steps::ffmpeg_rtmp_push::FfmpegRtmpPushStepGenerator;
+use mmids_ffmpeg::workflow_steps::ffmpeg_transcode::FfmpegTranscoderStepGenerator;
+use mmids_rtmp::workflow_steps::rtmp_receive::RtmpReceiverStepGenerator;
+use mmids_rtmp::workflow_steps::rtmp_watch::RtmpWatchStepGenerator;
 use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
 use mmids_gstreamer::encoders::{
     AudioCopyEncoderGenerator, AudioDropEncoderGenerator, AvencAacEncoderGenerator, EncoderFactory,

@@ -1,7 +1,7 @@
 use log::{error, info, warn};
 use mmids_core::net::tcp::start_socket_manager;
 
-use mmids_core::endpoints::rtmp_server::{
+use mmids_rtmp::rtmp_server::{
     start_rtmp_server_endpoint, IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,

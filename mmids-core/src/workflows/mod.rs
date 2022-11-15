@@ -11,11 +11,8 @@ pub mod steps;
 pub use runner::{start_workflow, WorkflowRequest, WorkflowRequestOperation, WorkflowStatus};
 
 use crate::codecs::{AudioCodec, VideoCodec};
-use crate::endpoints::rtmp_server::RtmpEndpointMediaData;
-use crate::utils::hash_map_to_stream_metadata;
 use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
-use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -66,46 +63,4 @@ pub enum MediaNotificationContent {
 
     /// New stream metadata
     Metadata { data: HashMap<String, String> },
-}
-
-impl MediaNotificationContent {
-    /// Creates an RTMP representation of the media data from the specified media content
-    pub fn to_rtmp_media_data(&self) -> Option<RtmpEndpointMediaData> {
-        match self {
-            MediaNotificationContent::StreamDisconnected => None,
-            MediaNotificationContent::NewIncomingStream { stream_name: _ } => None,
-            MediaNotificationContent::Metadata { data } => {
-                Some(RtmpEndpointMediaData::NewStreamMetaData {
-                    metadata: hash_map_to_stream_metadata(data),
-                })
-            }
-
-            MediaNotificationContent::Video {
-                codec,
-                is_keyframe,
-                is_sequence_header,
-                data,
-                timestamp,
-            } => Some(RtmpEndpointMediaData::NewVideoData {
-                data: data.clone(),
-                codec: *codec,
-                is_keyframe: *is_keyframe,
-                is_sequence_header: *is_sequence_header,
-                timestamp: RtmpTimestamp::new(timestamp.dts.as_millis() as u32),
-                composition_time_offset: timestamp.pts_offset,
-            }),
-
-            MediaNotificationContent::Audio {
-                codec,
-                is_sequence_header,
-                timestamp,
-                data,
-            } => Some(RtmpEndpointMediaData::NewAudioData {
-                data: data.clone(),
-                codec: *codec,
-                timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
-                is_sequence_header: *is_sequence_header,
-            }),
-        }
-    }
 }
