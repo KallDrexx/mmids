@@ -9,6 +9,9 @@ license = "MIT"
 readme = "Readme.md"
 documentation = "https://kalldrexx.github.io/mmids/"
 
+[features]
+test-utils = []
+
 [dependencies]
 tokio = { version = "1.15", features = ["full"] }
 futures = "0.3"
