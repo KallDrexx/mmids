@@ -100,9 +100,9 @@ checksum = "ec8a7b6a70fde80372154c65702f00a0f56f3e1c36abbc6c440484be248856db"
 
 [[package]]
 name = "cc"
-version = "1.0.75"
+version = "1.0.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41ca34107f97baef6cfb231b32f36115781856b8f8208e8c580e0bcaea374842"
+checksum = "76a284da2e6fe2092f2353e51713435363112dfd60030e22add80be333fb928f"
 
 [[package]]
 name = "cfg-expr"
@@ -268,8 +268,9 @@ dependencies = [
  "env_logger",
  "log",
  "mmids-core",
+ "mmids-ffmpeg",
  "tokio",
- "uuid",
+ "uuid 1.2.2",
 ]
 
 [[package]]
@@ -598,7 +599,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio",
- "tokio-util 0.7.4",
+ "tokio-util 0.7.2",
  "tracing",
 ]
 
@@ -778,7 +779,9 @@ dependencies = [
  "async-trait",
  "hyper",
  "mmids-core",
+ "mmids-ffmpeg",
  "mmids-gstreamer",
+ "mmids-rtmp",
  "native-tls",
  "tokio",
  "tracing",
@@ -803,14 +806,29 @@ dependencies = [
  "native-tls",
  "pest",
  "pest_derive",
- "rml_rtmp",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "tokio-native-tls",
  "tracing",
- "uuid",
+ "uuid 1.2.2",
+]
+
+[[package]]
+name = "mmids-ffmpeg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "mmids-core",
+ "mmids-rtmp",
+ "rml_rtmp",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid 1.2.2",
 ]
 
 [[package]]
@@ -828,7 +846,24 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "uuid",
+ "uuid 0.8.2",
+]
+
+[[package]]
+name = "mmids-rtmp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "bytes",
+ "downcast-rs",
+ "futures",
+ "mmids-core",
+ "rml_rtmp",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid 1.2.2",
 ]
 
 [[package]]
@@ -1275,6 +1310,7 @@ dependencies = [
  "futures",
  "log",
  "mmids-core",
+ "mmids-rtmp",
  "tokio",
 ]
 
@@ -1587,9 +1623,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.4"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bb2e075f03b3d66d8d8785356224ba688d2906a371015e225beeb65ca92c740"
+checksum = "f988a1a1adc2fb21f9c12aa96441da33a1728193ae0b95d2be22dbd17fcb4e5c"
 dependencies = [
  "bytes",
  "futures-core",
@@ -1741,6 +1777,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "uuid"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "422ee0de9031b5b948b97a8fc04e3aa35230001a722ddd27943e0be31564ce4c"
+dependencies = [
+ "getrandom",
+]
+
+[[package]]
 name = "valuable"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1754,9 +1799,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version-compare"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe88247b92c1df6b6de80ddc290f3976dbdf2f5f5d3fd049a9fb598c6dd5ca73"
+checksum = "579a42fc0b8e0c63b76519a339be31bed574929511fa53c1a3acae26eb258f29"
 
 [[package]]
 name = "version_check"

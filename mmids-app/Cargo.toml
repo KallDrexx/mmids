@@ -6,7 +6,10 @@ edition = "2018"
 [dependencies]
 mmids-core = { path = "../mmids-core" }
 mmids-gstreamer = { path = "../mmids-gstreamer" }
-tokio = { version = "1.15", features = ["full"] }
+mmids-rtmp = { path = "../mmids-rtmp" }
+mmids-ffmpeg = { path = "../mmids-ffmpeg" }
+
+tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.2", features = ["json"] }
 tracing-futures = "0.2.5"

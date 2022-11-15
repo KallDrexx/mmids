@@ -2,7 +2,9 @@
 members = [
     "mmids-app",
     "mmids-core",
+    "mmids-ffmpeg",
     "mmids-gstreamer",
+    "mmids-rtmp",
     "reactor-test-server",
     "validators/echo-server",
     "validators/ffmpeg-runner",

@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 mmids-core = {path = "../../mmids-core"}
+mmids-ffmpeg = {path = "../../mmids-ffmpeg"}
+
 tokio = { version = "1.15", features = ["full"] }
 env_logger = "0.9.0"
 log = "0.4"
-uuid = { version = "0.8", features = ["v4"] }
+uuid = { version = "1.2", features = ["v4"] }

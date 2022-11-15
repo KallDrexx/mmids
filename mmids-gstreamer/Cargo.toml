@@ -3,17 +3,15 @@ name = "mmids-gstreamer"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 mmids-core = {path = "../mmids-core"}
 
-tokio = "1.16.1"
+tokio = "1.15"
 bytes = "1.1.0"
 anyhow = "1.0.53"
 thiserror = "1.0.30"
 tracing = { version = "0.1", features = ["log"] }
-uuid = "0.8.2"
+uuid = { version = "0.8.2", features = ["v4"]}
 futures = "0.3"
 lazy_static = "1.4.0"
 

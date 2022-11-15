@@ -1,24 +1,12 @@
 //! Workflow steps are individual actions that can be taken on media as part of a media pipeline.
 
-mod external_stream_handler;
-mod external_stream_reader;
 pub mod factory;
-mod ffmpeg_handler;
-pub mod ffmpeg_hls;
-pub mod ffmpeg_pull;
-pub mod ffmpeg_rtmp_push;
-pub mod ffmpeg_transcode;
-pub mod rtmp_receive;
-pub mod rtmp_watch;
 pub mod workflow_forwarder;
 
 use super::MediaNotification;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
 use futures::future::BoxFuture;
-
-pub use external_stream_handler::*;
-pub use external_stream_reader::*;
 
 /// Represents the result of a future for a workflow step.  It is expected that the workflow step
 /// will downcast this result into a struct that it owns.
@@ -118,29 +106,32 @@ pub trait WorkflowStep {
     fn shutdown(&mut self);
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use crate::workflows::steps::factory::StepGenerator;
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use futures::stream::FuturesUnordered;
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use futures::StreamExt;
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use std::iter::FromIterator;
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use std::time::Duration;
 
-#[cfg(test)]
-struct StepTestContext {
-    step: Box<dyn WorkflowStep>,
-    futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
-    media_outputs: Vec<MediaNotification>,
+#[cfg(feature = "test-utils")]
+pub struct StepTestContext {
+    pub step: Box<dyn WorkflowStep>,
+    pub futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
+    pub media_outputs: Vec<MediaNotification>,
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 impl StepTestContext {
-    fn new(generator: Box<dyn StepGenerator>, definition: WorkflowStepDefinition) -> Result<Self> {
+    pub fn new(
+        generator: Box<dyn StepGenerator>,
+        definition: WorkflowStepDefinition,
+    ) -> Result<Self> {
         let (step, futures) = generator
             .generate(definition)
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
@@ -152,7 +143,7 @@ impl StepTestContext {
         })
     }
 
-    fn execute_with_media(&mut self, media: MediaNotification) {
+    pub fn execute_with_media(&mut self, media: MediaNotification) {
         let mut outputs = StepOutputs::new();
         let mut inputs = StepInputs::new();
         inputs.media.push(media);
@@ -163,7 +154,7 @@ impl StepTestContext {
         self.media_outputs = outputs.media;
     }
 
-    async fn execute_notification(&mut self, notification: Box<dyn StepFutureResult>) {
+    pub async fn execute_notification(&mut self, notification: Box<dyn StepFutureResult>) {
         let mut outputs = StepOutputs::new();
         let mut inputs = StepInputs::new();
         inputs.notifications.push(notification);
@@ -176,7 +167,7 @@ impl StepTestContext {
         self.execute_pending_notifications().await;
     }
 
-    async fn execute_pending_notifications(&mut self) {
+    pub async fn execute_pending_notifications(&mut self) {
         loop {
             let notification =
                 match tokio::time::timeout(Duration::from_millis(10), self.futures.next()).await {
@@ -195,7 +186,7 @@ impl StepTestContext {
         }
     }
 
-    fn assert_media_passed_through(&mut self, media: MediaNotification) {
+    pub fn assert_media_passed_through(&mut self, media: MediaNotification) {
         self.execute_with_media(media.clone());
 
         assert_eq!(
@@ -206,7 +197,7 @@ impl StepTestContext {
         assert_eq!(self.media_outputs[0], media, "Unexpected media message");
     }
 
-    fn assert_media_not_passed_through(&mut self, media: MediaNotification) {
+    pub fn assert_media_not_passed_through(&mut self, media: MediaNotification) {
         self.execute_with_media(media);
 
         assert!(self.media_outputs.is_empty(), "Expected no media outputs");
