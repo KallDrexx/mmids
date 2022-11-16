@@ -5,6 +5,7 @@
 
 pub mod definitions;
 pub mod manager;
+pub mod metadata;
 mod runner;
 pub mod steps;
 
