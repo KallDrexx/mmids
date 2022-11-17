@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::workflows::metadata::MediaPayloadMetadata;
+use crate::workflows::metadata::MediaPayloadMetadataCollection;
 pub use runner::{WorkflowState, WorkflowStepState};
 
 /// Notification about media coming across a specific stream
@@ -79,7 +79,7 @@ pub enum MediaNotificationContent {
         timestamp: Duration,
 
         /// Metadata that's only specific to this individual payload
-        metadata: MediaPayloadMetadata,
+        metadata: MediaPayloadMetadataCollection,
 
         /// Actual payload bytes
         data: Bytes,
