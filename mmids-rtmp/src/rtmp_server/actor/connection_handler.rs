@@ -188,13 +188,11 @@ impl RtmpServerConnectionHandler {
             match result {
                 FutureResult::Disconnected => {
                     info!("Connection disconnected");
-                    dbg!("1");
                     break;
                 }
 
                 FutureResult::RtmpServerEndpointGone => {
                     error!("Connection's rtmp server endpoint is gone");
-                    dbg!("2");
                     break;
                 }
 
@@ -203,7 +201,6 @@ impl RtmpServerConnectionHandler {
                         .push(internal_futures::wait_for_incoming_bytes(receiver).boxed());
 
                     if self.handle_bytes(bytes).is_err() {
-                        dbg!("3");
                         break;
                     }
                 }
@@ -224,13 +221,9 @@ impl RtmpServerConnectionHandler {
             }
 
             if self.force_disconnect {
-                dbg!("abc");
                 break;
             }
         }
-
-        let test = self.futures.len();
-        dbg!(test);
 
         info!("Rtmp server handler closing");
     }

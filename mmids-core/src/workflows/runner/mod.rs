@@ -596,6 +596,7 @@ impl Actor {
                 MediaNotificationContent::Video { .. } => (),
                 MediaNotificationContent::Audio { .. } => (),
                 MediaNotificationContent::Metadata { .. } => (),
+                MediaNotificationContent::MediaPayload { .. } => (),
                 MediaNotificationContent::NewIncomingStream { .. } => {
                     if !self.active_streams.contains_key(&media.stream_id) {
                         // Since this is the first time we've gotten a new incoming stream
@@ -693,6 +694,17 @@ impl Actor {
                     is_sequence_header, ..
                 } => {
                     if *is_sequence_header {
+                        Operation::Add
+                    } else {
+                        Operation::Ignore
+                    }
+                }
+
+                MediaNotificationContent::MediaPayload {
+                    is_required_for_decoding,
+                    ..
+                } => {
+                    if *is_required_for_decoding {
                         Operation::Add
                     } else {
                         Operation::Ignore
