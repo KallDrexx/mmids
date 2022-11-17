@@ -20,6 +20,11 @@ pub use keys::{MetadataKey, MetadataKeyMap};
 /// buffer that persists across media payloads, which should eventually cause each media payload
 /// to no longer require its own heap allocation and efficiently re-use unreserved parts of the
 /// memory buffer.
+///
+/// The trade off for cloning and allocation efficiency is that iterating through metadata is an
+/// O(N) operation, which means if you need to look for a specific type of metadata you may have to
+/// iterate through all other metadata items first. This tradeoff was deemed acceptable for now
+/// with the idea that each payload would only have a small amount of metadata attached to it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MediaPayloadMetadataCollection {
     data: KlvStore,
