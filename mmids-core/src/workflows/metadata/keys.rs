@@ -22,25 +22,32 @@ struct MetadataNameTypePair {
 
 impl MetadataKeyMap {
     pub fn register(&mut self, name: &'static str, value_type: MetadataValueType) -> MetadataKey {
-        let key = MetadataNameTypePair {name, value_type};
-        let entry = self.name_to_key_map
-            .entry(key)
-            .or_insert_with(|| {
+        let name_type_pair = MetadataNameTypePair {name, value_type};
+        match self.name_to_key_map.get(&name_type_pair) {
+            Some(key) => *key,
+            None => {
                 let id = self.next_id;
                 self.next_id = match self.next_id.checked_add(1) {
                     Some(num) => num,
                     None => panic!("Too many items added to key map, only 65,535 are allowed"),
                 };
 
-                MetadataKey {
+                let key = MetadataKey {
                     klv_id: id,
                     value_type,
-                }
-            });
+                };
 
-        self.klv_id_to_value_type_map.insert(entry.klv_id, value_type);
+                self.name_to_key_map.insert(name_type_pair, key);
+                self.klv_id_to_value_type_map.insert(key.klv_id, value_type);
 
-        *entry
+                key
+            }
+        }
+    }
+
+    pub fn get_key(&self, name: &'static str, value_type: MetadataValueType) -> Option<MetadataKey> {
+        let name_type_pair = MetadataNameTypePair {name, value_type};
+        self.name_to_key_map.get(&name_type_pair).copied()
     }
 
     pub(super) fn get_type_for_klv_id(&self, klv_id: u16) -> Option<MetadataValueType> {

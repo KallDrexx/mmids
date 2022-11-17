@@ -1,13 +1,15 @@
 mod keys;
 mod klv;
 
-use crate::workflows::metadata::keys::MetadataKey;
+use std::sync::Arc;
+use crate::workflows::metadata::keys::{MetadataKey, MetadataKeyMap};
 use crate::workflows::metadata::klv::{KlvData, KlvItem};
 use bytes::{Bytes, BytesMut};
 
 #[derive(Clone)]
 pub struct MediaPayloadMetadata {
     data: KlvData,
+    key_map: Arc<MetadataKeyMap>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -36,22 +38,26 @@ pub enum MetadataCreationError {
 
 impl MediaPayloadMetadata {
     pub fn new(
+        key_map: Arc<MetadataKeyMap>,
         key_value_pairs: impl Iterator<Item = (MetadataKey, MetadataValue)>,
         buffer: &mut BytesMut,
     ) -> Result<Self, MetadataCreationError> {
-        let mut buffer = buffer.split_off(buffer.len());
+        let mut klv_buffer = buffer.split_off(buffer.len());
+        let mut iterator_buffer = klv_buffer.split_off(klv_buffer.len());
         let iterator = key_value_pairs
-            .map(|(k, v)| KlvItem::from_metadata(k, v, &mut buffer));
+            .map(|(k, v)| KlvItem::from_metadata(k, v, &mut iterator_buffer));
 
-        let klv_data = KlvData::from_iter(&mut buffer, iterator)
+        let klv_data = KlvData::from_iter(&mut klv_buffer, iterator)
             .map_err(|_| MetadataCreationError::InvalidValue)?;
 
-        Ok(MediaPayloadMetadata { data: klv_data })
+        Ok(MediaPayloadMetadata { data: klv_data, key_map })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (MetadataKey, MetadataValue)> {
+        let map = self.key_map.clone();
         self.data
             .iter()
-            .map(|item| (MetadataKey(item.key), MetadataValue { data: item.value }))
+            .map(move |item| item.into_metadata(&map))
+            .filter_map(|item| item.ok())
     }
 }
