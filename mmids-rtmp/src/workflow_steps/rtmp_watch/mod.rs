@@ -468,6 +468,8 @@ impl RtmpWatchStep {
 
                     let _ = self.media_channel.send(rtmp_media);
                 }
+
+                MediaNotificationContent::MediaPayload { .. } => unimplemented!(),
             }
         }
     }

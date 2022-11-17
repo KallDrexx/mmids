@@ -699,6 +699,17 @@ impl Actor {
                         Operation::Ignore
                     }
                 }
+
+                MediaNotificationContent::MediaPayload {
+                    is_required_for_decoding,
+                    ..
+                } => {
+                    if *is_required_for_decoding {
+                        Operation::Add
+                    } else {
+                        Operation::Ignore
+                    }
+                }
             };
 
             match operation {

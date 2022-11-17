@@ -349,6 +349,8 @@ impl TryFrom<MediaNotificationContent> for RtmpEndpointMediaData {
                 timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
                 is_sequence_header,
             }),
+
+            MediaNotificationContent::MediaPayload { .. } => unimplemented!(),
         }
     }
 }

@@ -25,10 +25,7 @@ impl MetadataKey {
     pub(super) fn from_klv_id(klv_id: u16) -> Self {
         let value_type = value_type_from_klv_id(klv_id);
 
-        MetadataKey {
-            klv_id,
-            value_type
-        }
+        MetadataKey { klv_id, value_type }
     }
 }
 
@@ -71,7 +68,7 @@ fn apply_value_type_to_klv_id(id: u16, value_type: MetadataValueType) -> u16 {
         MetadataValueType::Bytes => 10,
     };
 
-    type_id = type_id << VALUE_TYPE_SHIFT;
+    type_id <<= VALUE_TYPE_SHIFT;
     id & type_id
 }
 

@@ -1,10 +1,11 @@
 mod keys;
 mod klv;
 
-use crate::workflows::metadata::keys::MetadataKey;
 use crate::workflows::metadata::klv::{KlvData, KlvItem};
 use bytes::{BufMut, Bytes, BytesMut};
 use tracing::error;
+
+pub use keys::{MetadataKey, MetadataKeyMap};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MediaPayloadMetadata {
@@ -12,7 +13,18 @@ pub struct MediaPayloadMetadata {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum MetadataValueType {U8, U16, U32, U64, I8, I16, I32, I64, Bytes, Bool}
+pub enum MetadataValueType {
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
+    Bytes,
+    Bool,
+}
 
 #[derive(Debug)]
 pub enum MetadataValue {
@@ -35,7 +47,9 @@ pub struct MetadataEntry {
 
 #[derive(thiserror::Error, Debug)]
 pub enum MetadataEntryError {
-    #[error("Metadata entry's value was {value:?} but the type was expected to be {expected_type:?}")]
+    #[error(
+        "Metadata entry's value was {value:?} but the type was expected to be {expected_type:?}"
+    )]
     ValueDoesNotMatchType {
         value: MetadataValue,
         expected_type: MetadataValueType,
@@ -46,10 +60,7 @@ pub enum MetadataEntryError {
 }
 
 impl MediaPayloadMetadata {
-    pub fn new(
-        entries: impl Iterator<Item = MetadataEntry>,
-        buffer: &mut BytesMut,
-    ) -> Self {
+    pub fn new(entries: impl Iterator<Item = MetadataEntry>, buffer: &mut BytesMut) -> Self {
         let mut klv_buffer = buffer.split_off(buffer.len());
         let klv_items = entries.map(|e| KlvItem {
             key: e.key.klv_id,
@@ -62,12 +73,10 @@ impl MediaPayloadMetadata {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = MetadataEntry> {
-        self.data
-            .iter()
-            .map(|item| MetadataEntry {
-                key: MetadataKey::from_klv_id(item.key),
-                raw_value: item.value
-            })
+        self.data.iter().map(|item| MetadataEntry {
+            key: MetadataKey::from_klv_id(item.key),
+            raw_value: item.value,
+        })
     }
 }
 
@@ -83,7 +92,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::U8 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::U8
+                        expected_type: MetadataValueType::U8,
                     });
                 }
 
@@ -94,7 +103,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::U16 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::U16
+                        expected_type: MetadataValueType::U16,
                     });
                 }
 
@@ -105,7 +114,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::U32 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::U32
+                        expected_type: MetadataValueType::U32,
                     });
                 }
 
@@ -116,7 +125,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::U64 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::U64
+                        expected_type: MetadataValueType::U64,
                     });
                 }
 
@@ -127,7 +136,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::I8 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::I8
+                        expected_type: MetadataValueType::I8,
                     });
                 }
 
@@ -138,7 +147,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::I16 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::I16
+                        expected_type: MetadataValueType::I16,
                     });
                 }
 
@@ -149,7 +158,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::I32 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::I32
+                        expected_type: MetadataValueType::I32,
                     });
                 }
 
@@ -160,7 +169,7 @@ impl MetadataEntry {
                 if key.value_type != MetadataValueType::I64 {
                     return Err(MetadataEntryError::ValueDoesNotMatchType {
                         value,
-                        expected_type: MetadataValueType::I64
+                        expected_type: MetadataValueType::I64,
                     });
                 }
 

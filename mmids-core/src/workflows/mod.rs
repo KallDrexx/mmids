@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use runner::{WorkflowState, WorkflowStepState};
 use crate::workflows::metadata::MediaPayloadMetadata;
+pub use runner::{WorkflowState, WorkflowStepState};
 
 /// Notification about media coming across a specific stream
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,5 +83,15 @@ pub enum MediaNotificationContent {
 
         /// Actual payload bytes
         data: Bytes,
-    }
+
+        /// Determines if this payload is a high priority packet that is required for decoding.
+        /// This is meant for sequence headers (for h264 and aac as an example) where later packets
+        /// cannot be decoded without it. These high priority packets are rarely re-sent, and
+        /// therefore this flag lets us know to cache them when this is `true`.
+        ///
+        /// Flagging this as `true` will cause these packets to be  cached, potentially until a
+        /// `StreamDisconnected` signal occurs, and therefore this must only be set for rare
+        /// high priority packets (i.e. not for key frames in video).
+        is_required_for_decoding: bool,
+    },
 }
