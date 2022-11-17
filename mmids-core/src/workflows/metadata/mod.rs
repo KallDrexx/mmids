@@ -1,15 +1,14 @@
 mod keys;
 mod klv;
 
-use std::sync::Arc;
-use crate::workflows::metadata::keys::{MetadataKey, MetadataKeyMap};
+use crate::workflows::metadata::keys::MetadataKey;
 use crate::workflows::metadata::klv::{KlvData, KlvItem};
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
+use tracing::error;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MediaPayloadMetadata {
     data: KlvData,
-    key_map: Arc<MetadataKeyMap>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -29,35 +28,175 @@ pub enum MetadataValue {
     Bool(bool),
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum MetadataCreationError {
-    #[error("Metadata entry had a value that could not be stored")]
-    InvalidValue,
+pub struct MetadataEntry {
+    key: MetadataKey,
+    raw_value: Bytes,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum MetadataEntryError {
+    #[error("Metadata entry's value was {value:?} but the type was expected to be {expected_type:?}")]
+    ValueDoesNotMatchType {
+        value: MetadataValue,
+        expected_type: MetadataValueType,
+    },
+
+    #[error("Entry's data was too large, and must be under 65,535")]
+    ValueTooLarge,
+}
 
 impl MediaPayloadMetadata {
     pub fn new(
-        key_map: Arc<MetadataKeyMap>,
-        key_value_pairs: impl Iterator<Item = (MetadataKey, MetadataValue)>,
+        entries: impl Iterator<Item = MetadataEntry>,
         buffer: &mut BytesMut,
-    ) -> Result<Self, MetadataCreationError> {
+    ) -> Self {
         let mut klv_buffer = buffer.split_off(buffer.len());
-        let mut iterator_buffer = klv_buffer.split_off(klv_buffer.len());
-        let iterator = key_value_pairs
-            .map(|(k, v)| KlvItem::from_metadata(k, v, &mut iterator_buffer));
+        let klv_items = entries.map(|e| KlvItem {
+            key: e.key.klv_id,
+            value: e.raw_value,
+        });
 
-        let klv_data = KlvData::from_iter(&mut klv_buffer, iterator)
-            .map_err(|_| MetadataCreationError::InvalidValue)?;
+        let klv_data = KlvData::from_iter(&mut klv_buffer, klv_items).unwrap();
 
-        Ok(MediaPayloadMetadata { data: klv_data, key_map })
+        MediaPayloadMetadata { data: klv_data }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (MetadataKey, MetadataValue)> {
-        let map = self.key_map.clone();
+    pub fn iter(&self) -> impl Iterator<Item = MetadataEntry> {
         self.data
             .iter()
-            .map(move |item| item.into_metadata(&map))
-            .filter_map(|item| item.ok())
+            .map(|item| MetadataEntry {
+                key: MetadataKey::from_klv_id(item.key),
+                raw_value: item.value
+            })
+    }
+}
+
+impl MetadataEntry {
+    pub fn new(
+        key: MetadataKey,
+        value: MetadataValue,
+        buffer: &mut BytesMut,
+    ) -> Result<Self, MetadataEntryError> {
+        let mut buffer = buffer.split_off(buffer.len());
+        match value {
+            MetadataValue::U8(num) => {
+                if key.value_type != MetadataValueType::U8 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::U8
+                    });
+                }
+
+                buffer.put_u8(num);
+            }
+
+            MetadataValue::U16(num) => {
+                if key.value_type != MetadataValueType::U16 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::U16
+                    });
+                }
+
+                buffer.put_u16(num);
+            }
+
+            MetadataValue::U32(num) => {
+                if key.value_type != MetadataValueType::U32 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::U32
+                    });
+                }
+
+                buffer.put_u32(num);
+            }
+
+            MetadataValue::U64(num) => {
+                if key.value_type != MetadataValueType::U64 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::U64
+                    });
+                }
+
+                buffer.put_u64(num);
+            }
+
+            MetadataValue::I8(num) => {
+                if key.value_type != MetadataValueType::I8 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::I8
+                    });
+                }
+
+                buffer.put_i8(num);
+            }
+
+            MetadataValue::I16(num) => {
+                if key.value_type != MetadataValueType::I16 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::I16
+                    });
+                }
+
+                buffer.put_i16(num);
+            }
+
+            MetadataValue::I32(num) => {
+                if key.value_type != MetadataValueType::I32 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::I32
+                    });
+                }
+
+                buffer.put_i32(num);
+            }
+
+            MetadataValue::I64(num) => {
+                if key.value_type != MetadataValueType::I64 {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::I64
+                    });
+                }
+
+                buffer.put_i64(num);
+            }
+
+            MetadataValue::Bool(boolean) => {
+                if key.value_type != MetadataValueType::Bool {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value,
+                        expected_type: MetadataValueType::Bool,
+                    });
+                }
+
+                buffer.put_u8(boolean.into());
+            }
+
+            MetadataValue::Bytes(bytes) => {
+                if key.value_type != MetadataValueType::Bytes {
+                    return Err(MetadataEntryError::ValueDoesNotMatchType {
+                        value: MetadataValue::Bytes(bytes),
+                        expected_type: MetadataValueType::Bytes,
+                    });
+                }
+
+                buffer.put(bytes);
+            }
+        }
+
+        if buffer.len() >= u16::MAX as usize {
+            return Err(MetadataEntryError::ValueTooLarge);
+        }
+
+        Ok(MetadataEntry {
+            key,
+            raw_value: buffer.freeze(),
+        })
     }
 }

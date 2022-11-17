@@ -15,9 +15,11 @@ use crate::codecs::{AudioCodec, VideoCodec};
 use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use runner::{WorkflowState, WorkflowStepState};
+use crate::workflows::metadata::MediaPayloadMetadata;
 
 /// Notification about media coming across a specific stream
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,4 +66,22 @@ pub enum MediaNotificationContent {
 
     /// New stream metadata
     Metadata { data: HashMap<String, String> },
+
+    /// An individual payload as part of this media stream
+    MediaPayload {
+        /// High level description of the type of payload contained.
+        codec: Arc<String>,
+
+        /// How long since an unidentified epoch is this payload valid for. It cannot be assumed
+        /// that this is necessarily the duration from stream begin, but can be used to determine
+        /// when this payload should be decoded in comparison to payloads that came in before and
+        /// after it.
+        timestamp: Duration,
+
+        /// Metadata that's only specific to this individual payload
+        metadata: MediaPayloadMetadata,
+
+        /// Actual payload bytes
+        data: Bytes,
+    }
 }

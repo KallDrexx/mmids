@@ -596,6 +596,7 @@ impl Actor {
                 MediaNotificationContent::Video { .. } => (),
                 MediaNotificationContent::Audio { .. } => (),
                 MediaNotificationContent::Metadata { .. } => (),
+                MediaNotificationContent::MediaPayload { .. } => (),
                 MediaNotificationContent::NewIncomingStream { .. } => {
                     if !self.active_streams.contains_key(&media.stream_id) {
                         // Since this is the first time we've gotten a new incoming stream
