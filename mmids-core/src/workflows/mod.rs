@@ -69,8 +69,11 @@ pub enum MediaNotificationContent {
 
     /// An individual payload as part of this media stream
     MediaPayload {
-        /// High level description of the type of payload contained.
-        codec: Arc<String>,
+        /// High level description of the format of bytes contained in the payload. May be the name
+        /// of a codec (e.g. `aac`) but may also be more specific, such as a codec specific stream
+        /// format (e.g. `h264 avc`). The identifiers for these payload types will need to be
+        /// agreed upon, so different components can know when they support different payloads.
+        payload_type: Arc<String>,
 
         /// How long since an unidentified epoch is this payload valid for. It cannot be assumed
         /// that this is necessarily the duration from stream begin, but can be used to determine
