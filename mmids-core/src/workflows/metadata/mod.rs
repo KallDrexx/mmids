@@ -237,8 +237,13 @@ impl MetadataEntry {
         })
     }
 
+    /// Retrieves the key from the entry
+    pub fn key(&self) -> MetadataKey {
+        self.key
+    }
+
     /// Retrieves the value from the entry
-    pub fn get_value(&self) -> MetadataValue {
+    pub fn value(&self) -> MetadataValue {
         // Clone to not advance the original buffer
         let mut buffer = self.raw_value.clone();
 
@@ -276,7 +281,7 @@ pub mod tests {
             value_type: MetadataValueType::U8,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -289,7 +294,7 @@ pub mod tests {
             value_type: MetadataValueType::U16,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -302,7 +307,7 @@ pub mod tests {
             value_type: MetadataValueType::U32,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -315,7 +320,7 @@ pub mod tests {
             value_type: MetadataValueType::U64,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -328,7 +333,7 @@ pub mod tests {
             value_type: MetadataValueType::I8,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -341,7 +346,7 @@ pub mod tests {
             value_type: MetadataValueType::I16,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -354,7 +359,7 @@ pub mod tests {
             value_type: MetadataValueType::I32,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -367,7 +372,7 @@ pub mod tests {
             value_type: MetadataValueType::I64,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -380,7 +385,7 @@ pub mod tests {
             value_type: MetadataValueType::Bool,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
@@ -393,7 +398,7 @@ pub mod tests {
             value_type: MetadataValueType::Bytes,
         };
         let entry = MetadataEntry::new(key, value.clone(), &mut BytesMut::new()).unwrap();
-        let returned_value = entry.get_value();
+        let returned_value = entry.value();
 
         assert_eq!(returned_value, value);
     }
