@@ -803,6 +803,7 @@ dependencies = [
  "downcast-rs",
  "futures",
  "hyper",
+ "lazy_static",
  "native-tls",
  "pest",
  "pest_derive",

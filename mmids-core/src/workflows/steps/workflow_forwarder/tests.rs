@@ -1,12 +1,13 @@
+use std::iter;
+use std::sync::Arc;
 use super::*;
-use crate::codecs::{AudioCodec, VideoCodec};
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::steps::StepTestContext;
-use crate::{test_utils, VideoTimestamp};
+use crate::test_utils;
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
-use std::sync::Arc;
+use bytes::{Bytes, BytesMut};
 use std::time::Duration;
+use crate::workflows::metadata::MediaPayloadMetadataCollection;
 
 struct TestContext {
     reactor_manager: UnboundedReceiver<ReactorManagerRequest>,
@@ -269,21 +270,20 @@ async fn stream_disconnected_media_passed_as_output_immediately() {
 }
 
 #[tokio::test]
-async fn video_media_passed_as_output_immediately() {
+async fn media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
+    let expected_content = MediaNotificationContent::MediaPayload {
+        data: Bytes::from(vec![1, 2, 3]),
+        codec: Arc::new("test".to_string()),
+        is_required_for_decoding: true,
+        timestamp: Duration::from_millis(10),
+        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+    };
+
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            data: Bytes::from(vec![1, 2, 3]),
-            codec: VideoCodec::H264,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
-            is_keyframe: true,
-            is_sequence_header: true,
-        },
+        stream_id: StreamId("abc".to_string()),
+        content: expected_content.clone(),
     });
 
     assert_eq!(
@@ -293,66 +293,8 @@ async fn video_media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
-
-    match &media.content {
-        MediaNotificationContent::Video {
-            data,
-            codec,
-            timestamp,
-            is_keyframe,
-            is_sequence_header,
-        } => {
-            assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-            assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-            assert_eq!(timestamp.dts(), Duration::from_millis(5), "Unexpected dts");
-            assert_eq!(timestamp.pts_offset(), 10, "Unexpected pts offset");
-            assert!(is_keyframe, "Expected is_keyframe to be true");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
-        }
-
-        content => panic!("Unexpected media content: {:?}", content),
-    }
-}
-
-#[tokio::test]
-async fn audio_media_passed_as_output_immediately() {
-    let mut context = TestContext::new(Some("test"), None).await.unwrap();
-
-    context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Audio {
-            data: Bytes::from(vec![1, 2, 3]),
-            codec: AudioCodec::Aac,
-            timestamp: Duration::from_millis(5),
-            is_sequence_header: true,
-        },
-    });
-
-    assert_eq!(
-        context.step_context.media_outputs.len(),
-        1,
-        "Unexpected number of media outputs"
-    );
-
-    let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
-
-    match &media.content {
-        MediaNotificationContent::Audio {
-            data,
-            codec,
-            timestamp,
-            is_sequence_header,
-        } => {
-            assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-            assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
-        }
-
-        content => panic!("Unexpected media content: {:?}", content),
-    }
+    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.content, expected_content, "Unexpected media content");
 }
 
 #[tokio::test]
@@ -388,7 +330,7 @@ async fn metadata_media_passed_as_output_immediately() {
 }
 
 #[tokio::test]
-async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
+async fn required_media_payload_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
@@ -397,18 +339,17 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
         },
     });
 
+    let expected_content = MediaNotificationContent::MediaPayload {
+        data: Bytes::from(vec![1, 2, 3]),
+        codec: Arc::new("test".to_string()),
+        is_required_for_decoding: true,
+        timestamp: Duration::from_millis(10),
+        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+    };
+
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            data: Bytes::from(vec![1, 2, 3]),
-            codec: VideoCodec::H264,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
-            is_keyframe: true,
-            is_sequence_header: true,
-        },
+        stream_id: StreamId("abc".to_string()),
+        content: expected_content.clone(),
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
@@ -426,17 +367,16 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
-        WorkflowRequestOperation::MediaNotification { media } => match media.content {
-            MediaNotificationContent::Video { .. } => (),
-            content => panic!("Unexpected media content: {:?}", content),
-        },
+        WorkflowRequestOperation::MediaNotification { media } => {
+            assert_eq!(media.content, expected_content, "Unexpected media content");
+        }
 
         operation => panic!("Unexpected workflow operation: {:?}", operation),
     }
 }
 
 #[tokio::test]
-async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
+async fn non_required_payload_not_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
@@ -445,98 +385,17 @@ async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_wo
         },
     });
 
-    context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            data: Bytes::from(vec![1, 2, 3]),
-            codec: VideoCodec::H264,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
-            is_keyframe: true,
-            is_sequence_header: false,
-        },
-    });
-
-    test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test", None).await;
-
-    let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
-    match response.operation {
-        WorkflowRequestOperation::MediaNotification { media } => match media.content {
-            MediaNotificationContent::NewIncomingStream { .. } => (),
-            content => panic!("Unexpected media content: {:?}", content),
-        },
-
-        operation => panic!("Unexpected workflow operation: {:?}", operation),
-    }
-
-    test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-}
-
-#[tokio::test]
-async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await.unwrap();
-    context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::NewIncomingStream {
-            stream_name: Arc::new("def".to_string()),
-        },
-    });
+    let expected_content = MediaNotificationContent::MediaPayload {
+        data: Bytes::from(vec![1, 2, 3]),
+        codec: Arc::new("test".to_string()),
+        is_required_for_decoding: false,
+        timestamp: Duration::from_millis(10),
+        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+    };
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Audio {
-            data: Bytes::from(vec![1, 2, 3]),
-            codec: AudioCodec::Aac,
-            timestamp: Duration::from_millis(5),
-            is_sequence_header: true,
-        },
-    });
-
-    test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
-    context.send_workflow_started_event("test", None).await;
-
-    let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
-    match response.operation {
-        WorkflowRequestOperation::MediaNotification { media } => match media.content {
-            MediaNotificationContent::NewIncomingStream { .. } => (),
-            content => panic!("Unexpected media content: {:?}", content),
-        },
-
-        operation => panic!("Unexpected workflow operation: {:?}", operation),
-    }
-
-    let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
-    match response.operation {
-        WorkflowRequestOperation::MediaNotification { media } => match media.content {
-            MediaNotificationContent::Audio { .. } => (),
-            content => panic!("Unexpected media content: {:?}", content),
-        },
-
-        operation => panic!("Unexpected workflow operation: {:?}", operation),
-    }
-}
-
-#[tokio::test]
-async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
-    let mut context = TestContext::new(Some("test"), None).await.unwrap();
-    context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::NewIncomingStream {
-            stream_name: Arc::new("def".to_string()),
-        },
-    });
-
-    context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Audio {
-            data: Bytes::from(vec![1, 2, 3]),
-            codec: AudioCodec::Aac,
-            timestamp: Duration::from_millis(5),
-            is_sequence_header: false,
-        },
+        stream_id: StreamId("abc".to_string()),
+        content: expected_content.clone(),
     });
 
     test_utils::expect_mpsc_timeout(&mut context.workflow_receiver).await;
