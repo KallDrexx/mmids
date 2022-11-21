@@ -21,6 +21,14 @@ use std::time::Duration;
 use crate::workflows::metadata::MediaPayloadMetadataCollection;
 pub use runner::{WorkflowState, WorkflowStepState};
 
+/// Identifies the category of media contained within a payload
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MediaType {
+    Audio,
+    Video,
+    Other,
+}
+
 /// Notification about media coming across a specific stream
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaNotification {
@@ -69,6 +77,13 @@ pub enum MediaNotificationContent {
 
     /// An individual payload as part of this media stream
     MediaPayload {
+        /// High level categorization of the media contained in this payload. Can be used by
+        /// consumers who do not necessarily care about how the bytes in the payload are formatted,
+        /// but just cares about categorization and metadata of the payload. E.g. an SFU may only
+        /// care about audio packets and their energy level metadata, but not what codec the audio
+        /// is formatted in.
+        media_type: MediaType,
+
         /// High level description of the format of bytes contained in the payload. May be the name
         /// of a codec (e.g. `aac`) but may also be more specific, such as a codec specific stream
         /// format (e.g. `h264 avc`). The identifiers for these payload types will need to be
