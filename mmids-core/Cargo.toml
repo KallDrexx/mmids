@@ -13,23 +13,23 @@ documentation = "https://kalldrexx.github.io/mmids/"
 test-utils = []
 
 [dependencies]
-tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros"] }
-futures = "0.3"
+anyhow = "1.0.54"
+async-recursion = "0.3.2"
+async-trait = "0.1.51"
+byteorder = "1.4.3"
 bytes = "1"
-uuid = { version = "1.2", features = ["v4"] }
+cidr-utils = "0.5.5"
 downcast-rs = "1.2.0"
-thiserror = "1.0"
+futures = "0.3"
+hyper = { version = "0.14", features = ["full"] }
+native-tls = "0.2"
 pest = "2.1"
 pest_derive = "2.1"
-cidr-utils = "0.5.5"
-tokio-native-tls = "0.3"
-native-tls = "0.2"
-tracing = { version = "0.1", features = ["log"] }
-hyper = { version = "0.14", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-async-trait = "0.1.51"
-async-recursion = "0.3.2"
-byteorder = "1.4.3"
-anyhow = "1.0.54"
+thiserror = "1.0"
+tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros"] }
+tokio-native-tls = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+uuid = { version = "1.2", features = ["v4"] }
 
