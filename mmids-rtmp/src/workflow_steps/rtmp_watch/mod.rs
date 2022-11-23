@@ -34,6 +34,7 @@ use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
@@ -63,15 +64,15 @@ struct StreamWatchers {
 struct RtmpWatchStep {
     definition: WorkflowStepDefinition,
     port: u16,
-    rtmp_app: String,
+    rtmp_app: Arc<String>,
     stream_key: StreamKeyRegistration,
-    reactor_name: Option<String>,
+    reactor_name: Option<Arc<String>>,
     status: StepStatus,
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
     media_channel: UnboundedSender<RtmpEndpointMediaMessage>,
-    stream_id_to_name_map: HashMap<StreamId, String>,
-    stream_watchers: HashMap<String, StreamWatchers>,
+    stream_id_to_name_map: HashMap<StreamId, Arc<String>>,
+    stream_watchers: HashMap<Arc<String>, StreamWatchers>,
 }
 
 impl StepFutureResult for RtmpWatchStepFutureResult {}
@@ -92,14 +93,14 @@ enum RtmpWatchStepFutureResult {
     },
 
     ReactorUpdateReceived {
-        stream_name: String,
+        stream_name: Arc<String>,
         update: ReactorWorkflowUpdate,
         reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
         cancellation_channel: UnboundedReceiver<()>,
     },
 
     ReactorReceiverCanceled {
-        stream_name: String,
+        stream_name: Arc<String>,
     },
 }
 
@@ -166,19 +167,19 @@ impl StepGenerator for RtmpWatchStepGenerator {
         };
 
         let app = match definition.parameters.get(APP_PROPERTY_NAME) {
-            Some(Some(x)) => x.trim(),
+            Some(Some(x)) => Arc::new(x.trim().to_string()),
             _ => return Err(Box::new(StepStartupError::NoRtmpApp)),
         };
 
         let stream_key = match definition.parameters.get(STREAM_KEY_PROPERTY_NAME) {
-            Some(Some(x)) => x.trim(),
+            Some(Some(x)) => Arc::new(x.trim().to_string()),
             _ => return Err(Box::new(StepStartupError::NoStreamKey)),
         };
 
-        let stream_key = if stream_key == "*" {
+        let stream_key = if stream_key.as_str() == "*" {
             StreamKeyRegistration::Any
         } else {
-            StreamKeyRegistration::Exact(stream_key.to_string())
+            StreamKeyRegistration::Exact(stream_key)
         };
 
         let allowed_ips = match definition.parameters.get(IP_ALLOW_PROPERTY_NAME) {
@@ -201,13 +202,12 @@ impl StepGenerator for RtmpWatchStepGenerator {
         };
 
         let reactor_name = match definition.parameters.get(REACTOR_NAME) {
-            Some(Some(value)) => Some(value.clone()),
+            Some(Some(value)) => Some(Arc::new(value.clone())),
             _ => None,
         };
 
         let (media_sender, media_receiver) = unbounded_channel();
 
-        let app = app.to_owned();
         let step = RtmpWatchStep {
             definition,
             status: StepStatus::Created,
@@ -643,7 +643,7 @@ async fn wait_for_reactor_response(
 }
 
 async fn wait_for_reactor_update(
-    stream_name: String,
+    stream_name: Arc<String>,
     mut update_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
     mut cancellation_receiver: UnboundedReceiver<()>,
 ) -> Box<dyn StepFutureResult> {

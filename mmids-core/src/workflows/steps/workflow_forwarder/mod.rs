@@ -19,6 +19,7 @@ use crate::workflows::{
 use crate::StreamId;
 use futures::FutureExt;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, span, Level};
@@ -33,7 +34,7 @@ pub struct WorkflowForwarderStepGenerator {
 }
 
 struct StreamDetails {
-    target_workflow_names: HashSet<String>,
+    target_workflow_names: HashSet<Arc<String>>,
     required_media: Vec<MediaNotification>,
 
     // Used to cancel the reactor update future. When a stream disconnects, this cancellation
@@ -45,14 +46,14 @@ struct StreamDetails {
 }
 
 struct WorkflowForwarderStep {
-    global_workflow_name: Option<String>,
-    reactor_name: Option<String>,
+    global_workflow_name: Option<Arc<String>>,
+    reactor_name: Option<Arc<String>>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
     definition: WorkflowStepDefinition,
     status: StepStatus,
     active_streams: HashMap<StreamId, StreamDetails>,
-    stream_for_workflow_name: HashMap<String, HashSet<StreamId>>,
-    known_workflows: HashMap<String, UnboundedSender<WorkflowRequest>>,
+    stream_for_workflow_name: HashMap<Arc<String>, HashSet<StreamId>>,
+    known_workflows: HashMap<Arc<String>, UnboundedSender<WorkflowRequest>>,
 }
 
 enum FutureResult {
@@ -61,7 +62,7 @@ enum FutureResult {
     ReactorGone,
 
     WorkflowGone {
-        workflow_name: String,
+        workflow_name: Arc<String>,
     },
 
     WorkflowStartedOrStopped(
@@ -71,7 +72,7 @@ enum FutureResult {
 
     ReactorResponseReceived {
         stream_id: StreamId,
-        stream_name: String,
+        stream_name: Arc<String>,
         update: ReactorWorkflowUpdate,
         reactor_update_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
     },
@@ -114,12 +115,12 @@ impl WorkflowForwarderStepGenerator {
 impl StepGenerator for WorkflowForwarderStepGenerator {
     fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
         let target_workflow_name = match definition.parameters.get(TARGET_WORKFLOW) {
-            Some(Some(name)) => Some(name.clone()),
+            Some(Some(name)) => Some(Arc::new(name.clone())),
             _ => None,
         };
 
         let reactor_name = match definition.parameters.get(REACTOR_NAME) {
-            Some(Some(reactor)) => Some(reactor.clone()),
+            Some(Some(reactor)) => Some(Arc::new(reactor.clone())),
             _ => None,
         };
 
@@ -613,7 +614,7 @@ impl WorkflowStep for WorkflowForwarderStep {
 }
 
 async fn notify_target_workflow_gone(
-    workflow_name: String,
+    workflow_name: Arc<String>,
     sender: UnboundedSender<WorkflowRequest>,
 ) -> Box<dyn StepFutureResult> {
     sender.closed().await;
@@ -633,7 +634,7 @@ async fn wait_for_workflow_event(
 
 async fn wait_for_reactor_response(
     stream_id: StreamId,
-    stream_name: String,
+    stream_name: Arc<String>,
     mut receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
 ) -> Box<dyn StepFutureResult> {
     let result = match receiver.recv().await {

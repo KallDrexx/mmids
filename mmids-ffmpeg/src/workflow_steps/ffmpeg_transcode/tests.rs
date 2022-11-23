@@ -21,6 +21,7 @@ use mmids_rtmp::rtmp_server::{
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
@@ -304,9 +305,9 @@ async fn rtmp_watch_registration_raised_on_new_stream() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -317,7 +318,7 @@ async fn rtmp_watch_registration_raised_on_new_stream() {
         } => {
             assert_eq!(
                 rtmp_stream_key,
-                StreamKeyRegistration::Exact("abc".to_string()),
+                StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
                 "Unexpected stream key"
             );
         }
@@ -332,9 +333,9 @@ async fn rtmp_publish_registration_raised_after_watch_accepted() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -347,7 +348,7 @@ async fn rtmp_publish_registration_raised_after_watch_accepted() {
         } => {
             assert_eq!(
                 rtmp_stream_key,
-                StreamKeyRegistration::Exact("abc".to_string()),
+                StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
                 "Unexpected stream key"
             );
         }
@@ -362,9 +363,9 @@ async fn ffmpeg_request_raised_after_publish_accepted() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -388,9 +389,9 @@ async fn h264_with_preset_passed_to_ffmpeg() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -413,9 +414,9 @@ async fn video_copy_passed_to_ffmpeg() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -436,9 +437,9 @@ async fn aac_acodec_passed_to_ffmpeg() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -459,9 +460,9 @@ async fn copy_acodec_passed_to_ffmpeg() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -486,9 +487,9 @@ async fn size_passed_to_ffmpeg() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -512,9 +513,9 @@ async fn bitrate_passed_to_ffmpeg() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -532,9 +533,9 @@ async fn ffmpeg_always_told_to_read_in_real_time() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -554,9 +555,9 @@ async fn ffmpeg_instructed_to_read_from_rtmp() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -584,9 +585,9 @@ async fn if_ffmpeg_process_stops_unexpectedly_it_starts_again_with_same_id_and_p
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -614,9 +615,9 @@ fn stream_started_notification_passed_through_immediately() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::NewIncomingStream {
-                stream_name: "abc".to_string(),
+                stream_name: Arc::new("abc".to_string()),
             },
         });
 }
@@ -629,7 +630,7 @@ fn disconnection_notification_passed_through_immediately() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::StreamDisconnected,
         });
 }
@@ -641,7 +642,7 @@ fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::Metadata {
                 data: HashMap::new(),
             },
@@ -656,7 +657,7 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2]),
                 codec: VideoCodec::H264,
@@ -678,7 +679,7 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::Audio {
                 data: Bytes::from(vec![1, 2]),
                 codec: AudioCodec::Aac,
@@ -694,9 +695,9 @@ async fn video_packet_sent_to_watcher_media_channel() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -705,7 +706,7 @@ async fn video_packet_sent_to_watcher_media_channel() {
     let _ffmpeg_results = context.process_ffmpeg_event().await;
 
     let media = MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2]),
             codec: VideoCodec::H264,
@@ -721,7 +722,7 @@ async fn video_packet_sent_to_watcher_media_channel() {
     context.step_context.execute_with_media(media.clone());
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&response.stream_key, "abc", "Unexpected stream key");
+    assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
     assert_eq!(
         response.data,
         RtmpEndpointMediaData::try_from(media.content).unwrap(),
@@ -735,9 +736,9 @@ async fn audio_packet_sent_to_watcher_media_channel() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -746,7 +747,7 @@ async fn audio_packet_sent_to_watcher_media_channel() {
     let _ffmpeg_results = context.process_ffmpeg_event().await;
 
     let media = MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2]),
             codec: AudioCodec::Aac,
@@ -758,7 +759,7 @@ async fn audio_packet_sent_to_watcher_media_channel() {
     context.step_context.execute_with_media(media.clone());
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&response.stream_key, "abc", "Unexpected stream key");
+    assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
     assert_eq!(
         response.data,
         RtmpEndpointMediaData::try_from(media.content).unwrap(),
@@ -772,9 +773,9 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -783,7 +784,7 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
     let _ffmpeg_results = context.process_ffmpeg_event().await;
 
     let media = MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
         },
@@ -793,7 +794,7 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
     context.step_context.execute_pending_notifications().await;
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&response.stream_key, "abc", "Unexpected stream key");
+    assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
     assert_eq!(
         response.data,
         RtmpEndpointMediaData::try_from(media.content).unwrap(),
@@ -807,9 +808,9 @@ async fn video_packet_with_other_stream_id_not_sent_to_watcher_media_channel() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -818,7 +819,7 @@ async fn video_packet_with_other_stream_id_not_sent_to_watcher_media_channel() {
     let _ffmpeg_results = context.process_ffmpeg_event().await;
 
     let media = MediaNotification {
-        stream_id: StreamId("test".to_string()),
+        stream_id: StreamId(Arc::new("test".to_string())),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2]),
             codec: VideoCodec::H264,
@@ -839,9 +840,9 @@ async fn video_packet_from_publisher_passed_as_media_output() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -851,7 +852,7 @@ async fn video_packet_from_publisher_passed_as_media_output() {
 
     publish_channel
         .send(RtmpEndpointPublisherMessage::NewVideoData {
-            publisher: ConnectionId("connection".to_string()),
+            publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
             timestamp: RtmpTimestamp::new(5),
@@ -871,7 +872,8 @@ async fn video_packet_from_publisher_passed_as_media_output() {
 
     let media = &context.step_context.media_outputs[0];
     assert_eq!(
-        media.stream_id.0, "abc",
+        media.stream_id.0.as_str(),
+        "abc",
         "Expected media to have original stream id"
     );
 
@@ -901,9 +903,9 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -913,7 +915,7 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
 
     publish_channel
         .send(RtmpEndpointPublisherMessage::NewAudioData {
-            publisher: ConnectionId("connection".to_string()),
+            publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
             codec: AudioCodec::Aac,
             timestamp: RtmpTimestamp::new(5),
@@ -931,7 +933,8 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
 
     let media = &context.step_context.media_outputs[0];
     assert_eq!(
-        media.stream_id.0, "abc",
+        media.stream_id.0.as_str(),
+        "abc",
         "Expected media to have original stream id"
     );
 
@@ -958,9 +961,9 @@ async fn metadata_packet_from_publisher_passed_as_media_output() {
     let mut context = TestContext::new(definition).unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -970,7 +973,7 @@ async fn metadata_packet_from_publisher_passed_as_media_output() {
 
     publish_channel
         .send(RtmpEndpointPublisherMessage::StreamMetadataChanged {
-            publisher: ConnectionId("connection".to_string()),
+            publisher: ConnectionId(Arc::new("connection".to_string())),
             metadata: StreamMetadata::new(),
         })
         .expect("Failed to send video message");
@@ -985,7 +988,8 @@ async fn metadata_packet_from_publisher_passed_as_media_output() {
 
     let media = &context.step_context.media_outputs[0];
     assert_eq!(
-        media.stream_id.0, "abc",
+        media.stream_id.0.as_str(),
+        "abc",
         "Expected media to have original stream id"
     );
 

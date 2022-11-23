@@ -7,6 +7,7 @@ extern crate pest;
 extern crate pest_derive;
 
 use std::num::Wrapping;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 
@@ -30,7 +31,7 @@ pub mod workflows;
 /// a workflow has an ffmpeg transcoding step in the workflow (e.g. to add a watermark), when
 /// ffmpeg pushes the video back in it will keep the same identifier.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StreamId(pub String);
+pub struct StreamId(pub Arc<String>);
 
 /// Represents timestamps relevant to video data.  Contains the decoding time stamp (dts) and
 /// presentation time stamp (dts).

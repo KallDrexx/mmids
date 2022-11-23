@@ -5,6 +5,7 @@ use crate::workflows::steps::StepTestContext;
 use crate::{test_utils, VideoTimestamp};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
+use std::sync::Arc;
 use std::time::Duration;
 
 struct TestContext {
@@ -78,7 +79,7 @@ impl TestContext {
     ) {
         self.workflow_event_channel
             .send(WorkflowStartedOrStoppedEvent::WorkflowStarted {
-                name: name.to_string(),
+                name: Arc::new(name.to_string()),
                 channel: if let Some(sender) = sender {
                     sender
                 } else {
@@ -94,7 +95,7 @@ impl TestContext {
     async fn send_workflow_stopped_event(&mut self, name: &str) {
         self.workflow_event_channel
             .send(WorkflowStartedOrStoppedEvent::WorkflowEnded {
-                name: name.to_string(),
+                name: Arc::new(name.to_string()),
             })
             .expect("Failed to send workflow ended event");
 
@@ -109,19 +110,19 @@ async fn new_stream_message_sent_to_global_workflow() {
     context.send_workflow_started_event("test", None).await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
         WorkflowRequestOperation::MediaNotification { media } => {
-            assert_eq!(&media.stream_id.0, "abc", "Unexpected stream id");
+            assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
             match media.content {
                 MediaNotificationContent::NewIncomingStream { stream_name } => {
-                    assert_eq!(&stream_name, "def", "Unexpected stream name");
+                    assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
                 }
 
                 content => panic!("Unexpected media content: {:?}", content),
@@ -136,9 +137,9 @@ async fn new_stream_message_sent_to_global_workflow() {
 async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -148,10 +149,10 @@ async fn new_stream_message_sent_if_workflow_started_after_message_comes_in() {
     let response = test_utils::expect_mpsc_response(&mut context.workflow_receiver).await;
     match response.operation {
         WorkflowRequestOperation::MediaNotification { media } => {
-            assert_eq!(&media.stream_id.0, "abc", "Unexpected stream id");
+            assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
             match media.content {
                 MediaNotificationContent::NewIncomingStream { stream_name } => {
-                    assert_eq!(&stream_name, "def", "Unexpected stream name");
+                    assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
                 }
 
                 content => panic!("Unexpected media content: {:?}", content),
@@ -168,9 +169,9 @@ async fn no_message_passed_if_workflow_has_different_name_than_global_name() {
     context.send_workflow_started_event("test2", None).await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -184,9 +185,9 @@ async fn no_message_passed_if_workflow_stopped_before_media_sent() {
     context.send_workflow_stopped_event("test").await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -198,14 +199,14 @@ async fn no_message_passed_if_stream_disconnected_before_workflow_started() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::StreamDisconnected,
     });
 
@@ -218,9 +219,9 @@ async fn new_stream_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -231,11 +232,11 @@ async fn new_stream_media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::NewIncomingStream { stream_name } => {
-            assert_eq!(stream_name, "def", "Unexpected stream name");
+            assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
         }
 
         content => panic!("Unexpected media content: {:?}", content),
@@ -247,7 +248,7 @@ async fn stream_disconnected_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::StreamDisconnected,
     });
 
@@ -258,7 +259,7 @@ async fn stream_disconnected_media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::StreamDisconnected => (),
@@ -272,7 +273,7 @@ async fn video_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
@@ -292,7 +293,7 @@ async fn video_media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::Video {
@@ -319,7 +320,7 @@ async fn audio_media_passed_as_output_immediately() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2, 3]),
             codec: AudioCodec::Aac,
@@ -335,7 +336,7 @@ async fn audio_media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::Audio {
@@ -362,7 +363,7 @@ async fn metadata_media_passed_as_output_immediately() {
     metadata.insert("a".to_string(), "b".to_string());
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Metadata {
             data: metadata.clone(),
         },
@@ -375,7 +376,7 @@ async fn metadata_media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::Metadata { data } => {
@@ -390,14 +391,14 @@ async fn metadata_media_passed_as_output_immediately() {
 async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
@@ -438,14 +439,14 @@ async fn video_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
@@ -478,14 +479,14 @@ async fn non_video_sequence_headers_not_sent_to_workflow_when_received_before_wo
 async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2, 3]),
             codec: AudioCodec::Aac,
@@ -522,14 +523,14 @@ async fn audio_sequence_headers_sent_to_workflow_when_received_before_workflow_s
 async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Audio {
             data: Bytes::from(vec![1, 2, 3]),
             codec: AudioCodec::Aac,
@@ -558,14 +559,14 @@ async fn non_audio_sequence_headers_not_sent_to_workflow_when_received_before_wo
 async fn metadata_not_sent_when_received_before_workflow_starts() {
     let mut context = TestContext::new(Some("test"), None).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Metadata {
             data: HashMap::new(),
         },
@@ -591,9 +592,9 @@ async fn metadata_not_sent_when_received_before_workflow_starts() {
 async fn new_stream_triggers_reactor_query() {
     let mut context = TestContext::new(None, Some("test")).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -604,8 +605,8 @@ async fn new_stream_triggers_reactor_query() {
             stream_name,
             ..
         } => {
-            assert_eq!(&reactor_name, "test", "Unexpected reactor name");
-            assert_eq!(&stream_name, "def", "Unexpected stream name");
+            assert_eq!(reactor_name.as_str(), "test", "Unexpected reactor name");
+            assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
         }
 
         response => panic!("Unexpected request: {:?}", response),
@@ -616,9 +617,9 @@ async fn new_stream_triggers_reactor_query() {
 async fn new_stream_passed_to_all_specified_routable_workflow() {
     let mut context = TestContext::new(None, Some("test")).await.unwrap();
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -628,8 +629,8 @@ async fn new_stream_passed_to_all_specified_routable_workflow() {
             response_channel, ..
         } => {
             let mut workflows = HashSet::new();
-            workflows.insert("first".to_string());
-            workflows.insert("second".to_string());
+            workflows.insert(Arc::new("first".to_string()));
+            workflows.insert(Arc::new("second".to_string()));
 
             response_channel
                 .send(ReactorWorkflowUpdate {
@@ -656,10 +657,10 @@ async fn new_stream_passed_to_all_specified_routable_workflow() {
     let response = test_utils::expect_mpsc_response(&mut w1_receiver).await;
     match response.operation {
         WorkflowRequestOperation::MediaNotification { media } => {
-            assert_eq!(&media.stream_id.0, "abc", "Unexpected stream id");
+            assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
             match media.content {
                 MediaNotificationContent::NewIncomingStream { stream_name } => {
-                    assert_eq!(&stream_name, "def", "Unexpected stream name");
+                    assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
                 }
 
                 content => panic!("Unexpected media content: {:?}", content),
@@ -672,10 +673,10 @@ async fn new_stream_passed_to_all_specified_routable_workflow() {
     let response = test_utils::expect_mpsc_response(&mut w2_receiver).await;
     match response.operation {
         WorkflowRequestOperation::MediaNotification { media } => {
-            assert_eq!(&media.stream_id.0, "abc", "Unexpected stream id");
+            assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
             match media.content {
                 MediaNotificationContent::NewIncomingStream { stream_name } => {
-                    assert_eq!(&stream_name, "def", "Unexpected stream name");
+                    assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
                 }
 
                 content => panic!("Unexpected media content: {:?}", content),

@@ -19,6 +19,7 @@ use mmids_core::workflows::steps::{
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
@@ -36,7 +37,7 @@ pub struct BasicTranscodeStepGenerator {
 struct ActiveTranscode {
     media_sender: UnboundedSender<MediaNotificationContent>,
     transcode_process_id: Uuid,
-    stream_name: String,
+    stream_name: Arc<String>,
 }
 
 struct BasicTranscodeStep {
@@ -154,7 +155,7 @@ impl BasicTranscodeStep {
     fn start_transcode(
         &mut self,
         stream_id: StreamId,
-        stream_name: String,
+        stream_name: Arc<String>,
         outputs: &mut StepOutputs,
     ) {
         if self.active_transcodes.contains_key(&stream_id) {

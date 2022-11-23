@@ -5,6 +5,7 @@ use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOp
 use async_trait::async_trait;
 use hyper::{Body, Error, Request, Response, StatusCode};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
 
@@ -30,7 +31,7 @@ impl RouteHandler for StopWorkflowHandler {
         request_id: String,
     ) -> Result<Response<Body>, Error> {
         let workflow_name = match path_parameters.get("workflow") {
-            Some(value) => value.to_string(),
+            Some(value) => Arc::new(value.to_string()),
             None => {
                 error!("Get workflow endpoint called without a 'workflow' path parameter");
                 let mut response = Response::default();

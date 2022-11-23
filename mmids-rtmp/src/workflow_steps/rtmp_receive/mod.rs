@@ -25,6 +25,7 @@ use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -61,11 +62,11 @@ struct RtmpReceiverStep {
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
     port: u16,
-    rtmp_app: String,
+    rtmp_app: Arc<String>,
     stream_key: StreamKeyRegistration,
     status: StepStatus,
     connection_details: HashMap<ConnectionId, ConnectionDetails>,
-    reactor_name: Option<String>,
+    reactor_name: Option<Arc<String>>,
 }
 
 impl StepFutureResult for FutureResult {}
@@ -158,12 +159,12 @@ impl StepGenerator for RtmpReceiverStepGenerator {
         };
 
         let app = match definition.parameters.get(APP_PROPERTY_NAME) {
-            Some(Some(x)) => x.trim(),
+            Some(Some(x)) => Arc::new(x.trim().to_string()),
             _ => return Err(Box::new(StepStartupError::NoRtmpApp)),
         };
 
         let stream_key = match definition.parameters.get(STREAM_KEY_PROPERTY_NAME) {
-            Some(Some(x)) => x.trim(),
+            Some(Some(x)) => Arc::new(x.trim().to_string()),
             _ => return Err(Box::new(StepStartupError::NoStreamKey)),
         };
 
@@ -187,12 +188,10 @@ impl StepGenerator for RtmpReceiverStepGenerator {
         };
 
         let reactor_name = match definition.parameters.get(REACTOR_NAME) {
-            Some(Some(value)) => Some(value.clone()),
+            Some(Some(value)) => Some(Arc::new(value.clone())),
             _ => None,
         };
 
-        let app = app.to_string();
-        let stream_key = stream_key.to_owned();
         let step = RtmpReceiverStep {
             definition,
             status: StepStatus::Created,
@@ -202,7 +201,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             rtmp_app: app,
             connection_details: HashMap::new(),
             reactor_name,
-            stream_key: if stream_key == "*" {
+            stream_key: if stream_key.as_str() == "*" {
                 StreamKeyRegistration::Any
             } else {
                 StreamKeyRegistration::Exact(stream_key)

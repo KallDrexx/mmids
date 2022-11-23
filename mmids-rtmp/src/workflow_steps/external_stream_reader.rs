@@ -11,6 +11,7 @@ use mmids_core::workflows::steps::{FutureList, StepFutureResult, StepOutputs, St
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
 
@@ -25,7 +26,7 @@ use tracing::{error, info, warn};
 pub struct ExternalStreamReader {
     pub status: StepStatus,
     rtmp_server_endpoint: UnboundedSender<RtmpEndpointRequest>,
-    watcher_app_name: String,
+    watcher_app_name: Arc<String>,
     active_streams: HashMap<StreamId, ActiveStream>,
     stream_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
 }
@@ -43,7 +44,7 @@ enum WatchRegistrationStatus {
 
 struct ActiveStream {
     id: StreamId,
-    stream_name: String,
+    stream_name: Arc<String>,
     pending_media: VecDeque<MediaNotificationContent>,
     rtmp_output_status: WatchRegistrationStatus,
     external_stream_handler: Box<dyn ExternalStreamHandler + Sync + Send>,
@@ -63,7 +64,7 @@ impl StepFutureResult for FutureResult {}
 
 impl ExternalStreamReader {
     pub fn new(
-        watcher_rtmp_app_name: String,
+        watcher_rtmp_app_name: Arc<String>,
         rtmp_server: UnboundedSender<RtmpEndpointRequest>,
         external_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
     ) -> (Self, FutureList) {
@@ -389,6 +390,7 @@ mod tests {
     use mmids_core::codecs::{AudioCodec, VideoCodec};
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
+    use std::sync::Arc;
     use std::time::Duration;
 
     struct TestContext {
@@ -447,7 +449,7 @@ mod tests {
             });
 
             let (reader, future_list) =
-                ExternalStreamReader::new("app".to_string(), rtmp_sender, generator);
+                ExternalStreamReader::new(Arc::new("app".to_string()), rtmp_sender, generator);
             let mut futures = FuturesUnordered::new();
             futures.extend(future_list);
 
@@ -464,9 +466,9 @@ mod tests {
             let mut outputs = StepOutputs::new();
 
             let media = MediaNotification {
-                stream_id: StreamId("abc".to_string()),
+                stream_id: StreamId(Arc::new("abc".to_string())),
                 content: MediaNotificationContent::NewIncomingStream {
-                    stream_name: "def".to_string(),
+                    stream_name: Arc::new("def".to_string()),
                 },
             };
 
@@ -503,9 +505,9 @@ mod tests {
         let mut outputs = StepOutputs::new();
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::NewIncomingStream {
-                stream_name: "def".to_string(),
+                stream_name: Arc::new("def".to_string()),
             },
         };
 
@@ -527,7 +529,7 @@ mod tests {
                 notification_channel: _,
             } => {
                 assert_eq!(port, 1935, "Unexpected port");
-                assert_eq!(&rtmp_app, "app", "Unexpected rtmp application");
+                assert_eq!(rtmp_app.as_str(), "app", "Unexpected rtmp application");
                 assert!(!use_tls, "Expected use tls to be disabled");
                 assert!(
                     !requires_registrant_approval,
@@ -550,9 +552,9 @@ mod tests {
         let mut outputs = StepOutputs::new();
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::NewIncomingStream {
-                stream_name: "def".to_string(),
+                stream_name: Arc::new("def".to_string()),
             },
         };
 
@@ -561,10 +563,14 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
-        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        assert_eq!(
+            outputs.media[0].stream_id.0.as_str(),
+            "abc",
+            "Unexpected stream id"
+        );
         match &outputs.media[0].content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
-                assert_eq!(stream_name, "def", "Unexpected stream name");
+                assert_eq!(stream_name.as_str(), "def", "Unexpected stream name");
             }
 
             content => panic!("Expected NewIncomingStream, got {:?}", content),
@@ -577,7 +583,7 @@ mod tests {
         let mut outputs = StepOutputs::new();
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::StreamDisconnected,
         };
 
@@ -586,7 +592,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
-        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        assert_eq!(
+            outputs.media[0].stream_id.0.as_str(),
+            "abc",
+            "Unexpected stream id"
+        );
         match &outputs.media[0].content {
             MediaNotificationContent::StreamDisconnected => (),
             content => panic!("Expected NewIncomingStream, got {:?}", content),
@@ -602,7 +612,7 @@ mod tests {
         metadata.insert("width".to_string(), "1920".to_string());
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Metadata {
                 data: metadata.clone(),
             },
@@ -613,7 +623,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
-        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        assert_eq!(
+            outputs.media[0].stream_id.0.as_str(),
+            "abc",
+            "Unexpected stream id"
+        );
         match &outputs.media[0].content {
             MediaNotificationContent::Metadata { data } => {
                 assert_eq!(data, &metadata, "Unexpected metadata in output");
@@ -632,7 +646,7 @@ mod tests {
             VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2, 3]),
                 codec: VideoCodec::H264,
@@ -647,7 +661,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
-        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        assert_eq!(
+            outputs.media[0].stream_id.0.as_str(),
+            "abc",
+            "Unexpected stream id"
+        );
         match &outputs.media[0].content {
             MediaNotificationContent::Video {
                 data,
@@ -673,7 +691,7 @@ mod tests {
         let mut outputs = StepOutputs::new();
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Audio {
                 data: Bytes::from(vec![1, 2, 3]),
                 codec: AudioCodec::Aac,
@@ -687,7 +705,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
-        assert_eq!(&outputs.media[0].stream_id.0, "abc", "Unexpected stream id");
+        assert_eq!(
+            outputs.media[0].stream_id.0.as_str(),
+            "abc",
+            "Unexpected stream id"
+        );
         match &outputs.media[0].content {
             MediaNotificationContent::Audio {
                 data,
@@ -711,9 +733,9 @@ mod tests {
         let mut outputs = StepOutputs::new();
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::NewIncomingStream {
-                stream_name: "def".to_string(),
+                stream_name: Arc::new("def".to_string()),
             },
         };
 
@@ -752,7 +774,7 @@ mod tests {
 
         let mut outputs = StepOutputs::new();
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::StreamDisconnected,
         };
 
@@ -770,7 +792,7 @@ mod tests {
         let mut outputs = StepOutputs::new();
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::StreamDisconnected,
         };
 
@@ -793,7 +815,7 @@ mod tests {
         let expected_metadata = hash_map_to_stream_metadata(&raw_metadata);
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Metadata { data: raw_metadata },
         };
 
@@ -803,7 +825,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
-        assert_eq!(&media.stream_key, "abc", "Unexpected stream key for media");
+        assert_eq!(
+            media.stream_key.as_str(),
+            "abc",
+            "Unexpected stream key for media"
+        );
 
         match &media.data {
             RtmpEndpointMediaData::NewStreamMetaData { metadata } => {
@@ -823,7 +849,7 @@ mod tests {
             VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2, 3, 4]),
                 is_keyframe: true,
@@ -839,7 +865,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
-        assert_eq!(&media.stream_key, "abc", "Unexpected stream key for media");
+        assert_eq!(
+            media.stream_key.as_str(),
+            "abc",
+            "Unexpected stream key for media"
+        );
 
         match &media.data {
             RtmpEndpointMediaData::NewVideoData {
@@ -876,7 +906,7 @@ mod tests {
         let mut media_receiver = context.accept_stream().await;
 
         let media = MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Audio {
                 data: Bytes::from(vec![1, 2, 3, 4]),
                 is_sequence_header: true,
@@ -891,7 +921,11 @@ mod tests {
             .handle_media(media, &mut outputs);
 
         let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
-        assert_eq!(&media.stream_key, "abc", "Unexpected stream key for media");
+        assert_eq!(
+            media.stream_key.as_str(),
+            "abc",
+            "Unexpected stream key for media"
+        );
 
         match &media.data {
             RtmpEndpointMediaData::NewAudioData {

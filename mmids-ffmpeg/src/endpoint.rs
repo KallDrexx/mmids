@@ -386,7 +386,7 @@ impl Actor {
         }
 
         args.push("-i".to_string());
-        args.push(params.input.clone());
+        args.push(params.input.to_string());
 
         args.push("-vcodec".to_string());
         match &params.video_transcode {

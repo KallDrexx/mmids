@@ -23,6 +23,7 @@ use mmids_core::StreamId;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::channel;
 use tracing::{error, info, instrument, warn};
@@ -30,7 +31,7 @@ use uuid::Uuid;
 
 struct RegisterListenerParams {
     port: u16,
-    rtmp_app: String,
+    rtmp_app: Arc<String>,
     stream_key: StreamKeyRegistration,
     socket_sender: UnboundedSender<TcpSocketRequest>,
     listener: ListenerRequest,
@@ -226,7 +227,7 @@ impl RtmpServerEndpointActor {
                             port_map,
                             port,
                             rtmp_app,
-                            &stream_key,
+                            stream_key,
                             Some(reactor_update_channel),
                         );
 
@@ -255,7 +256,7 @@ impl RtmpServerEndpointActor {
                             port_map,
                             port,
                             rtmp_app,
-                            &stream_key,
+                            stream_key,
                             Some(reactor_update_channel),
                         );
 
@@ -313,8 +314,8 @@ impl RtmpServerEndpointActor {
     fn handle_watcher_media_received(
         &mut self,
         port: u16,
-        app: String,
-        stream_key: String,
+        app: Arc<String>,
+        stream_key: Arc<String>,
         data: RtmpEndpointMediaData,
     ) {
         let port_map = match self.ports.get_mut(&port) {
@@ -322,7 +323,7 @@ impl RtmpServerEndpointActor {
             None => return,
         };
 
-        let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
+        let app_map = match port_map.rtmp_applications.get_mut(&app) {
             Some(x) => x,
             None => return,
         };
@@ -838,7 +839,7 @@ impl RtmpServerEndpointActor {
                     port_map,
                     port,
                     rtmp_app,
-                    &stream_key,
+                    stream_key,
                     None,
                 );
 
@@ -856,7 +857,7 @@ impl RtmpServerEndpointActor {
                     port_map,
                     port,
                     rtmp_app,
-                    &stream_key,
+                    stream_key,
                     None,
                 );
 
@@ -878,7 +879,7 @@ impl RtmpServerEndpointActor {
     fn remove_publish_registration(
         &mut self,
         port: u16,
-        app: String,
+        app: Arc<String>,
         stream_key: StreamKeyRegistration,
     ) {
         let port_map = match self.ports.get_mut(&port) {
@@ -886,7 +887,7 @@ impl RtmpServerEndpointActor {
             None => return,
         };
 
-        let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
+        let app_map = match port_map.rtmp_applications.get_mut(&app) {
             Some(x) => x,
             None => return,
         };
@@ -925,7 +926,7 @@ impl RtmpServerEndpointActor {
     fn remove_watcher_registration(
         &mut self,
         port: u16,
-        app: String,
+        app: Arc<String>,
         stream_key: StreamKeyRegistration,
     ) {
         let port_map = match self.ports.get_mut(&port) {
@@ -933,7 +934,7 @@ impl RtmpServerEndpointActor {
             None => return,
         };
 
-        let app_map = match port_map.rtmp_applications.get_mut(app.as_str()) {
+        let app_map = match port_map.rtmp_applications.get_mut(&app) {
             Some(x) => x,
             None => return,
         };
@@ -989,9 +990,9 @@ fn handle_connection_stop_watch(connection_id: ConnectionId, port_map: &mut Port
         let rtmp_app = rtmp_app.clone();
         let stream_key = stream_key.clone();
         connection.state = ConnectionState::None;
-        match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        match port_map.rtmp_applications.get_mut(&rtmp_app) {
             None => (),
-            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
+            Some(app_map) => match app_map.active_stream_keys.get_mut(&stream_key) {
                 None => (),
                 Some(active_key) => {
                     active_key.watchers.remove(&connection_id);
@@ -1042,9 +1043,9 @@ fn handle_connection_stop_publish(connection_id: ConnectionId, port_map: &mut Po
         let stream_key = stream_key.clone();
         connection.state = ConnectionState::None;
 
-        match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        match port_map.rtmp_applications.get_mut(&rtmp_app) {
             None => (),
-            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
+            Some(app_map) => match app_map.active_stream_keys.get_mut(&stream_key) {
                 None => (),
                 Some(active_key) => {
                     match &active_key.publisher {
@@ -1086,8 +1087,8 @@ fn handle_connection_request_watch(
     connection_id: ConnectionId,
     port_map: &mut PortMapping,
     port: u16,
-    rtmp_app: String,
-    stream_key: &String,
+    rtmp_app: Arc<String>,
+    stream_key: Arc<String>,
     reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 ) -> Option<BoxFuture<'static, FutureResult>> {
     let connection = match port_map.connections.get_mut(&connection_id) {
@@ -1101,7 +1102,7 @@ fn handle_connection_request_watch(
     };
 
     // Has this app been registered yet?
-    let application = match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+    let application = match port_map.rtmp_applications.get_mut(&rtmp_app) {
         Some(x) => x,
         None => {
             info!(
@@ -1179,7 +1180,7 @@ fn handle_connection_request_watch(
         let (sender, receiver) = channel();
         let _ = registrant.response_channel.send(
             RtmpEndpointWatcherNotification::WatcherRequiringApproval {
-                stream_key: stream_key.clone(),
+                stream_key,
                 connection_id: connection_id.clone(),
                 response_channel: sender,
             },
@@ -1208,7 +1209,7 @@ fn handle_connection_request_watch(
     if active_stream_key.watchers.is_empty() {
         let _ = registrant.response_channel.send(
             RtmpEndpointWatcherNotification::StreamKeyBecameActive {
-                stream_key: stream_key.clone(),
+                stream_key,
                 reactor_update_channel,
             },
         );
@@ -1256,8 +1257,8 @@ fn handle_connection_request_publish(
     connection_id: &ConnectionId,
     port_map: &mut PortMapping,
     port: u16,
-    rtmp_app: String,
-    stream_key: &String,
+    rtmp_app: Arc<String>,
+    stream_key: Arc<String>,
     reactor_response_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
 ) -> Option<BoxFuture<'static, FutureResult>> {
     let connection = match port_map.connections.get_mut(connection_id) {
@@ -1271,7 +1272,7 @@ fn handle_connection_request_publish(
     };
 
     // Has this RTMP application been registered yet?
-    let application = match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+    let application = match port_map.rtmp_applications.get_mut(&rtmp_app) {
         Some(x) => x,
         None => {
             info!("Connection {} requested publishing to '{}/{}', but the RTMP app '{}' isn't registered yet",
@@ -1372,7 +1373,7 @@ fn handle_connection_request_publish(
         let (sender, receiver) = channel();
         let _ = registrant.response_channel.send(
             RtmpEndpointPublisherMessage::PublisherRequiringApproval {
-                stream_key: stream_key.clone(),
+                stream_key,
                 connection_id: connection_id.clone(),
                 response_channel: sender,
             },
@@ -1393,7 +1394,7 @@ fn handle_connection_request_publish(
     let stream_id = if let Some(id) = &registrant.stream_id {
         (*id).clone()
     } else {
-        StreamId(Uuid::new_v4().to_string())
+        StreamId(Arc::new(Uuid::new_v4().to_string()))
     };
 
     let _ = connection
@@ -1406,7 +1407,7 @@ fn handle_connection_request_publish(
         .response_channel
         .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
             connection_id: connection_id.clone(),
-            stream_key: stream_key.clone(),
+            stream_key,
             stream_id,
             reactor_update_channel: reactor_response_channel,
         });
@@ -1419,7 +1420,7 @@ fn handle_connection_request_connect_to_app(
     connection_id: &ConnectionId,
     port_map: &mut PortMapping,
     port: u16,
-    rtmp_app: String,
+    rtmp_app: Arc<String>,
 ) {
     let connection = match port_map.connections.get_mut(connection_id) {
         Some(x) => x,
@@ -1430,7 +1431,7 @@ fn handle_connection_request_connect_to_app(
             return;
         }
     };
-    let response = if !port_map.rtmp_applications.contains_key(rtmp_app.as_str()) {
+    let response = if !port_map.rtmp_applications.contains_key(&rtmp_app) {
         info!(
             "Connection {} requested connection to RTMP app '{}' which isn't registered yet",
             connection_id, rtmp_app
@@ -1464,9 +1465,9 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
         ConnectionState::Publishing {
             rtmp_app,
             stream_key,
-        } => match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        } => match port_map.rtmp_applications.get_mut(&rtmp_app) {
             None => (),
-            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
+            Some(app_map) => match app_map.active_stream_keys.get_mut(&stream_key) {
                 None => (),
                 Some(active_key) => {
                     match &active_key.publisher {
@@ -1504,9 +1505,9 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
         ConnectionState::Watching {
             rtmp_app,
             stream_key,
-        } => match port_map.rtmp_applications.get_mut(rtmp_app.as_str()) {
+        } => match port_map.rtmp_applications.get_mut(&rtmp_app) {
             None => (),
-            Some(app_map) => match app_map.active_stream_keys.get_mut(stream_key.as_str()) {
+            Some(app_map) => match app_map.active_stream_keys.get_mut(&stream_key) {
                 None => (),
                 Some(active_key) => {
                     active_key.watchers.remove(&connection_id);
@@ -1544,6 +1545,7 @@ mod internal_futures {
     };
     use mmids_core::net::tcp::{TcpSocketRequest, TcpSocketResponse};
     use mmids_core::net::ConnectionId;
+    use std::sync::Arc;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio::sync::oneshot::Receiver;
 
@@ -1576,7 +1578,7 @@ mod internal_futures {
     pub(super) async fn wait_for_publisher_channel_closed(
         sender: UnboundedSender<RtmpEndpointPublisherMessage>,
         port: u16,
-        app_name: String,
+        app_name: Arc<String>,
         stream_key: StreamKeyRegistration,
         cancellation_receiver: UnboundedSender<()>,
     ) -> FutureResult {
@@ -1615,7 +1617,7 @@ mod internal_futures {
     pub(super) async fn wait_for_watcher_notification_channel_closed(
         sender: UnboundedSender<RtmpEndpointWatcherNotification>,
         port: u16,
-        app_name: String,
+        app_name: Arc<String>,
         stream_key: StreamKeyRegistration,
         cancellation_token: UnboundedSender<()>,
     ) -> FutureResult {
@@ -1634,7 +1636,7 @@ mod internal_futures {
     pub(super) async fn wait_for_watcher_media(
         mut receiver: UnboundedReceiver<RtmpEndpointMediaMessage>,
         port: u16,
-        app_name: String,
+        app_name: Arc<String>,
         stream_key_registration: StreamKeyRegistration,
     ) -> FutureResult {
         match receiver.recv().await {

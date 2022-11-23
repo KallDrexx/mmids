@@ -13,6 +13,7 @@ use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::{test_utils, StreamId, VideoTimestamp};
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::channel;
@@ -179,10 +180,10 @@ async fn requests_registration_for_watchers() {
             ..
         } => {
             assert_eq!(port, 1234, "Unexpected port");
-            assert_eq!(&rtmp_app, "some_app", "Unexpected rtmp app");
+            assert_eq!(rtmp_app.as_str(), "some_app", "Unexpected rtmp app");
             assert_eq!(
                 rtmp_stream_key,
-                StreamKeyRegistration::Exact("some_key".to_string()),
+                StreamKeyRegistration::Exact(Arc::new("some_key".to_string())),
                 "Unexpected stream key"
             );
         }
@@ -329,7 +330,7 @@ async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             codec: VideoCodec::H264,
             data: Bytes::from(vec![3, 4]),
@@ -349,14 +350,14 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             codec: VideoCodec::H264,
             data: Bytes::from(vec![3, 4]),
@@ -370,7 +371,7 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
     });
 
     let media = expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&media.stream_key, "def");
+    assert_eq!(media.stream_key.as_str(), "def");
 
     match &media.data {
         RtmpEndpointMediaData::NewVideoData {
@@ -403,19 +404,19 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::StreamDisconnected,
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             codec: VideoCodec::H264,
             data: Bytes::from(vec![3, 4]),
@@ -438,14 +439,14 @@ async fn video_packet_not_sent_to_media_channel_when_new_stream_is_for_different
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("def".to_string()),
+        stream_id: StreamId(Arc::new("def".to_string())),
         content: MediaNotificationContent::Video {
             codec: VideoCodec::H264,
             data: Bytes::from(vec![3, 4]),
@@ -468,14 +469,14 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Audio {
             codec: AudioCodec::Aac,
             data: Bytes::from(vec![3, 4]),
@@ -485,7 +486,7 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
     });
 
     let media = expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&media.stream_key, "def");
+    assert_eq!(media.stream_key.as_str(), "def");
 
     match &media.data {
         RtmpEndpointMediaData::NewAudioData {
@@ -511,9 +512,9 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
@@ -521,12 +522,12 @@ async fn metadata_packet_sent_to_media_channel_after_new_stream_message_received
     metadata.insert("width".to_string(), "1920".to_string());
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Metadata { data: metadata },
     });
 
     let media = expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&media.stream_key, "def");
+    assert_eq!(media.stream_key.as_str(), "def");
 
     match &media.data {
         RtmpEndpointMediaData::NewStreamMetaData { metadata } => {
@@ -544,14 +545,14 @@ async fn media_message_uses_strict_stream_key_when_exact_key_registered() {
     let (_notification_channel, mut media_channel) = context.accept_registration().await;
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
-            stream_name: "def".to_string(),
+            stream_name: Arc::new("def".to_string()),
         },
     });
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::Video {
             codec: VideoCodec::H264,
             data: Bytes::from(vec![3, 4]),
@@ -565,7 +566,11 @@ async fn media_message_uses_strict_stream_key_when_exact_key_registered() {
     });
 
     let media = expect_mpsc_response(&mut media_channel).await;
-    assert_eq!(&media.stream_key, "specific_key", "Unexpected stream key");
+    assert_eq!(
+        media.stream_key.as_str(),
+        "specific_key",
+        "Unexpected stream key"
+    );
 }
 
 #[tokio::test]
@@ -577,9 +582,9 @@ async fn new_stream_message_passed_as_output() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::NewIncomingStream {
-                stream_name: "def".to_string(),
+                stream_name: Arc::new("def".to_string()),
             },
         });
 }
@@ -593,7 +598,7 @@ async fn stream_disconnected_message_passed_as_output() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::StreamDisconnected,
         });
 }
@@ -607,7 +612,7 @@ async fn video_message_passed_as_output() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Video {
                 codec: VideoCodec::H264,
                 data: Bytes::from(vec![3, 4]),
@@ -630,7 +635,7 @@ async fn audio_message_passed_as_output() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Audio {
                 codec: AudioCodec::Aac,
                 data: Bytes::from(vec![3, 4]),
@@ -652,7 +657,7 @@ async fn metadata_message_passed_as_output() {
     context
         .step_context
         .assert_media_passed_through(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: MediaNotificationContent::Metadata { data: metadata },
         });
 }
@@ -668,8 +673,8 @@ async fn watchers_requiring_approval_sends_request_to_reactor() {
     let (sender, _receiver) = channel();
     notification_channel
         .send(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("def".to_string()),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("def".to_string())),
             response_channel: sender,
         })
         .expect("Failed to send approval request");
@@ -683,8 +688,12 @@ async fn watchers_requiring_approval_sends_request_to_reactor() {
             stream_name,
             ..
         } => {
-            assert_eq!(&reactor_name, "some_reactor", "Unexpected reactor name");
-            assert_eq!(&stream_name, "abc", "Unexpected stream name");
+            assert_eq!(
+                reactor_name.as_str(),
+                "some_reactor",
+                "Unexpected reactor name"
+            );
+            assert_eq!(stream_name.as_str(), "abc", "Unexpected stream name");
         }
 
         request => panic!("Unexpected request: {:?}", request),
@@ -702,8 +711,8 @@ async fn reactor_responding_with_invalid_sends_rejection_response() {
     let (sender, receiver) = channel();
     notification_channel
         .send(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("def".to_string()),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("def".to_string())),
             response_channel: sender,
         })
         .expect("Failed to send approval request");
@@ -737,8 +746,8 @@ async fn reactor_responding_with_valid_sends_approved_response() {
     let (sender, receiver) = channel();
     notification_channel
         .send(RtmpEndpointWatcherNotification::WatcherRequiringApproval {
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("def".to_string()),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("def".to_string())),
             response_channel: sender,
         })
         .expect("Failed to send approval request");

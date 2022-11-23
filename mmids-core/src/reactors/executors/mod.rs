@@ -3,6 +3,7 @@ pub mod simple_http_executor;
 use crate::workflows::definitions::WorkflowDefinition;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Contains the result from a reactor execution request about a stream
@@ -18,7 +19,7 @@ pub struct ReactorExecutionResult {
 /// Performs a request for workflow information on behalf of a reactor
 pub trait ReactorExecutor {
     /// Requests the definition of a workflow based on a stream name
-    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult>;
+    fn get_workflow(&self, stream_name: Arc<String>) -> BoxFuture<'static, ReactorExecutionResult>;
 }
 
 /// Allows generating a reactor executor using parameters from a reactor definition

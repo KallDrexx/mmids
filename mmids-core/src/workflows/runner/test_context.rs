@@ -24,7 +24,7 @@ pub struct TestContext {
 impl TestContext {
     pub fn new() -> Self {
         let (input_media_sender, input_media_receiver) = channel(MediaNotification {
-            stream_id: StreamId("invalid".to_string()),
+            stream_id: StreamId(Arc::new("invalid".to_string())),
             content: MediaNotificationContent::StreamDisconnected,
         });
 
@@ -55,7 +55,7 @@ impl TestContext {
             .expect("Failed to register output step");
 
         let definition = WorkflowDefinition {
-            name: "abc".to_string(),
+            name: Arc::new("abc".to_string()),
             routed_by_reactor: false,
             steps: vec![
                 WorkflowStepDefinition {

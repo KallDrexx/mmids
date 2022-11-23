@@ -17,6 +17,7 @@ use mmids_core::workflows::steps::{
 use mmids_core::StreamId;
 use mmids_rtmp::rtmp_server::RtmpEndpointRequest;
 use mmids_rtmp::workflow_steps::external_stream_reader::ExternalStreamReader;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
@@ -80,7 +81,7 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
             FfmpegHandlerGenerator::new(self.ffmpeg_endpoint.clone(), Box::new(param_generator));
 
         let (reader, mut futures) = ExternalStreamReader::new(
-            format!("ffmpeg-rtmp-push-{}", definition.get_id()),
+            Arc::new(format!("ffmpeg-rtmp-push-{}", definition.get_id())),
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
         );

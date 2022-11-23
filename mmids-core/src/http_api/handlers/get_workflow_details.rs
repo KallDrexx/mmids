@@ -9,6 +9,7 @@ use hyper::http::HeaderValue;
 use hyper::{Body, Error, Request, Response, StatusCode};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::channel;
@@ -68,7 +69,7 @@ impl RouteHandler for GetWorkflowDetailsHandler {
         let _ = self.manager.send(WorkflowManagerRequest {
             request_id,
             operation: WorkflowManagerRequestOperation::GetWorkflowDetails {
-                name: workflow_name,
+                name: Arc::new(workflow_name),
                 response_channel: sender,
             },
         });

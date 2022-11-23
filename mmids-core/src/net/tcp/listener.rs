@@ -107,7 +107,7 @@ async fn listen(params: ListenerParams, _self_disconnection_signal: UnboundedRec
                     }
                 };
 
-                let connection_id = ConnectionId(Uuid::new_v4().to_string());
+                let connection_id = ConnectionId(Arc::new(Uuid::new_v4().to_string()));
                 tokio::spawn(handle_new_connection(socket, client_info, response_channel.clone(), port, connection_id, tls.clone()));
             },
 

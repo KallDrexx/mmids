@@ -216,7 +216,7 @@ async fn workflow_passes_media_from_one_step_to_the_next() {
     context
         .media_sender
         .send(MediaNotification {
-            stream_id: StreamId("abc".to_string()),
+            stream_id: StreamId(Arc::new("abc".to_string())),
             content: StreamDisconnected,
         })
         .expect("Failed to send media notification to step");
@@ -224,7 +224,7 @@ async fn workflow_passes_media_from_one_step_to_the_next() {
     let response = test_utils::expect_mpsc_response(&mut context.media_receiver).await;
     assert_eq!(
         response.stream_id,
-        StreamId("abc".to_string()),
+        StreamId(Arc::new("abc".to_string())),
         "Unexpected stream id"
     );
 
@@ -253,7 +253,7 @@ async fn media_sent_to_workflow_flows_through_steps() {
             request_id: "".to_string(),
             operation: WorkflowRequestOperation::MediaNotification {
                 media: MediaNotification {
-                    stream_id: StreamId("abc".to_string()),
+                    stream_id: StreamId(Arc::new("abc".to_string())),
                     content: StreamDisconnected,
                 },
             },
@@ -263,7 +263,7 @@ async fn media_sent_to_workflow_flows_through_steps() {
     let response = test_utils::expect_mpsc_response(&mut context.media_receiver).await;
     assert_eq!(
         response.stream_id,
-        StreamId("abc".to_string()),
+        StreamId(Arc::new("abc".to_string())),
         "Unexpected stream id"
     );
 
@@ -295,7 +295,7 @@ async fn steps_in_active_workflow_are_pending() {
     let mut params = HashMap::new(); // parameters will give it a new id
     params.insert("a".to_string(), Some("b".to_string()));
     let definition = WorkflowDefinition {
-        name: "abc".to_string(),
+        name: Arc::new("abc".to_string()),
         routed_by_reactor: false,
         steps: vec![WorkflowStepDefinition {
             step_type: WorkflowStepType("output".to_string()),
@@ -375,7 +375,7 @@ async fn new_pending_steps_replace_active_steps_when_pending_steps_get_active_st
     params2.insert("c".to_string(), None);
 
     let definition = WorkflowDefinition {
-        name: "abc".to_string(),
+        name: Arc::new("abc".to_string()),
         routed_by_reactor: false,
         steps: vec![
             WorkflowStepDefinition {
@@ -470,7 +470,7 @@ async fn channel_closed_after_shutdown() {
 async fn workflow_in_error_state_if_factory_cant_find_step() {
     let factory = Arc::new(WorkflowStepFactory::new());
     let definition = WorkflowDefinition {
-        name: "abc".to_string(),
+        name: Arc::new("abc".to_string()),
         routed_by_reactor: false,
         steps: vec![WorkflowStepDefinition {
             step_type: WorkflowStepType("input".to_string()),
@@ -522,7 +522,7 @@ async fn workflow_in_error_state_if_updated_steps_arent_registered_with_factory(
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     let definition = WorkflowDefinition {
-        name: "abc".to_string(),
+        name: Arc::new("abc".to_string()),
         routed_by_reactor: false,
         steps: vec![WorkflowStepDefinition {
             step_type: WorkflowStepType("output2".to_string()),

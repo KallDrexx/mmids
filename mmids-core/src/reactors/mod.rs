@@ -11,6 +11,7 @@ pub mod manager;
 mod reactor;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use reactor::{start_reactor, ReactorRequest, ReactorWorkflowUpdate};
@@ -20,7 +21,7 @@ pub use reactor::{start_reactor, ReactorRequest, ReactorWorkflowUpdate};
 pub struct ReactorDefinition {
     /// The name of the reactor. Used by endpoints and workflow steps to identify which workflow
     /// they want to interact with.
-    pub name: String,
+    pub name: Arc<String>,
 
     /// The name of the query executor this reactor should use to perform queries
     pub executor: String,

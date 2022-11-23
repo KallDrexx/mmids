@@ -8,6 +8,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{info, instrument, warn};
 
@@ -34,12 +35,12 @@ pub enum SubscriptionRequest {
 #[derive(Clone, Debug)]
 pub enum WorkflowStartedOrStoppedEvent {
     WorkflowStarted {
-        name: String,
+        name: Arc<String>,
         channel: UnboundedSender<WorkflowRequest>,
     },
 
     WorkflowEnded {
-        name: String,
+        name: Arc<String>,
     },
 }
 
@@ -79,7 +80,7 @@ struct Actor {
     workflow_start_stop_subscribers: HashMap<usize, UnboundedSender<WorkflowStartedOrStoppedEvent>>,
     workflow_manager_subscribers: HashMap<usize, UnboundedSender<WorkflowManagerEvent>>,
     new_subscribers_can_join: bool,
-    active_workflows: HashMap<String, UnboundedSender<WorkflowRequest>>,
+    active_workflows: HashMap<Arc<String>, UnboundedSender<WorkflowRequest>>,
     active_workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
 }
 
@@ -208,7 +209,7 @@ impl Actor {
             SubscriptionRequest::WorkflowStartedOrStopped { channel } => {
                 for (name, workflow_channel) in &self.active_workflows {
                     let _ = channel.send(WorkflowStartedOrStoppedEvent::WorkflowStarted {
-                        name: name.to_string(),
+                        name: name.clone(),
                         channel: workflow_channel.clone(),
                     });
                 }
@@ -296,7 +297,7 @@ mod tests {
         publish_channel
             .send(PublishEventRequest::WorkflowStartedOrStopped(
                 WorkflowStartedOrStoppedEvent::WorkflowStarted {
-                    name: "test".to_string(),
+                    name: Arc::new("test".to_string()),
                     channel: workflow_sender,
                 },
             ))
@@ -305,7 +306,7 @@ mod tests {
         let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
         match response {
             WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ } => {
-                assert_eq!(&name, "test", "Unexpected workflow name");
+                assert_eq!(name.as_str(), "test", "Unexpected workflow name");
             }
 
             event => panic!("Unexpected event received: {:?}", event),
@@ -321,7 +322,7 @@ mod tests {
         publish_channel
             .send(PublishEventRequest::WorkflowStartedOrStopped(
                 WorkflowStartedOrStoppedEvent::WorkflowStarted {
-                    name: "test".to_string(),
+                    name: Arc::new("test".to_string()),
                     channel: workflow_sender,
                 },
             ))
@@ -338,7 +339,7 @@ mod tests {
         let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
         match response {
             WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ } => {
-                assert_eq!(&name, "test", "Unexpected workflow name");
+                assert_eq!(name.as_str(), "test", "Unexpected workflow name");
             }
 
             event => panic!("Unexpected event received: {:?}", event),
@@ -361,7 +362,7 @@ mod tests {
         publish_channel
             .send(PublishEventRequest::WorkflowStartedOrStopped(
                 WorkflowStartedOrStoppedEvent::WorkflowEnded {
-                    name: "test".to_string(),
+                    name: Arc::new("test".to_string()),
                 },
             ))
             .expect("Failed to publish workflow ended event");
@@ -369,7 +370,7 @@ mod tests {
         let response = test_utils::expect_mpsc_response(&mut subscriber_receiver).await;
         match response {
             WorkflowStartedOrStoppedEvent::WorkflowEnded { name } => {
-                assert_eq!(&name, "test", "Unexpected workflow name");
+                assert_eq!(name.as_str(), "test", "Unexpected workflow name");
             }
 
             event => panic!("Unexpected event received: {:?}", event),
@@ -385,7 +386,7 @@ mod tests {
         publish_channel
             .send(PublishEventRequest::WorkflowStartedOrStopped(
                 WorkflowStartedOrStoppedEvent::WorkflowStarted {
-                    name: "test".to_string(),
+                    name: Arc::new("test".to_string()),
                     channel: workflow_sender,
                 },
             ))
@@ -394,7 +395,7 @@ mod tests {
         publish_channel
             .send(PublishEventRequest::WorkflowStartedOrStopped(
                 WorkflowStartedOrStoppedEvent::WorkflowEnded {
-                    name: "test".to_string(),
+                    name: Arc::new("test".to_string()),
                 },
             ))
             .expect("Failed to publish workflow ended event");

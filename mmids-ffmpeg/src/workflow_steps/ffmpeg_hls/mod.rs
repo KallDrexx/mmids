@@ -16,6 +16,7 @@ use mmids_core::workflows::steps::{
 use mmids_core::StreamId;
 use mmids_rtmp::rtmp_server::RtmpEndpointRequest;
 use mmids_rtmp::workflow_steps::external_stream_reader::ExternalStreamReader;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
@@ -61,7 +62,7 @@ enum StepStartupError {
 }
 
 struct ParamGenerator {
-    rtmp_app: String,
+    rtmp_app: Arc<String>,
     path: String,
     segment_duration: u16,
     segment_count: u16,
@@ -114,9 +115,10 @@ impl StepGenerator for FfmpegHlsStepGenerator {
         };
 
         let stream_name = definition.parameters.get(STREAM_NAME).cloned().flatten();
+        let rtmp_app = Arc::new(get_rtmp_app(definition.get_id().to_string()));
 
         let param_generator = ParamGenerator {
-            rtmp_app: get_rtmp_app(definition.get_id().to_string()),
+            rtmp_app: rtmp_app.clone(),
             path: path.clone(),
             segment_duration: duration,
             segment_count: count,
@@ -127,7 +129,7 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             FfmpegHandlerGenerator::new(self.ffmpeg_endpoint.clone(), Box::new(param_generator));
 
         let (reader, mut futures) = ExternalStreamReader::new(
-            get_rtmp_app(definition.get_id().to_string()),
+            rtmp_app,
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
         );

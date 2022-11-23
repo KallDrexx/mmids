@@ -14,6 +14,7 @@ use mmids_core::net::ConnectionId;
 use mmids_core::StreamId;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub enum FutureResult {
@@ -30,7 +31,7 @@ pub enum FutureResult {
 
     PublishingRegistrantGone {
         port: u16,
-        app: String,
+        app: Arc<String>,
         stream_key: StreamKeyRegistration,
     },
 
@@ -48,15 +49,15 @@ pub enum FutureResult {
 
     WatcherRegistrantGone {
         port: u16,
-        app: String,
+        app: Arc<String>,
         stream_key: StreamKeyRegistration,
     },
 
     WatcherMediaDataReceived {
         data: RtmpEndpointMediaData,
         port: u16,
-        app: String,
-        stream_key: String,
+        app: Arc<String>,
+        stream_key: Arc<String>,
         stream_key_registration: StreamKeyRegistration,
         receiver: UnboundedReceiver<RtmpEndpointMediaMessage>,
     },
@@ -109,7 +110,7 @@ pub struct StreamKeyConnections {
 pub struct RtmpAppMapping {
     pub publisher_registrants: HashMap<StreamKeyRegistration, PublishingRegistrant>,
     pub watcher_registrants: HashMap<StreamKeyRegistration, WatcherRegistrant>,
-    pub active_stream_keys: HashMap<String, StreamKeyConnections>,
+    pub active_stream_keys: HashMap<Arc<String>, StreamKeyConnections>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -141,23 +142,23 @@ pub enum ConnectionState {
     None,
 
     WaitingForPublishValidation {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
 
     WaitingForWatchValidation {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
 
     Publishing {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
 
     Watching {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
 }
 
@@ -169,7 +170,7 @@ pub struct Connection {
 }
 
 pub struct PortMapping {
-    pub rtmp_applications: HashMap<String, RtmpAppMapping>,
+    pub rtmp_applications: HashMap<Arc<String>, RtmpAppMapping>,
     pub status: PortStatus,
     pub connections: HashMap<ConnectionId, Connection>,
     pub tls: bool,

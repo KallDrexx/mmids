@@ -11,6 +11,7 @@ use rml_rtmp::sessions::{
 };
 use rml_rtmp::time::RtmpTimestamp;
 use std::net::{SocketAddr, SocketAddrV4};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::timeout;
@@ -131,7 +132,7 @@ impl RtmpTestClient {
             panic!("Only one connection is supported at a time");
         }
 
-        let connection_id = ConnectionId(CONNECTION_ID.to_string());
+        let connection_id = ConnectionId(Arc::new(CONNECTION_ID.to_string()));
         let (incoming_sender, incoming_receiver) = unbounded_channel();
         let (outgoing_sender, mut outgoing_receiver) = unbounded_channel();
 

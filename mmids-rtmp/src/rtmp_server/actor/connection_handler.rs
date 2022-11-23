@@ -15,6 +15,7 @@ use rml_rtmp::sessions::{
 };
 use rml_rtmp::time::RtmpTimestamp;
 use std::io::Cursor;
+use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, error, info, instrument};
 
@@ -35,17 +36,17 @@ pub struct RtmpServerConnectionHandler {
 #[derive(Debug)]
 pub enum ConnectionRequest {
     RequestConnectToApp {
-        rtmp_app: String,
+        rtmp_app: Arc<String>,
     },
 
     RequestPublish {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
 
     RequestWatch {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
 
     PublishFinished,
@@ -72,30 +73,30 @@ enum ConnectionState {
     Handshaking,
     RtmpSessionActive,
     RequestedAppConnection {
-        rtmp_app: String,
+        rtmp_app: Arc<String>,
         rtmp_request_id: u32,
     },
     ConnectedToApp {
-        rtmp_app: String,
+        rtmp_app: Arc<String>,
     },
     RequestedPublishing {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
         rtmp_request_id: u32,
     },
     Publishing {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
     },
     RequestedWatch {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
         rtmp_request_id: u32,
         stream_id: u32,
     },
     Watching {
-        rtmp_app: String,
-        stream_key: String,
+        rtmp_app: Arc<String>,
+        stream_key: Arc<String>,
         stream_id: u32,
     },
 }
@@ -326,7 +327,7 @@ impl RtmpServerConnectionHandler {
                         request_id,
                         app_name,
                     } => {
-                        self.handle_rtmp_event_connection_requested(request_id, app_name);
+                        self.handle_rtmp_event_connection_requested(request_id, Arc::new(app_name));
                     }
 
                     ServerSessionEvent::PublishStreamRequested {
@@ -336,7 +337,10 @@ impl RtmpServerConnectionHandler {
                         mode,
                     } => {
                         self.handle_rtmp_event_publish_stream_requested(
-                            request_id, app_name, stream_key, mode,
+                            request_id,
+                            Arc::new(app_name),
+                            Arc::new(stream_key),
+                            mode,
                         );
                     }
 
@@ -344,8 +348,11 @@ impl RtmpServerConnectionHandler {
                         app_name,
                         stream_key,
                         metadata,
-                    } => self
-                        .handle_rtmp_event_stream_metadata_changed(app_name, stream_key, metadata),
+                    } => self.handle_rtmp_event_stream_metadata_changed(
+                        Arc::new(app_name),
+                        Arc::new(stream_key),
+                        metadata,
+                    ),
 
                     ServerSessionEvent::VideoDataReceived {
                         app_name,
@@ -353,7 +360,10 @@ impl RtmpServerConnectionHandler {
                         data,
                         timestamp,
                     } => self.handle_rtmp_event_video_data_received(
-                        app_name, stream_key, data, timestamp,
+                        Arc::new(app_name),
+                        Arc::new(stream_key),
+                        data,
+                        timestamp,
                     ),
 
                     ServerSessionEvent::AudioDataReceived {
@@ -362,7 +372,10 @@ impl RtmpServerConnectionHandler {
                         data,
                         timestamp,
                     } => self.handle_rtmp_event_audio_data_received(
-                        app_name, stream_key, data, timestamp,
+                        Arc::new(app_name),
+                        Arc::new(stream_key),
+                        data,
+                        timestamp,
                     ),
 
                     ServerSessionEvent::PlayStreamRequested {
@@ -374,18 +387,25 @@ impl RtmpServerConnectionHandler {
                         duration: _,
                         start_at: _,
                     } => self.handle_rtmp_event_play_stream_requested(
-                        app_name, stream_key, stream_id, request_id,
+                        Arc::new(app_name),
+                        Arc::new(stream_key),
+                        stream_id,
+                        request_id,
                     ),
 
                     ServerSessionEvent::PublishStreamFinished {
                         app_name,
                         stream_key,
-                    } => self.handle_rtmp_event_publish_finished(app_name, stream_key),
+                    } => self.handle_rtmp_event_publish_finished(
+                        Arc::new(app_name),
+                        Arc::new(stream_key),
+                    ),
 
                     ServerSessionEvent::PlayStreamFinished {
                         app_name,
                         stream_key,
-                    } => self.handle_rtmp_event_play_finished(app_name, stream_key),
+                    } => self
+                        .handle_rtmp_event_play_finished(Arc::new(app_name), Arc::new(stream_key)),
 
                     event => {
                         info!("Connection raised RTMP event: {:?}", event);
@@ -402,7 +422,7 @@ impl RtmpServerConnectionHandler {
         }
     }
 
-    fn handle_rtmp_event_play_finished(&mut self, app_name: String, stream_key: String) {
+    fn handle_rtmp_event_play_finished(&mut self, app_name: Arc<String>, stream_key: Arc<String>) {
         match &self.state {
             ConnectionState::Watching {
                 rtmp_app: active_app,
@@ -448,7 +468,11 @@ impl RtmpServerConnectionHandler {
         }
     }
 
-    fn handle_rtmp_event_publish_finished(&mut self, app_name: String, stream_key: String) {
+    fn handle_rtmp_event_publish_finished(
+        &mut self,
+        app_name: Arc<String>,
+        stream_key: Arc<String>,
+    ) {
         match &self.state {
             ConnectionState::Publishing {
                 rtmp_app: current_app,
@@ -494,8 +518,8 @@ impl RtmpServerConnectionHandler {
 
     fn handle_rtmp_event_play_stream_requested(
         &mut self,
-        app_name: String,
-        stream_key: String,
+        app_name: Arc<String>,
+        stream_key: Arc<String>,
         stream_id: u32,
         request_id: u32,
     ) {
@@ -536,8 +560,8 @@ impl RtmpServerConnectionHandler {
 
     fn handle_rtmp_event_audio_data_received(
         &mut self,
-        app_name: String,
-        stream_key: String,
+        app_name: Arc<String>,
+        stream_key: Arc<String>,
         data: Bytes,
         timestamp: RtmpTimestamp,
     ) {
@@ -587,8 +611,8 @@ impl RtmpServerConnectionHandler {
 
     fn handle_rtmp_event_video_data_received(
         &mut self,
-        app_name: String,
-        stream_key: String,
+        app_name: Arc<String>,
+        stream_key: Arc<String>,
         data: Bytes,
         timestamp: RtmpTimestamp,
     ) {
@@ -641,8 +665,8 @@ impl RtmpServerConnectionHandler {
 
     fn handle_rtmp_event_stream_metadata_changed(
         &mut self,
-        app_name: String,
-        stream_key: String,
+        app_name: Arc<String>,
+        stream_key: Arc<String>,
         metadata: StreamMetadata,
     ) {
         match &self.state {
@@ -685,8 +709,8 @@ impl RtmpServerConnectionHandler {
     fn handle_rtmp_event_publish_stream_requested(
         &mut self,
         request_id: u32,
-        app_name: String,
-        stream_key: String,
+        app_name: Arc<String>,
+        stream_key: Arc<String>,
         mode: PublishMode,
     ) {
         info!(
@@ -739,7 +763,7 @@ impl RtmpServerConnectionHandler {
         };
     }
 
-    fn handle_rtmp_event_connection_requested(&mut self, request_id: u32, app_name: String) {
+    fn handle_rtmp_event_connection_requested(&mut self, request_id: u32, app_name: Arc<String>) {
         info!(
             "Connection requesting connection to rtmp app '{}'",
             app_name
