@@ -19,7 +19,7 @@ use crate::utils::hash_map_to_stream_metadata;
 use actor::actor_types::RtmpServerEndpointActor;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, AudioCodec, VideoCodec};
 use mmids_core::net::tcp::TcpSocketRequest;
 use mmids_core::net::{ConnectionId, IpAddress};
 use mmids_core::reactors::ReactorWorkflowUpdate;
@@ -238,7 +238,6 @@ pub enum RtmpEndpointPublisherMessage {
     /// An RTMP publisher has sent in new audio data
     NewAudioData {
         publisher: ConnectionId,
-        codec: AudioCodec,
         is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
@@ -304,20 +303,30 @@ pub enum RtmpEndpointMediaData {
     },
 
     NewAudioData {
-        codec: AudioCodec,
         is_sequence_header: bool,
         data: Bytes,
         timestamp: RtmpTimestamp,
     },
 }
 
+/// Failures that can occur when converting a `MediaNotificationContent` value to
+/// `RtmpEndpointMediaData`.
+#[derive(thiserror::Error, Debug)]
+pub enum MediaDataConversionFailure {
+    #[error("MediaNotificationContent variant cannot be converted")]
+    IncompatibleType,
+
+    #[error("The media payload type of '{0}' is not supported")]
+    UnsupportedPayloadType(Arc<String>)
+}
+
 impl TryFrom<MediaNotificationContent> for RtmpEndpointMediaData {
-    type Error = ();
+    type Error = MediaDataConversionFailure;
 
     fn try_from(value: MediaNotificationContent) -> Result<Self, Self::Error> {
         match value {
-            MediaNotificationContent::StreamDisconnected => Err(()),
-            MediaNotificationContent::NewIncomingStream { stream_name: _ } => Err(()),
+            MediaNotificationContent::StreamDisconnected => Err(MediaDataConversionFailure::IncompatibleType),
+            MediaNotificationContent::NewIncomingStream { stream_name: _ } => Err(MediaDataConversionFailure::IncompatibleType),
             MediaNotificationContent::Metadata { data } => {
                 Ok(RtmpEndpointMediaData::NewStreamMetaData {
                     metadata: hash_map_to_stream_metadata(&data),
@@ -339,19 +348,28 @@ impl TryFrom<MediaNotificationContent> for RtmpEndpointMediaData {
                 composition_time_offset: timestamp.pts_offset(),
             }),
 
-            MediaNotificationContent::Audio {
-                codec,
-                is_sequence_header,
+            MediaNotificationContent::MediaPayload {
+                payload_type,
+                media_type: _,
+                is_required_for_decoding,
                 timestamp,
                 data,
-            } => Ok(RtmpEndpointMediaData::NewAudioData {
-                data,
-                codec,
-                timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
-                is_sequence_header,
-            }),
+                metadata: _,
+            } => {
+                match payload_type {
+                    x if x == *AUDIO_CODEC_AAC_RAW => {
+                        Ok(RtmpEndpointMediaData::NewAudioData {
+                            data,
+                            is_sequence_header: is_required_for_decoding,
+                            timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                        })
+                    }
 
-            MediaNotificationContent::MediaPayload { .. } => unimplemented!(),
+                    other => {
+                        Err(MediaDataConversionFailure::UnsupportedPayloadType(other))
+                    }
+                }
+            },
         }
     }
 }

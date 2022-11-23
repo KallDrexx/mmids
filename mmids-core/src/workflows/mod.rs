@@ -11,7 +11,7 @@ pub mod steps;
 
 pub use runner::{start_workflow, WorkflowRequest, WorkflowRequestOperation, WorkflowStatus};
 
-use crate::codecs::{AudioCodec, VideoCodec};
+use crate::codecs::{VideoCodec};
 use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -62,14 +62,6 @@ pub enum MediaNotificationContent {
         is_keyframe: bool,
         data: Bytes,
         timestamp: VideoTimestamp,
-    },
-
-    /// Audio content
-    Audio {
-        codec: AudioCodec,
-        is_sequence_header: bool,
-        data: Bytes,
-        timestamp: Duration,
     },
 
     /// New stream metadata

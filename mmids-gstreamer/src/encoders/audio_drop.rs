@@ -5,6 +5,7 @@ use gstreamer::Pipeline;
 use mmids_core::codecs::AudioCodec;
 use mmids_core::workflows::MediaNotificationContent;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -27,7 +28,7 @@ struct AudioDropEncoder {}
 impl AudioEncoder for AudioDropEncoder {
     fn push_data(
         &self,
-        _codec: AudioCodec,
+        _codec: Arc<String>,
         _data: Bytes,
         _timestamp: Duration,
         _is_sequence_header: bool,

@@ -39,6 +39,7 @@ use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, warn};
+use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -445,31 +446,38 @@ impl RtmpWatchStep {
                     let _ = self.media_channel.send(rtmp_media);
                 }
 
-                MediaNotificationContent::Audio {
-                    is_sequence_header,
-                    codec,
-                    timestamp,
+                MediaNotificationContent::MediaPayload {
                     data,
+                    payload_type,
+                    media_type: _,
+                    timestamp,
+                    metadata: _,
+                    is_required_for_decoding,
                 } => {
                     let stream_key = match self.stream_id_to_name_map.get(&media.stream_id) {
                         Some(key) => key,
                         None => return,
                     };
 
+                    let rtmp_media_data = match payload_type {
+                        x if x == *AUDIO_CODEC_AAC_RAW => {
+                            RtmpEndpointMediaData::NewAudioData {
+                                is_sequence_header: *is_required_for_decoding,
+                                data: data.clone(),
+                                timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                            }
+                        },
+
+                        _ => return, // Payload type not supported by RTMP
+                    };
+
                     let rtmp_media = RtmpEndpointMediaMessage {
                         stream_key: stream_key.clone(),
-                        data: RtmpEndpointMediaData::NewAudioData {
-                            is_sequence_header: *is_sequence_header,
-                            codec: *codec,
-                            data: data.clone(),
-                            timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
-                        },
+                        data: rtmp_media_data,
                     };
 
                     let _ = self.media_channel.send(rtmp_media);
                 }
-
-                MediaNotificationContent::MediaPayload { .. } => unimplemented!(),
             }
         }
     }

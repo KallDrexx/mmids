@@ -22,15 +22,19 @@ use crate::utils::video_timestamp_from_rtmp_data;
 use futures::FutureExt;
 use mmids_core::reactors::manager::ReactorManagerRequest;
 use mmids_core::reactors::ReactorWorkflowUpdate;
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::StreamId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::iter;
 use std::time::Duration;
+use bytes::{BufMut, BytesMut};
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info};
+use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -67,6 +71,7 @@ struct RtmpReceiverStep {
     status: StepStatus,
     connection_details: HashMap<ConnectionId, ConnectionDetails>,
     reactor_name: Option<Arc<String>>,
+    metadata_buffer: BytesMut,
 }
 
 impl StepFutureResult for FutureResult {}
@@ -206,6 +211,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             } else {
                 StreamKeyRegistration::Exact(stream_key)
             },
+            metadata_buffer: BytesMut::new(),
         };
 
         let (sender, receiver) = unbounded_channel();
@@ -358,18 +364,19 @@ impl RtmpReceiverStep {
                 publisher,
                 is_sequence_header,
                 data,
-                codec,
                 timestamp,
             } => match self.connection_details.get(&publisher) {
                 None => (),
                 Some(connection) => {
                     outputs.media.push(MediaNotification {
                         stream_id: connection.stream_id.clone(),
-                        content: MediaNotificationContent::Audio {
-                            is_sequence_header,
-                            data,
-                            codec,
+                        content: MediaNotificationContent::MediaPayload {
+                            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                            media_type: MediaType::Audio,
                             timestamp: Duration::from_millis(timestamp.value as u64),
+                            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut self.metadata_buffer),
+                            is_required_for_decoding: is_sequence_header,
+                            data,
                         },
                     });
                 }

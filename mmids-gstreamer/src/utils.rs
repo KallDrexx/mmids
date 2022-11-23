@@ -1,12 +1,13 @@
 //! Common utility functions that are useful for interacting with gstreamer.  These are mostly
 //! meant for use by code creating custom encoders.
 
+use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use gstreamer::prelude::*;
 use gstreamer::{Buffer, Caps, ClockTime, Element, ElementFactory};
 use gstreamer_app::AppSrc;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, AudioCodec, VideoCodec};
 use std::time::Duration;
 
 /// Function that makes it easy to create a gstreamer `Buffer` based on a set of bytes, an optional
@@ -70,11 +71,11 @@ pub fn set_source_video_sequence_header(
 
 pub fn set_source_audio_sequence_header(
     source: &AppSrc,
-    codec: AudioCodec,
+    payload_type: Arc<String>,
     buffer: Buffer,
 ) -> Result<()> {
-    match codec {
-        AudioCodec::Aac => {
+    match payload_type {
+        x if x == *AUDIO_CODEC_AAC_RAW => {
             let caps = Caps::builder("audio/mpeg")
                 .field("mpegversion", 4) // I think this is correct?  Unsure 2 vs 4
                 .field("codec_data", buffer)
@@ -85,8 +86,9 @@ pub fn set_source_audio_sequence_header(
             Ok(())
         }
 
-        AudioCodec::Unknown => Err(anyhow!(
-            "audio codec is not known, and thus we can't prepare the gstreamer pipeline to accept it."
+        other => Err(anyhow!(
+            "audio codec {other} is not known, and thus we can't prepare the gstreamer pipeline \
+            to accept it."
         ))
     }
 }

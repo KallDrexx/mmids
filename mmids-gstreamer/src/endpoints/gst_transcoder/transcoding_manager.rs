@@ -192,15 +192,17 @@ impl TranscodeManager {
                 }
             }
 
-            MediaNotificationContent::Audio {
+            MediaNotificationContent::MediaPayload {
                 timestamp,
-                codec,
+                payload_type,
+                media_type: _,
                 data,
-                is_sequence_header,
+                metadata: _,
+                is_required_for_decoding,
             } => {
                 let result =
                     self.audio_encoder
-                        .push_data(codec, data, timestamp, is_sequence_header);
+                        .push_data(payload_type, data, timestamp, is_required_for_decoding);
 
                 if let Err(error) = result {
                     error!("Failed to push media to audio encoder: {}", error);

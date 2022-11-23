@@ -17,6 +17,7 @@ use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use std::default::Default;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -49,7 +50,7 @@ pub trait AudioEncoder {
     /// Pushes an audio frame into the encoder's pipeline
     fn push_data(
         &self,
-        codec: AudioCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: Duration,
         is_sequence_header: bool,

@@ -92,7 +92,6 @@ pub struct VideoSequenceHeader {
 }
 
 pub struct AudioSequenceHeader {
-    pub codec: AudioCodec,
     pub data: Bytes,
 }
 

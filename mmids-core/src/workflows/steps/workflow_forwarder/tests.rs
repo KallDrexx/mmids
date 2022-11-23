@@ -7,6 +7,7 @@ use crate::test_utils;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
 use std::time::Duration;
+use crate::workflows::MediaType;
 use crate::workflows::metadata::MediaPayloadMetadataCollection;
 
 struct TestContext {
@@ -275,7 +276,8 @@ async fn media_passed_as_output_immediately() {
 
     let expected_content = MediaNotificationContent::MediaPayload {
         data: Bytes::from(vec![1, 2, 3]),
-        codec: Arc::new("test".to_string()),
+        payload_type: Arc::new("test".to_string()),
+        media_type: MediaType::Audio,
         is_required_for_decoding: true,
         timestamp: Duration::from_millis(10),
         metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
