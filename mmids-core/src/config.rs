@@ -3,6 +3,7 @@ use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, 
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::warn;
@@ -10,8 +11,8 @@ use tracing::warn;
 /// Configuration for a Mmids system.  Defines the settings and any workflows that should be active.
 pub struct MmidsConfig {
     pub settings: HashMap<String, Option<String>>,
-    pub reactors: HashMap<String, ReactorDefinition>,
-    pub workflows: HashMap<String, WorkflowDefinition>,
+    pub reactors: HashMap<Arc<String>, ReactorDefinition>,
+    pub workflows: HashMap<Arc<String>, WorkflowDefinition>,
 }
 
 /// Errors that can occur when parsing a configuration entry
@@ -24,7 +25,7 @@ pub enum ConfigParseError {
     UnexpectedRule { rule: Rule, section: String },
 
     #[error("Duplicate workflow name: '{name}'")]
-    DuplicateWorkflowName { name: String },
+    DuplicateWorkflowName { name: Arc<String> },
 
     #[error("Invalid node name '{name}' on line {line}")]
     InvalidNodeName { name: String, line: usize },
@@ -67,7 +68,7 @@ pub enum ConfigParseError {
     TooManyReactorParameterValues { line: usize },
 
     #[error("Multiple reactors have the name of '{name}'. Each reactor must have a unique name")]
-    DuplicateReactorName { name: String },
+    DuplicateReactorName { name: Arc<String> },
 
     #[error("The executor on line {line} did not have an executor specified")]
     NoExecutorForReactor { line: usize },
@@ -229,7 +230,7 @@ fn read_workflow(
                         }));
                     }
 
-                    workflow_name = Some(key);
+                    workflow_name = Some(Arc::new(key));
                 }
             }
 
@@ -248,7 +249,7 @@ fn read_workflow(
         }
 
         config.workflows.insert(
-            name.to_string(),
+            name.clone(),
             WorkflowDefinition {
                 name,
                 steps,
@@ -287,7 +288,7 @@ fn read_reactor(
                         }));
                     }
 
-                    name = Some(key);
+                    name = Some(Arc::new(key));
                 } else if key == "executor" {
                     if let Some(value) = value {
                         executor_name = Some(value);
@@ -360,7 +361,7 @@ fn read_reactor(
 
         if let Some(executor) = executor_name {
             config.reactors.insert(
-                name.to_string(),
+                name.clone(),
                 ReactorDefinition {
                     name,
                     parameters,
@@ -514,16 +515,12 @@ workflow name {
         let config = parse(content).unwrap();
         assert_eq!(config.workflows.len(), 1, "Unexpected number of workflows");
         assert!(
-            config.workflows.contains_key("name"),
+            config.workflows.contains_key(&Arc::new("name".to_string())),
             "workflow 'name' did not exist"
         );
 
-        let workflow = config.workflows.get("name").unwrap();
-        assert_eq!(
-            workflow.name,
-            "name".to_string(),
-            "Unexpected workflow name"
-        );
+        let workflow = config.workflows.get(&Arc::new("name".to_string())).unwrap();
+        assert_eq!(workflow.name.as_str(), "name", "Unexpected workflow name");
         assert_eq!(
             workflow.steps.len(),
             2,
@@ -602,11 +599,13 @@ workflow name2 {
 
         assert_eq!(config.workflows.len(), 2, "Unexpected number of workflows");
         assert!(
-            config.workflows.contains_key("name"),
+            config.workflows.contains_key(&Arc::new("name".to_string())),
             "Could not find a workflow named 'name'"
         );
         assert!(
-            config.workflows.contains_key("name2"),
+            config
+                .workflows
+                .contains_key(&Arc::new("name2".to_string())),
             "Could not find a workflow named 'name2'"
         );
     }
@@ -622,16 +621,12 @@ reactor name executor=abc {
         let config = parse(content).unwrap();
         assert_eq!(config.reactors.len(), 1, "Unexpected number of reactors");
         assert!(
-            config.reactors.contains_key("name"),
+            config.reactors.contains_key(&Arc::new("name".to_string())),
             "Reactor in config did not have the expected name"
         );
 
-        let reactor = &config.reactors["name"];
-        assert_eq!(
-            reactor.name,
-            "name".to_string(),
-            "Unexpected name of reactor"
-        );
+        let reactor = &config.reactors[&Arc::new("name".to_string())];
+        assert_eq!(reactor.name.as_str(), "name", "Unexpected name of reactor");
         assert_eq!(reactor.executor, "abc".to_string(), "Unexpected executor");
         assert_eq!(
             reactor.parameters.len(),
@@ -712,7 +707,7 @@ workflow name routed_by_reactor {
 ";
 
         let config = parse(content).unwrap();
-        let workflow = config.workflows.get("name").unwrap();
+        let workflow = config.workflows.get(&Arc::new("name".to_string())).unwrap();
         assert!(
             workflow.routed_by_reactor,
             "Expected routed by workflow to be true"

@@ -211,7 +211,7 @@ mod tests {
                 read_in_real_time: true,
                 input: stream_name.to_string(),
                 target: TargetParams::Rtmp {
-                    url: stream_id.0.clone(),
+                    url: stream_id.0.to_string(),
                 },
             }
         }
@@ -230,7 +230,7 @@ mod tests {
                 param_generator: Arc::new(Box::new(TestParamGenerator)),
             };
 
-            let handler = generator.generate(StreamId("test".to_string()));
+            let handler = generator.generate(StreamId(Arc::new("test".to_string())));
             TestContext {
                 handler,
                 ffmpeg: receiver,

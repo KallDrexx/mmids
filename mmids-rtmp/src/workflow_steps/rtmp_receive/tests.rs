@@ -11,6 +11,7 @@ use mmids_core::{test_utils, StreamId, VideoTimestamp};
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot::channel;
 
@@ -169,10 +170,10 @@ async fn requests_registration_for_publishers() {
             ..
         } => {
             assert_eq!(port, 1234, "Unexpected port");
-            assert_eq!(&rtmp_app, "some_app", "Unexpected rtmp app");
+            assert_eq!(rtmp_app.as_str(), "some_app", "Unexpected rtmp app");
             assert_eq!(
                 rtmp_stream_key,
-                StreamKeyRegistration::Exact("some_key".to_string()),
+                StreamKeyRegistration::Exact(Arc::new("some_key".to_string())),
                 "Unexpected stream key"
             );
         }
@@ -314,9 +315,9 @@ async fn stream_started_notification_raised_when_publisher_connects() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-            stream_id: StreamId("test".to_string()),
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             reactor_update_channel: None,
         })
         .expect("Failed to send publisher connected message");
@@ -330,11 +331,11 @@ async fn stream_started_notification_raised_when_publisher_connects() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::NewIncomingStream { stream_name } => {
-            assert_eq!(stream_name, "abc", "Unexpected stream name");
+            assert_eq!(stream_name.as_str(), "abc", "Unexpected stream name");
         }
 
         content => panic!("Unexpected media content: {:?}", content),
@@ -349,9 +350,9 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-            stream_id: StreamId("test".to_string()),
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             reactor_update_channel: None,
         })
         .expect("Failed to send publisher connected message");
@@ -361,7 +362,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
 
     channel
         .send(RtmpEndpointPublisherMessage::PublishingStopped {
-            connection_id: ConnectionId("connection".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
         })
         .expect("Failed to send disconnected message");
 
@@ -374,7 +375,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::StreamDisconnected => (),
@@ -390,9 +391,9 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-            stream_id: StreamId("test".to_string()),
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             reactor_update_channel: None,
         })
         .expect("Failed to send publisher connected message");
@@ -405,7 +406,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
     channel
         .send(RtmpEndpointPublisherMessage::StreamMetadataChanged {
             metadata,
-            publisher: ConnectionId("connection".to_string()),
+            publisher: ConnectionId(Arc::new("connection".to_string())),
         })
         .expect("Failed to send metadata message");
 
@@ -418,7 +419,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::Metadata { data } => {
@@ -441,9 +442,9 @@ async fn video_notification_received_when_publisher_sends_video() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-            stream_id: StreamId("test".to_string()),
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             reactor_update_channel: None,
         })
         .expect("Failed to send publisher connected message");
@@ -452,7 +453,7 @@ async fn video_notification_received_when_publisher_sends_video() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewVideoData {
-            publisher: ConnectionId("connection".to_string()),
+            publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
             codec: VideoCodec::H264,
             timestamp: RtmpTimestamp::new(5),
@@ -471,7 +472,7 @@ async fn video_notification_received_when_publisher_sends_video() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::Video {
@@ -501,9 +502,9 @@ async fn audio_notification_received_when_publisher_sends_audio() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewPublisherConnected {
-            stream_id: StreamId("test".to_string()),
-            stream_key: "abc".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
+            stream_key: Arc::new("abc".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             reactor_update_channel: None,
         })
         .expect("Failed to send publisher connected message");
@@ -512,7 +513,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
 
     channel
         .send(RtmpEndpointPublisherMessage::NewAudioData {
-            publisher: ConnectionId("connection".to_string()),
+            publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
             codec: AudioCodec::Aac,
             timestamp: RtmpTimestamp::new(5),
@@ -529,7 +530,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(&media.stream_id.0, "test", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
     match &media.content {
         MediaNotificationContent::Audio {
@@ -556,9 +557,9 @@ fn stream_started_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::NewIncomingStream {
-                stream_name: "name".to_string(),
+                stream_name: Arc::new("name".to_string()),
             },
         });
 }
@@ -571,7 +572,7 @@ fn stream_disconnected_notification_passed_as_input_does_not_get_passed_as_outpu
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: StreamDisconnected,
         });
 }
@@ -584,7 +585,7 @@ fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::Metadata {
                 data: HashMap::new(),
             },
@@ -599,7 +600,7 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::Video {
                 data: Bytes::from(vec![1, 2]),
                 codec: VideoCodec::H264,
@@ -618,7 +619,7 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
     context
         .step_context
         .assert_media_not_passed_through(MediaNotification {
-            stream_id: StreamId("test".to_string()),
+            stream_id: StreamId(Arc::new("test".to_string())),
             content: MediaNotificationContent::Audio {
                 data: Bytes::from(vec![1, 2]),
                 codec: AudioCodec::Aac,
@@ -657,8 +658,8 @@ async fn reactor_queried_for_stream_key_when_approval_required() {
     let (sender, _receiver) = channel();
     publish_channel
         .send(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
-            stream_key: "ab123".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_key: Arc::new("ab123".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             response_channel: sender,
         })
         .expect("Failed to send publisher message");
@@ -672,8 +673,8 @@ async fn reactor_queried_for_stream_key_when_approval_required() {
             stream_name,
             ..
         } => {
-            assert_eq!(&reactor_name, "abc", "Unexpected reactor name");
-            assert_eq!(&stream_name, "ab123", "Unexpected stream name");
+            assert_eq!(reactor_name.as_str(), "abc", "Unexpected reactor name");
+            assert_eq!(stream_name.as_str(), "ab123", "Unexpected stream name");
         }
 
         request => panic!("Unexpected request received: {:?}", request),
@@ -689,8 +690,8 @@ async fn rejection_sent_when_reactor_says_stream_is_not_valid() {
     let (sender, receiver) = channel();
     publish_channel
         .send(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
-            stream_key: "ab123".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_key: Arc::new("ab123".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             response_channel: sender,
         })
         .expect("Failed to send publisher message");
@@ -723,8 +724,8 @@ async fn approval_sent_when_reactor_says_stream_is_valid() {
     let (sender, receiver) = channel();
     publish_channel
         .send(RtmpEndpointPublisherMessage::PublisherRequiringApproval {
-            stream_key: "ab123".to_string(),
-            connection_id: ConnectionId("connection".to_string()),
+            stream_key: Arc::new("ab123".to_string()),
+            connection_id: ConnectionId(Arc::new("connection".to_string())),
             response_channel: sender,
         })
         .expect("Failed to send publisher message");

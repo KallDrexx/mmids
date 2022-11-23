@@ -103,7 +103,7 @@ struct StreamDetails {
 }
 
 struct Actor {
-    name: String,
+    name: Arc<String>,
     steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep>>,
     active_steps: Vec<u64>,
     pending_steps: Vec<u64>,

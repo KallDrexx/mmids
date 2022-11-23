@@ -6,6 +6,7 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{info, instrument, warn};
@@ -16,7 +17,7 @@ pub enum ReactorRequest {
     /// Requests that the reactor creates and manages a workflow for the specified stream name
     CreateWorkflowNameForStream {
         /// Name of the stream to get a workflow for
-        stream_name: String,
+        stream_name: Arc<String>,
 
         /// The channel to send a response for. This channel will not only be used for the
         /// initial response, but updates will be sent any time the reactor detects changes.
@@ -31,11 +32,11 @@ pub struct ReactorWorkflowUpdate {
     pub is_valid: bool,
 
     /// The names of workflows that the reactor expects streams to be routed to.
-    pub routable_workflow_names: HashSet<String>,
+    pub routable_workflow_names: HashSet<Arc<String>>,
 }
 
 pub fn start_reactor(
-    name: String,
+    name: Arc<String>,
     executor: Box<dyn ReactorExecutor>,
     event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
     update_interval: Duration,
@@ -59,7 +60,7 @@ enum FutureResult {
     WorkflowManagerGone,
     RequestReceived(ReactorRequest, UnboundedReceiver<ReactorRequest>),
     ExecutorResponseReceived {
-        stream_name: String,
+        stream_name: Arc<String>,
         result: ReactorExecutionResult,
     },
 
@@ -69,11 +70,11 @@ enum FutureResult {
     ),
 
     ClientResponseChannelClosed {
-        stream_name: String,
+        stream_name: Arc<String>,
     },
 
     UpdateStreamNameRequested {
-        stream_name: String,
+        stream_name: Arc<String>,
     },
 }
 
@@ -82,20 +83,20 @@ struct CachedWorkflows {
 }
 
 struct Actor {
-    name: String,
+    name: Arc<String>,
     executor: Box<dyn ReactorExecutor>,
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     workflow_manager: Option<UnboundedSender<WorkflowManagerRequest>>,
-    cached_workflows_for_stream_name: HashMap<String, CachedWorkflows>,
+    cached_workflows_for_stream_name: HashMap<Arc<String>, CachedWorkflows>,
     update_interval: Duration,
-    stream_response_channels: HashMap<String, Vec<UnboundedSender<ReactorWorkflowUpdate>>>,
+    stream_response_channels: HashMap<Arc<String>, Vec<UnboundedSender<ReactorWorkflowUpdate>>>,
 }
 
 unsafe impl Send for Actor {}
 
 impl Actor {
     fn new(
-        name: String,
+        name: Arc<String>,
         receiver: UnboundedReceiver<ReactorRequest>,
         executor: Box<dyn ReactorExecutor>,
         event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
@@ -223,7 +224,11 @@ impl Actor {
         }
     }
 
-    fn handle_executor_response(&mut self, stream_name: String, result: ReactorExecutionResult) {
+    fn handle_executor_response(
+        &mut self,
+        stream_name: Arc<String>,
+        result: ReactorExecutionResult,
+    ) {
         if let Some(channels) = self.stream_response_channels.get(&stream_name) {
             let routed_workflow_names = result
                 .workflows_returned
@@ -353,7 +358,7 @@ impl Actor {
         }
     }
 
-    fn handle_response_channel_closed(&mut self, stream_name: String) {
+    fn handle_response_channel_closed(&mut self, stream_name: Arc<String>) {
         if let Some(channels) = self.stream_response_channels.get_mut(&stream_name) {
             for x in (0..channels.len()).rev() {
                 if channels[x].is_closed() {
@@ -404,7 +409,7 @@ async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorRequest>) -> Fu
 }
 
 async fn wait_for_executor_response(
-    stream_name: String,
+    stream_name: Arc<String>,
     future: BoxFuture<'static, ReactorExecutionResult>,
 ) -> FutureResult {
     let result = future.await;
@@ -432,13 +437,13 @@ async fn notify_workflow_manager_gone(
 
 async fn notify_when_response_channel_closed(
     channel: UnboundedSender<ReactorWorkflowUpdate>,
-    stream_name: String,
+    stream_name: Arc<String>,
 ) -> FutureResult {
     channel.closed().await;
     FutureResult::ClientResponseChannelClosed { stream_name }
 }
 
-async fn wait_for_update_interval(stream_name: String, wait_time: Duration) -> FutureResult {
+async fn wait_for_update_interval(stream_name: Arc<String>, wait_time: Duration) -> FutureResult {
     tokio::time::sleep(wait_time).await;
     FutureResult::UpdateStreamNameRequested { stream_name }
 }
@@ -458,12 +463,12 @@ mod tests {
     }
 
     struct TestExecutor {
-        expected_name: String,
+        expected_name: Arc<String>,
         workflows: Vec<WorkflowDefinition>,
     }
 
     impl TestContext {
-        async fn new(name: String, duration: Duration, executor: TestExecutor) -> Self {
+        async fn new(name: Arc<String>, duration: Duration, executor: TestExecutor) -> Self {
             let (sender, mut sub_receiver) = unbounded_channel();
             let reactor = start_reactor(name, Box::new(executor), sender, duration);
 
@@ -488,7 +493,10 @@ mod tests {
     }
 
     impl ReactorExecutor for TestExecutor {
-        fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
+        fn get_workflow(
+            &self,
+            stream_name: Arc<String>,
+        ) -> BoxFuture<'static, ReactorExecutionResult> {
             let future = if self.expected_name == stream_name {
                 let workflows = self.workflows.clone();
                 async { ReactorExecutionResult::valid(workflows) }.boxed()
@@ -503,17 +511,21 @@ mod tests {
     #[tokio::test]
     async fn can_get_routable_workflows_from_executor() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let context =
-            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_millis(0),
+            executor,
+        )
+        .await;
         let (sender, mut receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "stream".to_string(),
+                stream_name: Arc::new("stream".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -526,12 +538,16 @@ mod tests {
             "Expected 2 routable workflows"
         );
         assert!(
-            update.routable_workflow_names.contains("first"),
+            update
+                .routable_workflow_names
+                .contains(&Arc::new("first".to_string())),
             "Did not find 'first' workflow in routable results"
         );
 
         assert!(
-            update.routable_workflow_names.contains("third"),
+            update
+                .routable_workflow_names
+                .contains(&Arc::new("third".to_string())),
             "Did not find 'third' workflow in routable results"
         );
     }
@@ -539,17 +555,21 @@ mod tests {
     #[tokio::test]
     async fn not_valid_if_stream_name_invalid() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let context =
-            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_millis(0),
+            executor,
+        )
+        .await;
         let (sender, mut receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "invalid".to_string(),
+                stream_name: Arc::new("invalid".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -567,17 +587,21 @@ mod tests {
     #[tokio::test]
     async fn all_workflows_upserted_to_workflow_manager() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let mut context =
-            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let mut context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_millis(0),
+            executor,
+        )
+        .await;
         let (sender, _receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "stream".to_string(),
+                stream_name: Arc::new("stream".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -587,21 +611,21 @@ mod tests {
             let request = test_utils::expect_mpsc_response(&mut context.workflow_manager).await;
             match request.operation {
                 WorkflowManagerRequestOperation::UpsertWorkflow { definition } => {
-                    if &definition.name == "first" {
+                    if definition.name.as_str() == "first" {
                         if workflows_found[0] {
                             panic!("Received duplicate upsert request for workflow 'first'");
                         }
 
                         assert_eq!(definition.steps.len(), 1, "Expected 1 workflows");
                         workflows_found[0] = true;
-                    } else if &definition.name == "second" {
+                    } else if definition.name.as_str() == "second" {
                         if workflows_found[1] {
                             panic!("Received duplicate upsert request for workflow 'second'");
                         }
 
                         assert_eq!(definition.steps.len(), 2, "Expected 2 workflow steps");
                         workflows_found[1] = true;
-                    } else if &definition.name == "third" {
+                    } else if definition.name.as_str() == "third" {
                         if workflows_found[2] {
                             panic!("Received duplicate upsert request for workflow 'third'");
                         }
@@ -627,17 +651,21 @@ mod tests {
     #[tokio::test]
     async fn workflows_not_updated_when_duration_is_zero() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let context =
-            TestContext::new("reactor".to_string(), Duration::from_secs(10), executor).await;
+        let context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_secs(10),
+            executor,
+        )
+        .await;
         let (sender, mut receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "stream".to_string(),
+                stream_name: Arc::new("stream".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -652,17 +680,21 @@ mod tests {
     #[tokio::test]
     async fn routable_workflows_updated_when_duration_set() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let context =
-            TestContext::new("reactor".to_string(), Duration::from_millis(500), executor).await;
+        let context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_millis(500),
+            executor,
+        )
+        .await;
         let (sender, mut receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "stream".to_string(),
+                stream_name: Arc::new("stream".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -679,12 +711,16 @@ mod tests {
             "Expected 2 routable workflows"
         );
         assert!(
-            update.routable_workflow_names.contains("first"),
+            update
+                .routable_workflow_names
+                .contains(&Arc::new("first".to_string())),
             "Did not find 'first' workflow in routable results"
         );
 
         assert!(
-            update.routable_workflow_names.contains("third"),
+            update
+                .routable_workflow_names
+                .contains(&Arc::new("third".to_string())),
             "Did not find 'third' workflow in routable results"
         );
     }
@@ -692,18 +728,22 @@ mod tests {
     #[tokio::test]
     async fn all_workflows_upserted_to_workflow_manager_again_after_duration() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let mut context =
-            TestContext::new("reactor".to_string(), Duration::from_millis(500), executor).await;
+        let mut context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_millis(500),
+            executor,
+        )
+        .await;
 
         let (sender, _receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "stream".to_string(),
+                stream_name: Arc::new("stream".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -723,21 +763,21 @@ mod tests {
             let request = test_utils::expect_mpsc_response(&mut context.workflow_manager).await;
             match request.operation {
                 WorkflowManagerRequestOperation::UpsertWorkflow { definition } => {
-                    if &definition.name == "first" {
+                    if definition.name.as_str() == "first" {
                         if workflows_found[0] {
                             panic!("Received duplicate upsert request for workflow 'first'");
                         }
 
                         assert_eq!(definition.steps.len(), 1, "Expected 1 workflows");
                         workflows_found[0] = true;
-                    } else if &definition.name == "second" {
+                    } else if definition.name.as_str() == "second" {
                         if workflows_found[1] {
                             panic!("Received duplicate upsert request for workflow 'second'");
                         }
 
                         assert_eq!(definition.steps.len(), 2, "Expected 2 workflow steps");
                         workflows_found[1] = true;
-                    } else if &definition.name == "third" {
+                    } else if definition.name.as_str() == "third" {
                         if workflows_found[2] {
                             panic!("Received duplicate upsert request for workflow 'third'");
                         }
@@ -763,17 +803,21 @@ mod tests {
     #[tokio::test]
     async fn workflow_manager_not_given_new_workflows_when_duration_is_zero() {
         let executor = TestExecutor {
-            expected_name: "stream".to_string(),
+            expected_name: Arc::new("stream".to_string()),
             workflows: get_test_workflows(),
         };
 
-        let mut context =
-            TestContext::new("reactor".to_string(), Duration::from_millis(0), executor).await;
+        let mut context = TestContext::new(
+            Arc::new("reactor".to_string()),
+            Duration::from_millis(0),
+            executor,
+        )
+        .await;
         let (sender, _receiver) = unbounded_channel();
         context
             .reactor
             .send(ReactorRequest::CreateWorkflowNameForStream {
-                stream_name: "stream".to_string(),
+                stream_name: Arc::new("stream".to_string()),
                 response_channel: sender,
             })
             .expect("Channel closed");
@@ -793,7 +837,7 @@ mod tests {
     fn get_test_workflows() -> Vec<WorkflowDefinition> {
         vec![
             WorkflowDefinition {
-                name: "first".to_string(),
+                name: Arc::new("first".to_string()),
                 routed_by_reactor: true,
                 steps: vec![WorkflowStepDefinition {
                     step_type: WorkflowStepType("a".to_string()),
@@ -801,7 +845,7 @@ mod tests {
                 }],
             },
             WorkflowDefinition {
-                name: "second".to_string(),
+                name: Arc::new("second".to_string()),
                 routed_by_reactor: false,
                 steps: vec![
                     WorkflowStepDefinition {
@@ -815,7 +859,7 @@ mod tests {
                 ],
             },
             WorkflowDefinition {
-                name: "third".to_string(),
+                name: Arc::new("third".to_string()),
                 routed_by_reactor: true,
                 steps: vec![
                     WorkflowStepDefinition {

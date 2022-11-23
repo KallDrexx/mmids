@@ -79,7 +79,9 @@ impl RouteHandler for ListWorkflowsHandler {
 
         let response = response
             .into_iter()
-            .map(|x| WorkflowListItemResponse { name: x.name })
+            .map(|x| WorkflowListItemResponse {
+                name: x.name.to_string(),
+            })
             .collect::<Vec<_>>();
         let json = match serde_json::to_string_pretty(&response) {
             Ok(json) => json,

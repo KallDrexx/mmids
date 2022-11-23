@@ -2,6 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// Identifier representing the type of the workflow step being defined
 #[derive(Clone, Hash, Debug, Eq, PartialEq)]
@@ -17,7 +18,7 @@ pub struct WorkflowStepDefinition {
 /// The definition of a workflow and the steps (in order) it contains
 #[derive(Clone, Debug)]
 pub struct WorkflowDefinition {
-    pub name: String,
+    pub name: Arc<String>,
     pub routed_by_reactor: bool,
     pub steps: Vec<WorkflowStepDefinition>,
 }

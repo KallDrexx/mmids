@@ -10,6 +10,7 @@ use hyper::{Body, Client, Method, Request, StatusCode};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{error, info, instrument};
@@ -26,11 +27,11 @@ const RETRY_DELAY: u64 = 5;
 /// Zero workflows are allowed in a 200 status code.  This represents that the stream name is valid
 /// (and should be allowed) but it does not have an specific workflows tied to it.
 pub struct SimpleHttpExecutor {
-    url: String,
+    url: Arc<String>,
 }
 
 impl ReactorExecutor for SimpleHttpExecutor {
-    fn get_workflow(&self, stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
+    fn get_workflow(&self, stream_name: Arc<String>) -> BoxFuture<'static, ReactorExecutionResult> {
         execute_simple_http_executor(self.url.clone(), stream_name).boxed()
     }
 }
@@ -54,7 +55,7 @@ impl ReactorExecutorGenerator for SimpleHttpExecutorGenerator {
         parameters: &HashMap<String, Option<String>>,
     ) -> Result<Box<dyn ReactorExecutor>, Box<dyn Error + Sync + Send>> {
         let url = match parameters.get("url") {
-            Some(Some(url)) => url.trim().to_string(),
+            Some(Some(url)) => Arc::new(url.trim().to_string()),
             _ => return Err(Box::new(SimpleHttpExecutorError::UrlParameterNotProvided)),
         };
 
@@ -63,7 +64,10 @@ impl ReactorExecutorGenerator for SimpleHttpExecutorGenerator {
 }
 
 #[instrument]
-async fn execute_simple_http_executor(url: String, stream_name: String) -> ReactorExecutionResult {
+async fn execute_simple_http_executor(
+    url: Arc<String>,
+    stream_name: Arc<String>,
+) -> ReactorExecutionResult {
     info!("Querying {} for workflow for stream '{}'", url, stream_name);
     let mut config = match execute_with_retry(&url, &stream_name, 0).await {
         Ok(config) => config,
@@ -74,7 +78,7 @@ async fn execute_simple_http_executor(url: String, stream_name: String) -> React
     ReactorExecutionResult::valid(workflows)
 }
 
-fn build_request(url: &String, stream_name: &str) -> Result<Request<Body>, ()> {
+fn build_request(url: &Arc<String>, stream_name: &str) -> Result<Request<Body>, ()> {
     let content = match serde_json::to_string_pretty(&RequestContent {
         stream_name: stream_name.to_owned(),
     }) {
@@ -105,8 +109,8 @@ fn build_request(url: &String, stream_name: &str) -> Result<Request<Body>, ()> {
 
 #[async_recursion]
 async fn execute_with_retry(
-    url: &String,
-    stream_name: &String,
+    url: &Arc<String>,
+    stream_name: &Arc<String>,
     times_retried: u64,
 ) -> Result<MmidsConfig, ()> {
     if times_retried >= MAX_RETRIES {

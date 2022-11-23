@@ -4,6 +4,7 @@ use cidr_utils::cidr::{IpCidr, Ipv4Cidr};
 use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use thiserror::Error;
 
 pub mod tcp;
@@ -11,7 +12,7 @@ pub mod tcp;
 /// A unique identifier for any given TCP connection, or unique UDP client.  If a TCP client
 /// disconnects and reconnects it will be seen with a brand new connection id
 #[derive(Clone, Debug, Eq)]
-pub struct ConnectionId(pub String);
+pub struct ConnectionId(pub Arc<String>);
 
 impl std::fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

@@ -33,7 +33,7 @@ pub enum WorkflowManagerRequestOperation {
     UpsertWorkflow { definition: WorkflowDefinition },
 
     /// Stops the specified workflow, if it is running
-    StopWorkflow { name: String },
+    StopWorkflow { name: Arc<String> },
 
     /// Requests information about all workflows currently running
     GetRunningWorkflows {
@@ -42,14 +42,14 @@ pub enum WorkflowManagerRequestOperation {
 
     /// Requests details about a specific workflow
     GetWorkflowDetails {
-        name: String,
+        name: Arc<String>,
         response_channel: Sender<Option<WorkflowState>>,
     },
 }
 
 #[derive(Debug)]
 pub struct GetWorkflowResponse {
-    pub name: String,
+    pub name: Arc<String>,
 }
 
 pub fn start_workflow_manager(
@@ -70,12 +70,12 @@ enum FutureResult {
         WorkflowManagerRequest,
         UnboundedReceiver<WorkflowManagerRequest>,
     ),
-    WorkflowGone(String),
+    WorkflowGone(Arc<String>),
 }
 
 struct Actor {
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
-    workflows: HashMap<String, UnboundedSender<WorkflowRequest>>,
+    workflows: HashMap<Arc<String>, UnboundedSender<WorkflowRequest>>,
     step_factory: Arc<WorkflowStepFactory>,
     event_hub_publisher: UnboundedSender<PublishEventRequest>,
 }
@@ -261,7 +261,7 @@ async fn notify_when_event_hub_is_gone(
 
 async fn wait_for_workflow_gone(
     sender: UnboundedSender<WorkflowRequest>,
-    name: String,
+    name: Arc<String>,
 ) -> FutureResult {
     sender.closed().await;
     FutureResult::WorkflowGone(name)
@@ -316,7 +316,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -328,7 +328,7 @@ mod tests {
         match event {
             PublishEventRequest::WorkflowStartedOrStopped(event) => match event {
                 WorkflowStartedOrStoppedEvent::WorkflowStarted { name, channel: _ } => {
-                    assert_eq!(&name, "workflow", "Unexpected workflow name");
+                    assert_eq!(name.as_str(), "workflow", "Unexpected workflow name");
                 }
 
                 event => panic!("Unexpected workflow event received: {:?}", event),
@@ -349,7 +349,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -370,7 +370,11 @@ mod tests {
 
         let response = test_utils::expect_oneshot_response(receiver).await;
         assert_eq!(response.len(), 1, "Unexpected number of workflows");
-        assert_eq!(response[0].name, "workflow", "Unexpected workflow name");
+        assert_eq!(
+            response[0].name.as_str(),
+            "workflow",
+            "Unexpected workflow name"
+        );
     }
 
     #[tokio::test]
@@ -382,7 +386,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -396,7 +400,7 @@ mod tests {
             .send(WorkflowManagerRequest {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::GetWorkflowDetails {
-                    name: "workflow".to_string(),
+                    name: Arc::new("workflow".to_string()),
                     response_channel: sender,
                 },
             })
@@ -420,7 +424,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -436,7 +440,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -456,7 +460,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -470,7 +474,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -491,7 +495,11 @@ mod tests {
 
         let response = test_utils::expect_oneshot_response(receiver).await;
         assert_eq!(response.len(), 1, "Unexpected number of workflows");
-        assert_eq!(response[0].name, "workflow", "Unexpected workflow name");
+        assert_eq!(
+            response[0].name.as_str(),
+            "workflow",
+            "Unexpected workflow name"
+        );
     }
 
     #[tokio::test]
@@ -505,7 +513,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -519,7 +527,7 @@ mod tests {
             .send(WorkflowManagerRequest {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::StopWorkflow {
-                    name: "workflow".to_string(),
+                    name: Arc::new("workflow".to_string()),
                 },
             })
             .expect("Failed to send stop command");
@@ -528,7 +536,7 @@ mod tests {
         match event {
             PublishEventRequest::WorkflowStartedOrStopped(event) => match event {
                 WorkflowStartedOrStoppedEvent::WorkflowEnded { name } => {
-                    assert_eq!(&name, "workflow", "Unexpected workflow name");
+                    assert_eq!(name.as_str(), "workflow", "Unexpected workflow name");
                 }
 
                 event => panic!("Unexpected workflow event received: {:?}", event),
@@ -551,7 +559,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -565,7 +573,7 @@ mod tests {
             .send(WorkflowManagerRequest {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::StopWorkflow {
-                    name: "workflow".to_string(),
+                    name: Arc::new("workflow".to_string()),
                 },
             })
             .expect("Failed to send stop command");
@@ -598,7 +606,7 @@ mod tests {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::UpsertWorkflow {
                     definition: WorkflowDefinition {
-                        name: "workflow".to_string(),
+                        name: Arc::new("workflow".to_string()),
                         routed_by_reactor: false,
                         steps: Vec::new(),
                     },
@@ -612,7 +620,7 @@ mod tests {
             .send(WorkflowManagerRequest {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::StopWorkflow {
-                    name: "workflow".to_string(),
+                    name: Arc::new("workflow".to_string()),
                 },
             })
             .expect("Failed to send stop command");
@@ -625,7 +633,7 @@ mod tests {
             .send(WorkflowManagerRequest {
                 request_id: "".to_string(),
                 operation: WorkflowManagerRequestOperation::GetWorkflowDetails {
-                    name: "workflow".to_string(),
+                    name: Arc::new("workflow".to_string()),
                     response_channel: sender,
                 },
             })

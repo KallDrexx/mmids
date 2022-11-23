@@ -8,6 +8,7 @@ use mmids_rtmp::rtmp_server::{
 };
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
 
 #[tokio::main()]
@@ -21,7 +22,7 @@ pub async fn main() {
     let (rtmp_response_sender, mut publish_notification_receiver) = unbounded_channel();
     let _ = rtmp_server_sender.send(RtmpEndpointRequest::ListenForPublishers {
         port: 1935,
-        rtmp_app: "live".to_string(),
+        rtmp_app: Arc::new("live".to_string()),
         rtmp_stream_key: StreamKeyRegistration::Any,
         message_channel: rtmp_response_sender,
         stream_id: None,
@@ -52,7 +53,7 @@ pub async fn main() {
 
     let _ = rtmp_server_sender.send(RtmpEndpointRequest::ListenForWatchers {
         port: 1935,
-        rtmp_app: "live".to_string(),
+        rtmp_app: Arc::new("live".to_string()),
         rtmp_stream_key: StreamKeyRegistration::Any,
         media_channel: media_receiver,
         notification_channel: notification_sender,

@@ -11,6 +11,7 @@ use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::test_utils;
 use rml_rtmp::sessions::{ClientSessionEvent, StreamMetadata};
 use rml_rtmp::time::RtmpTimestamp;
+use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
 
 mod rtmp_client;
@@ -29,7 +30,7 @@ async fn can_register_for_specific_port_for_publishers() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -57,7 +58,7 @@ async fn can_register_with_tls_enabled() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -85,7 +86,7 @@ async fn endpoint_publisher_receives_failed_when_port_rejected() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -113,7 +114,7 @@ async fn multiple_requests_for_same_port_only_sends_one_request_to_socket_manage
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -135,7 +136,7 @@ async fn multiple_requests_for_same_port_only_sends_one_request_to_socket_manage
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app2".to_string(),
+            rtmp_app: Arc::new("app2".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender2,
         })
@@ -163,7 +164,7 @@ async fn second_publisher_rejected_on_same_app_when_both_any_stream_key() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -185,7 +186,7 @@ async fn second_publisher_rejected_on_same_app_when_both_any_stream_key() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender2,
         })
@@ -211,8 +212,8 @@ async fn second_publisher_rejected_on_same_app_and_same_exact_key() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             message_channel: sender,
         })
         .expect("Endpoint request failed to send");
@@ -233,8 +234,8 @@ async fn second_publisher_rejected_on_same_app_and_same_exact_key() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             message_channel: sender2,
         })
         .expect("2nd endpoint request failed to send");
@@ -259,7 +260,7 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_any_key
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -281,8 +282,8 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_any_key
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             message_channel: sender2,
         })
         .expect("2nd endpoint request failed to send");
@@ -307,8 +308,8 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_specifi
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             message_channel: sender,
         })
         .expect("Endpoint request failed to send");
@@ -329,7 +330,7 @@ async fn second_publisher_rejected_on_same_app_when_first_request_is_for_specifi
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender2,
         })
@@ -355,8 +356,8 @@ async fn second_publisher_accepted_on_same_app_on_different_exact_keys() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             message_channel: sender,
         })
         .expect("Endpoint request failed to send");
@@ -377,8 +378,8 @@ async fn second_publisher_accepted_on_same_app_on_different_exact_keys() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("def".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("def".to_string())),
             message_channel: sender2,
         })
         .expect("2nd endpoint request failed to send");
@@ -403,7 +404,7 @@ async fn can_register_for_specific_port_for_watcher() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             media_channel: media_receiver,
             notification_channel: sender,
@@ -432,7 +433,7 @@ async fn endpoint_watcher_receives_failed_when_port_rejected() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             media_channel: media_receiver,
             notification_channel: sender,
@@ -461,7 +462,7 @@ async fn second_watcher_rejected_on_same_app_when_both_any_stream_key() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             media_channel: media_receiver,
             notification_channel: sender,
@@ -484,7 +485,7 @@ async fn second_watcher_rejected_on_same_app_when_both_any_stream_key() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             media_channel: media_receiver,
             notification_channel: sender,
@@ -511,8 +512,8 @@ async fn second_watcher_rejected_on_same_app_and_same_exact_key() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             media_channel: media_receiver,
             notification_channel: sender,
         })
@@ -534,8 +535,8 @@ async fn second_watcher_rejected_on_same_app_and_same_exact_key() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             media_channel: media_receiver,
             notification_channel: sender,
         })
@@ -562,7 +563,7 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_any_key()
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             media_channel: media_receiver,
             notification_channel: sender,
@@ -585,8 +586,8 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_any_key()
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             media_channel: media_receiver,
             notification_channel: sender,
         })
@@ -612,8 +613,8 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_specific_
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             media_channel: media_receiver,
             notification_channel: sender,
         })
@@ -636,7 +637,7 @@ async fn second_watcher_rejected_on_same_app_when_first_request_is_for_specific_
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             media_channel: media_receiver,
             notification_channel: sender,
@@ -664,8 +665,8 @@ async fn second_watcher_accepted_on_same_app_with_different_exact_keys() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("abc".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("abc".to_string())),
             media_channel: media_receiver,
             notification_channel: sender,
         })
@@ -688,8 +689,8 @@ async fn second_watcher_accepted_on_same_app_with_different_exact_keys() {
             use_tls: false,
             requires_registrant_approval: false,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
-            rtmp_stream_key: StreamKeyRegistration::Exact("def".to_string()),
+            rtmp_app: Arc::new("app".to_string()),
+            rtmp_stream_key: StreamKeyRegistration::Exact(Arc::new("def".to_string())),
             media_channel: media_receiver,
             notification_channel: sender,
         })
@@ -716,7 +717,7 @@ async fn second_request_fails_if_tls_option_differs() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app".to_string(),
+            rtmp_app: Arc::new("app".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender,
         })
@@ -738,7 +739,7 @@ async fn second_request_fails_if_tls_option_differs() {
             requires_registrant_approval: false,
             stream_id: None,
             ip_restrictions: IpRestriction::None,
-            rtmp_app: "app2".to_string(),
+            rtmp_app: Arc::new("app2".to_string()),
             rtmp_stream_key: StreamKeyRegistration::Any,
             message_channel: sender2,
         })
@@ -766,7 +767,7 @@ async fn publisher_disconnected_if_connecting_to_wrong_app() {
 #[tokio::test]
 async fn publisher_disconnected_if_connecting_to_wrong_stream_key() {
     let mut context = TestContextBuilder::new()
-        .set_stream_key(StreamKeyRegistration::Exact("key".to_string()))
+        .set_stream_key(StreamKeyRegistration::Exact(Arc::new("key".to_string())))
         .into_publisher()
         .await;
 
@@ -787,7 +788,7 @@ async fn publisher_disconnected_if_connecting_to_wrong_stream_key() {
 #[tokio::test]
 async fn publisher_can_connect_on_registered_app_and_stream_key() {
     let mut context = TestContextBuilder::new()
-        .set_stream_key(StreamKeyRegistration::Exact("key".to_string()))
+        .set_stream_key(StreamKeyRegistration::Exact(Arc::new("key".to_string())))
         .into_publisher()
         .await;
 
@@ -812,14 +813,14 @@ async fn publisher_can_connect_on_registered_app_and_stream_key() {
             reactor_update_channel: _,
         } => {
             assert_eq!(
-                stream_key,
-                "key".to_string(),
+                stream_key.as_str(),
+                "key",
                 "Unexpected stream key in publisher connected message"
             );
 
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
         }
@@ -840,8 +841,8 @@ async fn publish_stopped_notification_raised_on_disconnection() {
     match response {
         RtmpEndpointPublisherMessage::PublishingStopped { connection_id } => {
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
         }
@@ -862,8 +863,8 @@ async fn publish_stopped_when_rtmp_client_stops_publishing() {
     match response {
         RtmpEndpointPublisherMessage::PublishingStopped { connection_id } => {
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
         }
@@ -894,8 +895,8 @@ async fn notification_raised_when_video_published() {
             composition_time_offset: _,
         } => {
             assert_eq!(
-                publisher.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                publisher.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 
@@ -1095,8 +1096,8 @@ async fn notification_raised_when_metadata_published() {
             metadata: event_metadata,
         } => {
             assert_eq!(
-                publisher.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                publisher.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 
@@ -1130,8 +1131,8 @@ async fn notification_raised_when_audio_published() {
             codec: _,
         } => {
             assert_eq!(
-                publisher.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                publisher.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 
@@ -1273,7 +1274,7 @@ async fn stream_becoming_active_notification_when_watcher_connects() {
             stream_key,
             reactor_update_channel: _,
         } => {
-            assert_eq!(stream_key, "key".to_string());
+            assert_eq!(stream_key.as_str(), "key");
         }
 
         message => panic!("Unexpected publisher message received: {:?}", message),
@@ -1290,7 +1291,7 @@ async fn stream_becomes_inactive_when_only_watcher_stops_playback() {
     let response = test_utils::expect_mpsc_response(receiver).await;
     match response {
         RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key } => {
-            assert_eq!(stream_key, "key".to_string());
+            assert_eq!(stream_key.as_str(), "key");
         }
 
         message => panic!("Unexpected publisher message received: {:?}", message),
@@ -1307,7 +1308,7 @@ async fn stream_becomes_inactive_when_only_watcher_disconnects() {
     let response = test_utils::expect_mpsc_response(receiver).await;
     match response {
         RtmpEndpointWatcherNotification::StreamKeyBecameInactive { stream_key } => {
-            assert_eq!(stream_key, "key".to_string());
+            assert_eq!(stream_key.as_str(), "key");
         }
 
         message => panic!("Unexpected publisher message received: {:?}", message),
@@ -1327,7 +1328,7 @@ async fn watcher_receives_metadata() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewStreamMetaData {
                 metadata: metadata.clone(),
             },
@@ -1369,7 +1370,7 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_non_keyframe() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
                 codec: H264,
                 data: sent_data.clone(),
@@ -1416,7 +1417,7 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
                 codec: H264,
                 data: sent_data.clone(),
@@ -1463,7 +1464,7 @@ async fn watcher_does_not_receive_non_h264_video() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
                 codec: Unknown,
                 data: sent_data.clone(),
@@ -1496,7 +1497,7 @@ async fn aac_audio_has_flv_headers_added_for_sequence_header() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
                 codec: AudioCodec::Aac,
                 data: sent_data.clone(),
@@ -1536,7 +1537,7 @@ async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
                 codec: AudioCodec::Aac,
                 data: sent_data.clone(),
@@ -1576,7 +1577,7 @@ async fn watcher_does_not_receives_unknown_audio_codec() {
         .as_ref()
         .unwrap()
         .send(RtmpEndpointMediaMessage {
-            stream_key: "key".to_string(),
+            stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
                 codec: AudioCodec::Unknown,
                 data: sent_data.clone(),
@@ -1620,10 +1621,10 @@ async fn consumer_accepts_publisher() {
             connection_id,
             response_channel,
         } => {
-            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(stream_key.as_str(), "key", "Unexpected stream key");
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 
@@ -1647,11 +1648,11 @@ async fn consumer_accepts_publisher() {
             stream_key,
         } => {
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
-            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(stream_key.as_str(), "key", "Unexpected stream key");
             assert!(
                 reactor_update_channel.is_some(),
                 "Expected a reactor channel"
@@ -1688,10 +1689,10 @@ async fn consumer_rejectin_publisher_disconnects_client() {
             connection_id,
             response_channel,
         } => {
-            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(stream_key.as_str(), "key", "Unexpected stream key");
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 
@@ -1732,10 +1733,10 @@ async fn consumer_accepts_watcher() {
             connection_id,
             response_channel,
         } => {
-            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(stream_key.as_str(), "key", "Unexpected stream key");
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 
@@ -1756,7 +1757,7 @@ async fn consumer_accepts_watcher() {
             stream_key,
             reactor_update_channel,
         } => {
-            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(stream_key.as_str(), "key", "Unexpected stream key");
             assert!(
                 reactor_update_channel.is_some(),
                 "Expected reactor update channel"
@@ -1793,10 +1794,10 @@ async fn consumer_rejecting_watcher_disconnects_client() {
             connection_id,
             response_channel,
         } => {
-            assert_eq!(stream_key, "key".to_string(), "Unexpected stream key");
+            assert_eq!(stream_key.as_str(), "key", "Unexpected stream key");
             assert_eq!(
-                connection_id.0,
-                rtmp_client::CONNECTION_ID.to_string(),
+                connection_id.0.as_str(),
+                rtmp_client::CONNECTION_ID,
                 "Unexpected connection id"
             );
 

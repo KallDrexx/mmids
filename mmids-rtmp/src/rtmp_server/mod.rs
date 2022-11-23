@@ -28,6 +28,7 @@ use mmids_core::StreamId;
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 
@@ -55,7 +56,7 @@ pub enum StreamKeyRegistration {
     Any,
 
     /// Only set up registration for the exact stream key
-    Exact(String),
+    Exact(Arc<String>),
 }
 
 /// Specifies if there are any IP address restrictions as part of an RTMP server registration
@@ -88,7 +89,7 @@ pub enum RtmpEndpointRequest {
         port: u16,
 
         /// Name of the RTMP application publishers will connect to
-        rtmp_app: String,
+        rtmp_app: Arc<String>,
 
         /// What stream key publishers should be using
         rtmp_stream_key: StreamKeyRegistration,
@@ -121,7 +122,7 @@ pub enum RtmpEndpointRequest {
         port: u16,
 
         /// Name of the RTMP application playback clients will connect to
-        rtmp_app: String,
+        rtmp_app: Arc<String>,
 
         /// Stream keys clients can receive video on
         rtmp_stream_key: StreamKeyRegistration,
@@ -153,7 +154,7 @@ pub enum RtmpEndpointRequest {
         port: u16,
 
         /// The RTMP application name that the registrant was listening on
-        rtmp_app: String,
+        rtmp_app: Arc<String>,
 
         /// The stream key the registrant had registered for
         rtmp_stream_key: StreamKeyRegistration,
@@ -187,7 +188,7 @@ pub enum RtmpEndpointPublisherMessage {
         connection_id: ConnectionId,
 
         /// The stream key that the connection is requesting to be a publisher to
-        stream_key: String,
+        stream_key: Arc<String>,
 
         /// Channel to send the approval or rejection response to
         response_channel: Sender<ValidationResponse>,
@@ -203,7 +204,7 @@ pub enum RtmpEndpointPublisherMessage {
 
         /// Actual stream key that this stream is coming in from.  Mostly used if the registrant
         /// specified that Any stream key would be allowed.
-        stream_key: String,
+        stream_key: Arc<String>,
 
         /// If provided, this is a channel which will receive workflow updates from a reactor
         /// tied to this publisher
@@ -261,7 +262,7 @@ pub enum RtmpEndpointWatcherNotification {
         connection_id: ConnectionId,
 
         /// The stream key that the connection is requesting to be a watcher of
-        stream_key: String,
+        stream_key: Arc<String>,
 
         /// Channel to send the approval or rejection response to
         response_channel: Sender<ValidationResponse>,
@@ -270,19 +271,19 @@ pub enum RtmpEndpointWatcherNotification {
     /// Notifies the registrant that at least one watcher is now watching on a particular
     /// stream key,
     StreamKeyBecameActive {
-        stream_key: String,
+        stream_key: Arc<String>,
         reactor_update_channel: Option<UnboundedReceiver<ReactorWorkflowUpdate>>,
     },
 
     /// Notifies the registrant that the last watcher has disconnected on the stream key, and
     /// there are no longer anyone watching
-    StreamKeyBecameInactive { stream_key: String },
+    StreamKeyBecameInactive { stream_key: Arc<String> },
 }
 
 /// Message watcher registrants send to announce new media data that should be sent to watchers
 #[derive(Debug)]
 pub struct RtmpEndpointMediaMessage {
-    pub stream_key: String,
+    pub stream_key: Arc<String>,
     pub data: RtmpEndpointMediaData,
 }
 

@@ -46,7 +46,7 @@ pub enum MediaNotificationContent {
     /// should prepare for media data to start coming through
     NewIncomingStream {
         /// The name for the stream that's being published
-        stream_name: String,
+        stream_name: Arc<String>,
     },
 
     /// Announces that this stream's source has disconnected and will no longer be sending any

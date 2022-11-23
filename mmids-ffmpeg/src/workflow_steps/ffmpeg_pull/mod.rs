@@ -22,6 +22,7 @@ use mmids_rtmp::rtmp_server::{
     StreamKeyRegistration,
 };
 use mmids_rtmp::utils::video_timestamp_from_rtmp_data;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -42,9 +43,9 @@ struct FfmpegPullStep {
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     status: StepStatus,
-    rtmp_app: String,
+    rtmp_app: Arc<String>,
     pull_location: String,
-    stream_name: String,
+    stream_name: Arc<String>,
     ffmpeg_id: Option<Uuid>,
     active_stream_id: Option<StreamId>,
 }
@@ -93,14 +94,14 @@ impl StepGenerator for FfmpegPullStepGenerator {
         };
 
         let stream_name = match definition.parameters.get(STREAM_NAME) {
-            Some(Some(value)) => value.clone(),
+            Some(Some(value)) => Arc::new(value.clone()),
             _ => return Err(Box::new(StepStartupError::NoStreamNameSpecified)),
         };
 
         let step = FfmpegPullStep {
             definition: definition.clone(),
             status: StepStatus::Created,
-            rtmp_app: format!("ffmpeg-pull-{}", definition.get_id()),
+            rtmp_app: Arc::new(format!("ffmpeg-pull-{}", definition.get_id())),
             ffmpeg_endpoint: self.ffmpeg_endpoint.clone(),
             rtmp_endpoint: self.rtmp_endpoint.clone(),
             pull_location: location,

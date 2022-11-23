@@ -33,6 +33,7 @@ use mmids_rtmp::rtmp_server::{
 };
 use mmids_rtmp::utils::{stream_metadata_to_hash_map, video_timestamp_from_rtmp_data};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -90,7 +91,7 @@ enum FfmpegStatus {
 
 struct ActiveStream {
     id: StreamId,
-    stream_name: String,
+    stream_name: Arc<String>,
     pending_media: VecDeque<MediaNotificationContent>,
     rtmp_output_status: WatchRegistrationStatus,
     rtmp_input_status: PublishRegistrationStatus,
@@ -392,7 +393,7 @@ impl FfmpegTranscoder {
         match &media.content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(stream) = self.active_streams.get(&media.stream_id) {
-                    if &stream.stream_name != stream_name {
+                    if stream.stream_name != *stream_name {
                         warn!(
                             stream_id = ?media.stream_id,
                             new_stream_name = %stream_name,
@@ -457,8 +458,8 @@ impl FfmpegTranscoder {
     }
 
     fn prepare_stream(&mut self, stream_id: StreamId, outputs: &mut StepOutputs) {
-        let source_rtmp_app = self.get_source_rtmp_app();
-        let result_rtmp_app = self.get_result_rtmp_app();
+        let source_rtmp_app = Arc::new(self.get_source_rtmp_app());
+        let result_rtmp_app = Arc::new(self.get_result_rtmp_app());
 
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             let (output_is_active, output_media_channel) = match &stream.rtmp_output_status {
@@ -596,7 +597,7 @@ impl FfmpegTranscoder {
                 .send(RtmpEndpointRequest::RemoveRegistration {
                     registration_type: RegistrationType::Watcher,
                     port: 1935,
-                    rtmp_app: self.get_source_rtmp_app(),
+                    rtmp_app: Arc::new(self.get_source_rtmp_app()),
                     rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0.clone()),
                 });
 
@@ -605,7 +606,7 @@ impl FfmpegTranscoder {
                 .send(RtmpEndpointRequest::RemoveRegistration {
                     registration_type: RegistrationType::Publisher,
                     port: 1935,
-                    rtmp_app: self.get_result_rtmp_app(),
+                    rtmp_app: Arc::new(self.get_result_rtmp_app()),
                     rtmp_stream_key: StreamKeyRegistration::Exact(stream.id.0),
                 });
 

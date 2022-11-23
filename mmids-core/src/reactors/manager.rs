@@ -9,6 +9,7 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, warn};
@@ -25,10 +26,10 @@ pub enum ReactorManagerRequest {
     /// Requests that the specified reactor start a workflow based on the specified stream name
     CreateWorkflowForStreamName {
         /// The name of the reactor to send this request to
-        reactor_name: String,
+        reactor_name: Arc<String>,
 
         /// The name of the stream to look up a workflow for
-        stream_name: String,
+        stream_name: Arc<String>,
 
         /// Channel that will be used to keep the created workflow alive. When the sender end of
         /// the channel is closed, that will be a signal to the reactor to remove the created
@@ -68,7 +69,7 @@ struct Actor {
     executor_factory: ReactorExecutorFactory,
     event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
     futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
-    reactors: HashMap<String, UnboundedSender<ReactorRequest>>,
+    reactors: HashMap<Arc<String>, UnboundedSender<ReactorRequest>>,
 }
 
 unsafe impl Send for Actor {}
@@ -229,7 +230,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters,
                     executor: "exe".to_string(),
@@ -257,7 +258,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters: parameters.clone(),
                     executor: "exe".to_string(),
@@ -273,7 +274,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters: parameters.clone(),
                     executor: "exe".to_string(),
@@ -301,7 +302,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters,
                     executor: "exe".to_string(),
@@ -329,7 +330,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters,
                     executor: "exe2".to_string(),
@@ -361,7 +362,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters,
                     executor: "exe".to_string(),
@@ -380,8 +381,8 @@ mod tests {
         context
             .manager
             .send(ReactorManagerRequest::CreateWorkflowForStreamName {
-                reactor_name: "reactor".to_string(),
-                stream_name: "def".to_string(),
+                reactor_name: Arc::new("reactor".to_string()),
+                stream_name: Arc::new("def".to_string()),
                 response_channel: sender,
             })
             .expect("Failed to send create workflow request");
@@ -405,7 +406,7 @@ mod tests {
             .manager
             .send(ReactorManagerRequest::CreateReactor {
                 definition: ReactorDefinition {
-                    name: "reactor".to_string(),
+                    name: Arc::new("reactor".to_string()),
                     update_interval: Duration::new(0, 0),
                     parameters,
                     executor: "exe".to_string(),
@@ -424,8 +425,8 @@ mod tests {
         context
             .manager
             .send(ReactorManagerRequest::CreateWorkflowForStreamName {
-                reactor_name: "reactor2".to_string(),
-                stream_name: "def".to_string(),
+                reactor_name: Arc::new("reactor2".to_string()),
+                stream_name: Arc::new("def".to_string()),
                 response_channel: sender,
             })
             .expect("Failed to send create workflow request");
@@ -463,10 +464,13 @@ mod tests {
     }
 
     impl ReactorExecutor for TestExecutor {
-        fn get_workflow(&self, _stream_name: String) -> BoxFuture<'static, ReactorExecutionResult> {
+        fn get_workflow(
+            &self,
+            _stream_name: Arc<String>,
+        ) -> BoxFuture<'static, ReactorExecutionResult> {
             async {
                 ReactorExecutionResult::valid(vec![WorkflowDefinition {
-                    name: "test".to_string(),
+                    name: Arc::new("test".to_string()),
                     routed_by_reactor: false,
                     steps: Vec::new(),
                 }])
