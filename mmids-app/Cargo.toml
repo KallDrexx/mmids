@@ -5,15 +5,15 @@ edition = "2018"
 
 [dependencies]
 mmids-core = { path = "../mmids-core" }
+mmids-ffmpeg = { path = "../mmids-ffmpeg" }
 mmids-gstreamer = { path = "../mmids-gstreamer" }
 mmids-rtmp = { path = "../mmids-rtmp" }
-mmids-ffmpeg = { path = "../mmids-ffmpeg" }
 
+async-trait = "0.1.51"
+hyper = { version = "0.14", features = ["full"] }
+native-tls = "0.2"
 tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "signal"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3.2", features = ["json"] }
-tracing-futures = "0.2.5"
 tracing-appender = "0.2.0"
-native-tls = "0.2"
-hyper = { version = "0.14", features = ["full"] }
-async-trait = "0.1.51"
+tracing-futures = "0.2.5"
+tracing-subscriber = { version = "0.3.2", features = ["json"] }
