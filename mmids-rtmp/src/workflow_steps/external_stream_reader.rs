@@ -384,12 +384,15 @@ mod tests {
     use crate::rtmp_server::RtmpEndpointMediaData;
     use crate::utils::hash_map_to_stream_metadata;
     use crate::workflow_steps::external_stream_handler::StreamHandlerFutureResult;
-    use bytes::Bytes;
+    use bytes::{Bytes, BytesMut};
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
-    use mmids_core::codecs::{AudioCodec, VideoCodec};
+    use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
+    use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+    use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
+    use std::iter;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -692,17 +695,19 @@ mod tests {
 
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2, 3]),
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
-                is_sequence_header: true,
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         };
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media.clone(), &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -710,21 +715,11 @@ mod tests {
             "abc",
             "Unexpected stream id"
         );
-        match &outputs.media[0].content {
-            MediaNotificationContent::Audio {
-                data,
-                codec,
-                timestamp,
-                is_sequence_header,
-            } => {
-                assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-                assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
-                assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
-                assert!(is_sequence_header, "Expected sequence header");
-            }
 
-            content => panic!("Expected NewIncomingStream, got {:?}", content),
-        }
+        assert_eq!(
+            outputs.media[0].content, media.content,
+            "Unexpected media content"
+        );
     }
 
     #[tokio::test]
@@ -907,11 +902,13 @@ mod tests {
 
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2, 3, 4]),
-                is_sequence_header: true,
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         };
 
@@ -931,13 +928,11 @@ mod tests {
             RtmpEndpointMediaData::NewAudioData {
                 data,
                 timestamp,
-                codec,
                 is_sequence_header,
             } => {
                 assert_eq!(data, &vec![1, 2, 3, 4], "Unexpected bytes");
                 assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
                 assert!(is_sequence_header, "Expected sequence header to be true");
-                assert_eq!(codec, &AudioCodec::Aac, "Expected h264 codec");
             }
 
             data => panic!("Unexpected media data: {:?}", data),

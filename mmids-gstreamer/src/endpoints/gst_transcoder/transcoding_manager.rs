@@ -200,9 +200,12 @@ impl TranscodeManager {
                 metadata: _,
                 is_required_for_decoding,
             } => {
-                let result =
-                    self.audio_encoder
-                        .push_data(payload_type, data, timestamp, is_required_for_decoding);
+                let result = self.audio_encoder.push_data(
+                    payload_type,
+                    data,
+                    timestamp,
+                    is_required_for_decoding,
+                );
 
                 if let Err(error) = result {
                     error!("Failed to push media to audio encoder: {}", error);

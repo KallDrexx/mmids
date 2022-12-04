@@ -22,6 +22,7 @@ use crate::rtmp_server::{
 };
 use crate::utils::hash_map_to_stream_metadata;
 use futures::FutureExt;
+use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
 use mmids_core::net::{IpAddress, IpAddressParseError};
 use mmids_core::reactors::manager::ReactorManagerRequest;
 use mmids_core::reactors::ReactorWorkflowUpdate;
@@ -39,7 +40,6 @@ use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, warn};
-use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -460,12 +460,10 @@ impl RtmpWatchStep {
                     };
 
                     let rtmp_media_data = match payload_type {
-                        x if x == *AUDIO_CODEC_AAC_RAW => {
-                            RtmpEndpointMediaData::NewAudioData {
-                                is_sequence_header: *is_required_for_decoding,
-                                data: data.clone(),
-                                timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
-                            }
+                        x if *x == *AUDIO_CODEC_AAC_RAW => RtmpEndpointMediaData::NewAudioData {
+                            is_sequence_header: *is_required_for_decoding,
+                            data: data.clone(),
+                            timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
                         },
 
                         _ => return, // Payload type not supported by RTMP

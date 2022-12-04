@@ -633,7 +633,10 @@ impl Actor {
                 self.cached_inbound_media.remove(&media.stream_id);
             }
 
-            MediaNotificationContent::MediaPayload { is_required_for_decoding: true, ..} => {
+            MediaNotificationContent::MediaPayload {
+                is_required_for_decoding: true,
+                ..
+            } => {
                 if let Some(collection) = self.cached_inbound_media.get_mut(&media.stream_id) {
                     collection.push(media.clone());
                 }

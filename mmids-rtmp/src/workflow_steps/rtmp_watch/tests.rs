@@ -3,16 +3,18 @@ use crate::rtmp_server::{
     RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification,
 };
 use anyhow::Result;
-use bytes::Bytes;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use bytes::{Bytes, BytesMut};
+use mmids_core::codecs::VideoCodec;
 use mmids_core::net::ConnectionId;
 use mmids_core::test_utils::expect_mpsc_response;
 use mmids_core::workflows::definitions::WorkflowStepType;
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
 use mmids_core::workflows::steps::StepTestContext;
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId, VideoTimestamp};
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::{HashMap, HashSet};
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -477,11 +479,13 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Audio {
-            codec: AudioCodec::Aac,
+        content: MediaNotificationContent::MediaPayload {
             data: Bytes::from(vec![3, 4]),
-            is_sequence_header: true,
             timestamp: Duration::from_millis(1),
+            is_required_for_decoding: true,
+            media_type: MediaType::Audio,
+            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     });
 
@@ -491,12 +495,10 @@ async fn audio_packet_sent_to_media_channel_after_new_stream_message_received() 
     match &media.data {
         RtmpEndpointMediaData::NewAudioData {
             data,
-            codec,
             timestamp,
             is_sequence_header,
         } => {
             assert_eq!(data, &vec![3, 4], "Unexpected video bytes");
-            assert_eq!(codec, &AudioCodec::Aac, "Unexpected video codec");
             assert_eq!(timestamp, &RtmpTimestamp::new(1), "Unexpected timestamp");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");
         }
@@ -636,11 +638,13 @@ async fn audio_message_passed_as_output() {
         .step_context
         .assert_media_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Audio {
-                codec: AudioCodec::Aac,
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![3, 4]),
-                is_sequence_header: true,
                 timestamp: Duration::from_millis(1),
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         });
 }

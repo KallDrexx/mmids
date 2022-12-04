@@ -1,13 +1,13 @@
 //! Common utility functions that are useful for interacting with gstreamer.  These are mostly
 //! meant for use by code creating custom encoders.
 
-use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use gstreamer::prelude::*;
 use gstreamer::{Buffer, Caps, ClockTime, Element, ElementFactory};
 use gstreamer_app::AppSrc;
-use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, AudioCodec, VideoCodec};
+use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Function that makes it easy to create a gstreamer `Buffer` based on a set of bytes, an optional
@@ -89,7 +89,7 @@ pub fn set_source_audio_sequence_header(
         other => Err(anyhow!(
             "audio codec {other} is not known, and thus we can't prepare the gstreamer pipeline \
             to accept it."
-        ))
+        )),
     }
 }
 

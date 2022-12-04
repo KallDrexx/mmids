@@ -285,7 +285,10 @@ impl WorkflowForwarderStep {
                 // other data will come down as metadata that we don't want to permanently store.
             }
 
-            MediaNotificationContent::MediaPayload { is_required_for_decoding: true, .. } => {
+            MediaNotificationContent::MediaPayload {
+                is_required_for_decoding: true,
+                ..
+            } => {
                 if let Some(stream) = self.active_streams.get_mut(&media.stream_id) {
                     stream.required_media.push(media.clone());
                 }

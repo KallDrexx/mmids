@@ -8,7 +8,8 @@ use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW};
+use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use std::collections::HashMap;
 use std::iter;
@@ -16,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
-use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
 
 /// Creates an audio encoder that uses the gstreamer `avenc_aac` encoder to encode audio into aac.
 ///

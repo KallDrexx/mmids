@@ -1,7 +1,7 @@
 use super::*;
 use anyhow::Result;
 use bytes::Bytes;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::codecs::VideoCodec;
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::definitions::WorkflowStepType;
 use mmids_core::workflows::steps::StepTestContext;
@@ -515,7 +515,6 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         .send(RtmpEndpointPublisherMessage::NewAudioData {
             publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
-            codec: AudioCodec::Aac,
             timestamp: RtmpTimestamp::new(5),
             is_sequence_header: true,
         })
@@ -532,21 +531,16 @@ async fn audio_notification_received_when_publisher_sends_audio() {
     let media = &context.step_context.media_outputs[0];
     assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
-    match &media.content {
-        MediaNotificationContent::Audio {
-            data,
-            timestamp,
-            codec,
-            is_sequence_header,
-        } => {
-            assert_eq!(data, &vec![1, 2, 3], "Unexpected video data");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
-            assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
-        }
+    let expected_content = MediaNotificationContent::MediaPayload {
+        timestamp: Duration::from_millis(5),
+        data: Bytes::from_static(&[1, 2, 3]),
+        is_required_for_decoding: true,
+        media_type: MediaType::Audio,
+        payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+    };
 
-        content => panic!("Unexpected media content: {:?}", content),
-    }
+    assert_eq!(media.content, expected_content, "Unexpected media content");
 }
 
 #[test]
@@ -620,11 +614,13 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
         .step_context
         .assert_media_not_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("test".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2]),
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
-                is_sequence_header: true,
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         });
 }

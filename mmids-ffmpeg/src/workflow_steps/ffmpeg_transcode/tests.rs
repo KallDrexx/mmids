@@ -7,12 +7,13 @@ use crate::workflow_steps::ffmpeg_transcode::{
     VIDEO_CODEC_NAME,
 };
 use anyhow::Result;
-use bytes::Bytes;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use bytes::{Bytes, BytesMut};
+use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
 use mmids_core::workflows::steps::{StepStatus, StepTestContext};
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId, VideoTimestamp};
 use mmids_rtmp::rtmp_server::{
     RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage,
@@ -21,6 +22,7 @@ use mmids_rtmp::rtmp_server::{
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -680,11 +682,13 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
         .step_context
         .assert_media_not_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("test".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2]),
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
-                is_sequence_header: true,
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         });
 }
@@ -748,11 +752,13 @@ async fn audio_packet_sent_to_watcher_media_channel() {
 
     let media = MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Audio {
+        content: MediaNotificationContent::MediaPayload {
             data: Bytes::from(vec![1, 2]),
-            codec: AudioCodec::Aac,
             timestamp: Duration::from_millis(5),
-            is_sequence_header: true,
+            is_required_for_decoding: true,
+            media_type: MediaType::Audio,
+            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     };
 
@@ -917,7 +923,6 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
         .send(RtmpEndpointPublisherMessage::NewAudioData {
             publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
-            codec: AudioCodec::Aac,
             timestamp: RtmpTimestamp::new(5),
             is_sequence_header: true,
         })
@@ -938,21 +943,16 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
         "Expected media to have original stream id"
     );
 
-    match &media.content {
-        MediaNotificationContent::Audio {
-            data,
-            codec,
-            timestamp,
-            is_sequence_header,
-        } => {
-            assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-            assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
-        }
+    let expected_content = MediaNotificationContent::MediaPayload {
+        is_required_for_decoding: true,
+        timestamp: Duration::from_millis(5),
+        data: Bytes::from_static(&[1, 2, 3]),
+        media_type: MediaType::Audio,
+        payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+    };
 
-        _ => panic!("Unexpected media content: {:?}", media.content),
-    }
+    assert_eq!(media.content, expected_content, "Unexpected media content");
 }
 
 #[tokio::test]

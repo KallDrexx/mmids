@@ -6,8 +6,8 @@ use crate::rtmp_server::{
     StreamKeyRegistration, ValidationResponse,
 };
 use bytes::Bytes;
+use mmids_core::codecs::VideoCodec;
 use mmids_core::codecs::VideoCodec::{Unknown, H264};
-use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::test_utils;
 use rml_rtmp::sessions::{ClientSessionEvent, StreamMetadata};
 use rml_rtmp::time::RtmpTimestamp;
@@ -1128,7 +1128,6 @@ async fn notification_raised_when_audio_published() {
             timestamp: event_timestamp,
             data: event_data,
             is_sequence_header: _,
-            codec: _,
         } => {
             assert_eq!(
                 publisher.0.as_str(),
@@ -1147,7 +1146,7 @@ async fn notification_raised_when_audio_published() {
 }
 
 #[tokio::test]
-async fn published_audio_aac_codec_if_first_byte_0xa0() {
+async fn published_audio_received_if_first_byte_0xa0() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
@@ -1158,22 +1157,13 @@ async fn published_audio_aac_codec_if_first_byte_0xa0() {
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
     match response {
-        RtmpEndpointPublisherMessage::NewAudioData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-        } => {
-            assert_eq!(codec, AudioCodec::Aac, "Unexpected audio codec");
-        }
-
+        RtmpEndpointPublisherMessage::NewAudioData { .. } => (),
         message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
 #[tokio::test]
-async fn published_audio_unknown_codec_if_first_byte_not_0xa0() {
+async fn no_published_audio_when_first_byte_is_not_0xa0() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
@@ -1182,20 +1172,7 @@ async fn published_audio_unknown_codec_if_first_byte_not_0xa0() {
     context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
-    let response = test_utils::expect_mpsc_response(receiver).await;
-    match response {
-        RtmpEndpointPublisherMessage::NewAudioData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-        } => {
-            assert_eq!(codec, AudioCodec::Unknown, "Unexpected audio codec");
-        }
-
-        message => panic!("Unexpected publisher message: {:?}", message),
-    };
+    test_utils::expect_mpsc_timeout(receiver).await;
 }
 
 #[tokio::test]
@@ -1215,7 +1192,6 @@ async fn published_audio_aac_sequence_header_if_second_byte_is_zero() {
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
         } => {
             assert!(is_sequence_header, "Expected is sequence header to be true");
         }
@@ -1241,7 +1217,6 @@ async fn published_audio_aac_not_sequence_header_if_second_byte_is_not_zero() {
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
         } => {
             assert!(
                 !is_sequence_header,
@@ -1499,7 +1474,6 @@ async fn aac_audio_has_flv_headers_added_for_sequence_header() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
-                codec: AudioCodec::Aac,
                 data: sent_data.clone(),
                 is_sequence_header: true,
                 timestamp: sent_timestamp,
@@ -1539,7 +1513,6 @@ async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
-                codec: AudioCodec::Aac,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 timestamp: sent_timestamp,
@@ -1579,7 +1552,6 @@ async fn watcher_does_not_receives_unknown_audio_codec() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
-                codec: AudioCodec::Unknown,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 timestamp: sent_timestamp,

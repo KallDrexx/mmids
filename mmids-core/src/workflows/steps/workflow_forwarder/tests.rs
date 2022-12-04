@@ -1,14 +1,14 @@
-use std::iter;
-use std::sync::Arc;
 use super::*;
-use crate::workflows::definitions::WorkflowStepType;
-use crate::workflows::steps::StepTestContext;
 use crate::test_utils;
+use crate::workflows::definitions::WorkflowStepType;
+use crate::workflows::metadata::MediaPayloadMetadataCollection;
+use crate::workflows::steps::StepTestContext;
+use crate::workflows::MediaType;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
+use std::iter;
+use std::sync::Arc;
 use std::time::Duration;
-use crate::workflows::MediaType;
-use crate::workflows::metadata::MediaPayloadMetadataCollection;
 
 struct TestContext {
     reactor_manager: UnboundedReceiver<ReactorManagerRequest>,
@@ -284,7 +284,7 @@ async fn media_passed_as_output_immediately() {
     };
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: expected_content.clone(),
     });
 
@@ -295,7 +295,7 @@ async fn media_passed_as_output_immediately() {
     );
 
     let media = &context.step_context.media_outputs[0];
-    assert_eq!(media.stream_id.0, "abc", "Unexpected stream id");
+    assert_eq!(media.stream_id.0.as_str(), "abc", "Unexpected stream id");
     assert_eq!(media.content, expected_content, "Unexpected media content");
 }
 
@@ -343,14 +343,15 @@ async fn required_media_payload_sent_to_workflow_when_received_before_workflow_s
 
     let expected_content = MediaNotificationContent::MediaPayload {
         data: Bytes::from(vec![1, 2, 3]),
-        codec: Arc::new("test".to_string()),
+        payload_type: Arc::new("test".to_string()),
+        media_type: MediaType::Other,
         is_required_for_decoding: true,
         timestamp: Duration::from_millis(10),
         metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
     };
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: expected_content.clone(),
     });
 
@@ -389,14 +390,15 @@ async fn non_required_payload_not_sent_to_workflow_when_received_before_workflow
 
     let expected_content = MediaNotificationContent::MediaPayload {
         data: Bytes::from(vec![1, 2, 3]),
-        codec: Arc::new("test".to_string()),
+        payload_type: Arc::new("test".to_string()),
+        media_type: MediaType::Other,
         is_required_for_decoding: false,
         timestamp: Duration::from_millis(10),
         metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
     };
 
     context.step_context.execute_with_media(MediaNotification {
-        stream_id: StreamId("abc".to_string()),
+        stream_id: StreamId(Arc::new("abc".to_string())),
         content: expected_content.clone(),
     });
 

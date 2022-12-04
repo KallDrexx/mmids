@@ -11,7 +11,7 @@ pub mod steps;
 
 pub use runner::{start_workflow, WorkflowRequest, WorkflowRequestOperation, WorkflowStatus};
 
-use crate::codecs::{VideoCodec};
+use crate::codecs::VideoCodec;
 use crate::{StreamId, VideoTimestamp};
 use bytes::Bytes;
 use std::collections::HashMap;

@@ -18,13 +18,16 @@ use crate::endpoint::{
     AudioTranscodeParams, FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams,
     H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
 };
+use bytes::BytesMut;
 use futures::FutureExt;
+use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::StreamId;
 use mmids_rtmp::rtmp_server::{
     IpRestriction, RegistrationType, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
@@ -33,6 +36,7 @@ use mmids_rtmp::rtmp_server::{
 };
 use mmids_rtmp::utils::{stream_metadata_to_hash_map, video_timestamp_from_rtmp_data};
 use std::collections::{HashMap, VecDeque};
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -62,6 +66,7 @@ struct FfmpegTranscoder {
     bitrate: Option<u16>,
     active_streams: HashMap<StreamId, ActiveStream>,
     status: StepStatus,
+    metadata_buffer: BytesMut,
 }
 
 #[derive(Debug)]
@@ -272,6 +277,7 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
             video_codec_params: vcodec,
             bitrate,
             status: StepStatus::Active,
+            metadata_buffer: BytesMut::new(),
         };
 
         let futures = vec![
@@ -751,17 +757,21 @@ impl FfmpegTranscoder {
 
                 RtmpEndpointPublisherMessage::NewAudioData {
                     publisher: _,
-                    codec,
                     data,
                     is_sequence_header,
                     timestamp,
                 } => outputs.media.push(MediaNotification {
                     stream_id: stream_id.clone(),
-                    content: MediaNotificationContent::Audio {
-                        codec,
+                    content: MediaNotificationContent::MediaPayload {
                         timestamp: Duration::from_millis(timestamp.value as u64),
-                        is_sequence_header,
+                        is_required_for_decoding: is_sequence_header,
                         data,
+                        media_type: MediaType::Audio,
+                        payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                        metadata: MediaPayloadMetadataCollection::new(
+                            iter::empty(),
+                            &mut self.metadata_buffer,
+                        ),
                     },
                 }),
 

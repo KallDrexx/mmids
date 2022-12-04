@@ -360,9 +360,8 @@ impl RtmpServerEndpointActor {
                 ..
             } => {
                 if *is_sequence_header {
-                    key_details.latest_audio_sequence_header = Some(AudioSequenceHeader {
-                        data: data.clone(),
-                    });
+                    key_details.latest_audio_sequence_header =
+                        Some(AudioSequenceHeader { data: data.clone() });
                 }
             }
 

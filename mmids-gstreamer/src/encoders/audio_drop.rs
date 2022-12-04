@@ -2,7 +2,6 @@ use crate::encoders::{AudioEncoder, AudioEncoderGenerator};
 use anyhow::Result;
 use bytes::Bytes;
 use gstreamer::Pipeline;
-use mmids_core::codecs::AudioCodec;
 use mmids_core::workflows::MediaNotificationContent;
 use std::collections::HashMap;
 use std::sync::Arc;

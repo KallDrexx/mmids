@@ -177,7 +177,6 @@ pub async fn main() {
                         data,
                         is_sequence_header,
                         timestamp,
-                        codec,
                     } => {
                         if announce_audio_data {
                             info!("Connection {} sent audio data", publisher);
@@ -198,7 +197,6 @@ pub async fn main() {
                                 data,
                                 is_sequence_header,
                                 timestamp,
-                                codec,
                             },
                         });
                     }

@@ -1,12 +1,12 @@
 use super::RtmpEndpointPublisherMessage;
 use crate::rtmp_server::RtmpEndpointMediaData;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use mmids_core::codecs::VideoCodec;
 use mmids_core::net::tcp::OutboundPacket;
 use mmids_core::net::ConnectionId;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
@@ -31,7 +31,6 @@ pub struct RtmpServerConnectionHandler {
     force_disconnect: bool,
     published_event_channel: Option<UnboundedSender<RtmpEndpointPublisherMessage>>,
     video_parse_error_raised: bool,
-    audio_parse_error_raised: bool,
 }
 
 #[derive(Debug)]
@@ -144,7 +143,6 @@ impl RtmpServerConnectionHandler {
             force_disconnect: false,
             published_event_channel: None,
             video_parse_error_raised: false,
-            audio_parse_error_raised: false,
         }
     }
 
@@ -1098,7 +1096,9 @@ fn wrap_video_into_flv(
 
 fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {
     if data.len() < 2 {
-        return Err(anyhow!("Not enough bytes received for a complete flv header"));
+        return Err(anyhow!(
+            "Not enough bytes received for a complete flv header"
+        ));
     }
 
     let flv_tag = data.split_to(1);
@@ -1107,7 +1107,9 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {
     let codec_id = flv_tag[0] >> 4;
     if codec_id != 10 {
         // Only AAC is supported
-        return Err(anyhow!("FLV header specified codec {codec_id} but only AAC (10) is supported"));
+        return Err(anyhow!(
+            "FLV header specified codec {codec_id} but only AAC (10) is supported"
+        ));
     }
 
     Ok(UnwrappedAudio {
@@ -1116,10 +1118,7 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {
     })
 }
 
-fn wrap_audio_into_flv(
-    data: Bytes,
-    is_sequence_header: bool,
-) -> Bytes {
+fn wrap_audio_into_flv(data: Bytes, is_sequence_header: bool) -> Bytes {
     let flv_tag = 0xaf; // Assume always aac
     let packet_type = if is_sequence_header { 0 } else { 1 };
     let mut wrapped = BytesMut::new();
