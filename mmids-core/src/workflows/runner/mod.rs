@@ -595,7 +595,6 @@ impl Actor {
             match &media.content {
                 MediaNotificationContent::Metadata { .. } => (),
                 MediaNotificationContent::MediaPayload { .. } => (),
-                MediaNotificationContent::Video { .. } => (),
                 MediaNotificationContent::NewIncomingStream { .. } => {
                     if !self.active_streams.contains_key(&media.stream_id) {
                         // Since this is the first time we've gotten a new incoming stream
@@ -679,8 +678,6 @@ impl Actor {
                         Operation::Ignore
                     }
                 }
-
-                MediaNotificationContent::Video { .. } => Operation::Ignore,
             };
 
             match operation {

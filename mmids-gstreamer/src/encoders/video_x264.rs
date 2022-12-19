@@ -1,16 +1,19 @@
 use crate::encoders::{SampleResult, VideoEncoder, VideoEncoderGenerator};
 use crate::utils::{create_gst_element, get_codec_data_from_element};
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Caps, Element, FlowError, FlowSuccess, Fraction, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::VideoCodec;
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::codecs::{VIDEO_CODEC_H264_AVC, VideoCodec};
+use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
+use std::iter;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
+use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue};
 
 /// Creates a video encoder that uses the gstreamer `x264enc` encoder to encode video into h264
 /// video.
@@ -23,7 +26,9 @@ use tracing::{error, warn};
 /// * `preset` - The `speed-preset` value to use in the encoder.  Valid values are: `ultrafast`,
 /// `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`.  The default
 /// is `medium`.
-pub struct X264EncoderGenerator {}
+pub struct X264EncoderGenerator {
+    pub pts_offset_metadata_key: MetadataKey,
+}
 
 impl VideoEncoderGenerator for X264EncoderGenerator {
     fn create(
@@ -36,6 +41,7 @@ impl VideoEncoderGenerator for X264EncoderGenerator {
             media_sender,
             parameters,
             pipeline,
+            self.pts_offset_metadata_key,
         )?))
     }
 }
@@ -49,6 +55,7 @@ impl X264Encoder {
         media_sender: UnboundedSender<MediaNotificationContent>,
         parameters: &HashMap<String, Option<String>>,
         pipeline: &Pipeline,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Result<X264Encoder> {
         let height = get_number(parameters, "height");
         let width = get_number(parameters, "width");
@@ -142,6 +149,7 @@ impl X264Encoder {
             .map_err(|_| anyhow!("appsink could not be cast to 'AppSink'"))?;
 
         let mut sent_codec_data = false;
+        let mut metadata_buffer = BytesMut::new();
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -150,6 +158,8 @@ impl X264Encoder {
                         &mut sent_codec_data,
                         &output_parser,
                         media_sender.clone(),
+                        pts_offset_metadata_key,
+                        &mut metadata_buffer,
                     ) {
                         Ok(_) => Ok(FlowSuccess::Ok),
                         Err(error) => {
@@ -210,30 +220,43 @@ fn sample_received(
     codec_data_sent: &mut bool,
     output_parser: &Element,
     media_sender: UnboundedSender<MediaNotificationContent>,
+    pts_offset_metadata_key: MetadataKey,
+    metadata_buffer: &mut BytesMut,
 ) -> Result<()> {
     if !*codec_data_sent {
         // Pull the codec_data/sequence header out from the output parser
         let codec_data = get_codec_data_from_element(output_parser)?;
 
-        let _ = media_sender.send(MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
-            timestamp: VideoTimestamp::from_zero(),
-            is_sequence_header: true,
-            is_keyframe: false,
+        let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
+            timestamp: Duration::from_millis(0),
+            is_required_for_decoding: true,
             data: codec_data,
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), metadata_buffer),
         });
 
         *codec_data_sent = true;
     }
 
     let sample = SampleResult::from_sink(sink).with_context(|| "Failed to get x264enc sample")?;
+    let timestamp = sample.to_video_timestamp();
+    let pts_offset = MetadataEntry::new(
+        pts_offset_metadata_key,
+        MetadataValue::I32(timestamp.pts_offset()),
+        metadata_buffer,
+    ).unwrap(); // Can only panic if the key is not for an i32
 
-    let _ = media_sender.send(MediaNotificationContent::Video {
-        codec: VideoCodec::H264,
-        timestamp: sample.to_video_timestamp(),
-        is_sequence_header: false,
-        is_keyframe: false, // TODO, figure out how to compute this
+    let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+        media_type: MediaType::Video,
+        payload_type: VIDEO_CODEC_H264_AVC.clone(),
+        timestamp: timestamp.dts(),
+        is_required_for_decoding: false,
         data: sample.content,
+        metadata: MediaPayloadMetadataCollection::new(
+            [pts_offset].into_iter(),
+            metadata_buffer,
+        ),
     });
 
     Ok(())
