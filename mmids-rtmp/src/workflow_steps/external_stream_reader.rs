@@ -14,6 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
+use mmids_core::workflows::metadata::MetadataKey;
 
 /// Represents logic for a basic workflow step that exposes streams to an RTMP endpoint
 /// so that an external system can read the video stream.  This exposes a read-only interface for
@@ -29,6 +30,8 @@ pub struct ExternalStreamReader {
     watcher_app_name: Arc<String>,
     active_streams: HashMap<StreamId, ActiveStream>,
     stream_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 #[derive(Debug)]
@@ -67,6 +70,8 @@ impl ExternalStreamReader {
         watcher_rtmp_app_name: Arc<String>,
         rtmp_server: UnboundedSender<RtmpEndpointRequest>,
         external_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> (Self, FutureList) {
         let step = ExternalStreamReader {
             status: StepStatus::Active,
@@ -74,6 +79,8 @@ impl ExternalStreamReader {
             rtmp_server_endpoint: rtmp_server.clone(),
             active_streams: HashMap::new(),
             stream_handler_generator: external_handler_generator,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         };
 
         let futures = vec![notify_when_rtmp_endpoint_is_gone(rtmp_server).boxed()];
@@ -197,7 +204,8 @@ impl ExternalStreamReader {
                         &stream.rtmp_output_status
                     {
                         let media = media.clone();
-                        if let Ok(media_data) = RtmpEndpointMediaData::try_from(media.content) {
+
+                        if let Ok(media_data) = RtmpEndpointMediaData::from_media_notification_content(media.content, self.is_keyframe_metadata_key, self.pts_offset_metadata_key) {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -252,7 +260,7 @@ impl ExternalStreamReader {
                 // so clients don't miss them
                 if let Some(media_channel) = output_media_channel {
                     for media in stream.pending_media.drain(..) {
-                        if let Ok(media_data) = RtmpEndpointMediaData::try_from(media) {
+                        if let Ok(media_data) = RtmpEndpointMediaData::from_media_notification_content(media, self.is_keyframe_metadata_key, self.pts_offset_metadata_key) {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -388,13 +396,14 @@ mod tests {
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
     use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
-    use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+    use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataKeyMap};
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
     use std::iter;
     use std::sync::Arc;
     use std::time::Duration;
+    use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
 
     struct TestContext {
         external_stream_reader: ExternalStreamReader,
@@ -451,8 +460,12 @@ mod tests {
                 stop_stream_sender: stop_sender,
             });
 
+            let mut metadata_map = MetadataKeyMap::new();
+            let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
+            let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
+
             let (reader, future_list) =
-                ExternalStreamReader::new(Arc::new("app".to_string()), rtmp_sender, generator);
+                ExternalStreamReader::new(Arc::new("app".to_string()), rtmp_sender, generator, is_keyframe_metadata_key, pts_offset_metadata_key);
             let mut futures = FuturesUnordered::new();
             futures.extend(future_list);
 
@@ -870,7 +883,6 @@ mod tests {
             RtmpEndpointMediaData::NewVideoData {
                 data,
                 timestamp,
-                codec,
                 is_sequence_header,
                 is_keyframe,
                 composition_time_offset,
@@ -883,7 +895,6 @@ mod tests {
                 );
                 assert!(is_sequence_header, "Expected sequence header to be true");
                 assert!(is_keyframe, "Expected key frame to be true");
-                assert_eq!(codec, &VideoCodec::H264, "Expected h264 codec");
                 assert_eq!(
                     composition_time_offset,
                     &video_timestamp.pts_offset(),

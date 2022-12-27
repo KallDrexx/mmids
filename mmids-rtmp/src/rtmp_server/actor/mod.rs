@@ -342,13 +342,11 @@ impl RtmpServerEndpointActor {
         match &data {
             RtmpEndpointMediaData::NewVideoData {
                 data,
-                codec,
                 is_sequence_header,
                 ..
             } => {
                 if *is_sequence_header {
                     key_details.latest_video_sequence_header = Some(VideoSequenceHeader {
-                        codec: *codec,
                         data: data.clone(),
                     });
                 }
@@ -1218,7 +1216,6 @@ fn handle_connection_request_watch(
     // start decoding video
     if let Some(sequence_header) = &active_stream_key.latest_video_sequence_header {
         let _ = media_sender.send(RtmpEndpointMediaData::NewVideoData {
-            codec: sequence_header.codec,
             is_sequence_header: true,
             is_keyframe: true,
             data: sequence_header.data.clone(),

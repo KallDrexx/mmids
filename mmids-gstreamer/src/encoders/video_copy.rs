@@ -33,7 +33,7 @@ impl VideoEncoderGenerator for VideoCopyEncoderGenerator {
 }
 
 struct CodecInfo {
-    codec: VideoCodec,
+    payload_type: Arc<String>,
     sequence_header: Bytes,
 }
 
@@ -70,7 +70,6 @@ impl VideoCopyEncoder {
         let copy_of_codec_data = codec_data.clone();
         let mut sent_codec_data = false;
         let mut codec_data_error_raised = false;
-        let mut codec = VideoCodec::Unknown;
         let mut metadata_buffer = BytesMut::new();
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
@@ -98,7 +97,6 @@ impl VideoCopyEncoder {
                                 metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut metadata_buffer),
                             });
 
-                            codec = info.codec;
                             sent_codec_data = true;
                         } else if !codec_data_error_raised {
                             error!("Received data prior to codec data being set. This shouldn't happen");
@@ -147,7 +145,7 @@ impl VideoCopyEncoder {
 impl VideoEncoder for VideoCopyEncoder {
     fn push_data(
         &self,
-        codec: VideoCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
@@ -159,7 +157,7 @@ impl VideoEncoder for VideoCopyEncoder {
                 .map_err(|_| anyhow!("Video copy encoder's lock was poisoned"))?;
 
             *codec_data = Some(CodecInfo {
-                codec,
+                payload_type,
                 sequence_header: data,
             })
         } else {

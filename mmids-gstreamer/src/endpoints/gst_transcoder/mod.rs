@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
+use mmids_core::workflows::metadata::MetadataKey;
 
 /// Requests that can be made to the gstreamer transcoding endpoint
 pub enum GstTranscoderRequest {
@@ -122,9 +123,10 @@ struct StartTranscodeParams {
 /// endpoint can be made.
 pub fn start_gst_transcoder(
     encoder_factory: Arc<EncoderFactory>,
+    pts_offset_metadata_key: MetadataKey,
 ) -> Result<UnboundedSender<GstTranscoderRequest>, EndpointStartError> {
     let (sender, receiver) = unbounded_channel();
-    let actor = EndpointActor::new(receiver, encoder_factory)?;
+    let actor = EndpointActor::new(receiver, encoder_factory, pts_offset_metadata_key)?;
     tokio::spawn(actor.run());
 
     Ok(sender)
@@ -148,6 +150,7 @@ struct EndpointActor {
     futures: FuturesUnordered<BoxFuture<'static, EndpointFuturesResult>>,
     active_transcodes: HashMap<Uuid, ActiveTranscode>,
     encoder_factory: Arc<EncoderFactory>,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 unsafe impl Send for EndpointActor {}
@@ -157,6 +160,7 @@ impl EndpointActor {
     fn new(
         receiver: UnboundedReceiver<GstTranscoderRequest>,
         encoder_factory: Arc<EncoderFactory>,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Result<EndpointActor, EndpointStartError> {
         (*GSTREAMER_INIT_RESULT).as_ref()?;
 
@@ -167,6 +171,7 @@ impl EndpointActor {
             futures,
             active_transcodes: HashMap::new(),
             encoder_factory,
+            pts_offset_metadata_key,
         })
     }
 
@@ -330,7 +335,7 @@ impl EndpointActor {
             process_id: params.id,
         };
 
-        let manager = start_transcode_manager(parameters);
+        let manager = start_transcode_manager(parameters, self.pts_offset_metadata_key);
 
         let _ = params
             .notification_channel

@@ -212,12 +212,6 @@ impl BasicTranscodeStep {
                 outputs.media.push(media);
             }
 
-            MediaNotificationContent::Video { .. } => {
-                if let Some(transcode) = self.active_transcodes.get(&media.stream_id) {
-                    let _ = transcode.media_sender.send(media.content.clone());
-                }
-            }
-
             MediaNotificationContent::MediaPayload { .. } => {
                 if let Some(transcode) = self.active_transcodes.get(&media.stream_id) {
                     let _ = transcode.media_sender.send(media.content.clone());

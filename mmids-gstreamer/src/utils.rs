@@ -6,7 +6,7 @@ use bytes::Bytes;
 use gstreamer::prelude::*;
 use gstreamer::{Buffer, Caps, ClockTime, Element, ElementFactory};
 use gstreamer_app::AppSrc;
-use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
+use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,24 +48,22 @@ pub fn set_gst_buffer(data: Bytes, dts: Option<Duration>, pts: Option<Duration>)
 /// so it can be utilized, and this provides a central function for that logic.
 pub fn set_source_video_sequence_header(
     source: &AppSrc,
-    codec: VideoCodec,
+    payload_type: Arc<String>,
     buffer: Buffer,
 ) -> Result<()> {
-    match codec {
-        VideoCodec::H264 => {
-            let caps = Caps::builder("video/x-h264")
-                .field("codec_data", buffer)
-                .build();
+    if payload_type == *VIDEO_CODEC_H264_AVC {
+        let caps = Caps::builder("video/x-h264")
+            .field("codec_data", buffer)
+            .build();
 
-            source.set_caps(Some(&caps));
+        source.set_caps(Some(&caps));
 
-            Ok(())
-        }
-
-        VideoCodec::Unknown => Err(anyhow!(
+        Ok(())
+    } else {
+        Err(anyhow!(
             "Video codec is not known, and thus we can't prepare the gstreamer pipeline to \
                 accept it."
-        )),
+        ))
     }
 }
 

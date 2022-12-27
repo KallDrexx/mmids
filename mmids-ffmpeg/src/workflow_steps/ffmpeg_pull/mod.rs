@@ -11,9 +11,9 @@ use crate::endpoint::{
 };
 use bytes::BytesMut;
 use futures::FutureExt;
-use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
-use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue};
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -40,6 +40,8 @@ pub const STREAM_NAME: &str = "stream_name";
 pub struct FfmpegPullStepGenerator {
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct FfmpegPullStep {
@@ -53,6 +55,8 @@ struct FfmpegPullStep {
     ffmpeg_id: Option<Uuid>,
     active_stream_id: Option<StreamId>,
     metadata_buffer: BytesMut,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 enum FutureResult {
@@ -83,10 +87,14 @@ impl FfmpegPullStepGenerator {
     pub fn new(
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         FfmpegPullStepGenerator {
             rtmp_endpoint,
             ffmpeg_endpoint,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -114,6 +122,8 @@ impl StepGenerator for FfmpegPullStepGenerator {
             ffmpeg_id: None,
             active_stream_id: None,
             metadata_buffer: BytesMut::new(),
+            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
+            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         let (sender, receiver) = unbounded_channel();
@@ -294,20 +304,34 @@ impl FfmpegPullStep {
                 is_keyframe,
                 is_sequence_header,
                 timestamp,
-                codec,
                 composition_time_offset,
             } => {
                 if let Some(stream_id) = &self.active_stream_id {
+                    let is_keyframe_metadata = MetadataEntry::new(
+                        self.is_keyframe_metadata_key,
+                        MetadataValue::Bool(is_keyframe),
+                        &mut self.metadata_buffer,
+                    ).unwrap(); // Should only happen if type mismatch occurs
+
+                    let pts_offset_metadata = MetadataEntry::new(
+                        self.pts_offset_metadata_key,
+                        MetadataValue::I32(composition_time_offset),
+                        &mut self.metadata_buffer,
+                    ).unwrap(); // Should only happen if type mismatch occurs
+
+                    let metadata = MediaPayloadMetadataCollection::new(
+                        [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+                        &mut self.metadata_buffer,
+                    );
+
                     outputs.media.push(MediaNotification {
                         stream_id: stream_id.clone(),
-                        content: MediaNotificationContent::Video {
-                            codec,
-                            timestamp: video_timestamp_from_rtmp_data(
-                                timestamp,
-                                composition_time_offset,
-                            ),
-                            is_keyframe,
-                            is_sequence_header,
+                        content: MediaNotificationContent::MediaPayload {
+                            media_type: MediaType::Video,
+                            payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                            is_required_for_decoding: is_sequence_header,
+                            timestamp: Duration::from_millis(timestamp.value.into()),
+                            metadata,
                             data,
                         },
                     });

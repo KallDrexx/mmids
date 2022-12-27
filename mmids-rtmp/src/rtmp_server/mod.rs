@@ -19,7 +19,7 @@ use crate::utils::hash_map_to_stream_metadata;
 use actor::actor_types::RtmpServerEndpointActor;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
-use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
+use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::tcp::TcpSocketRequest;
 use mmids_core::net::{ConnectionId, IpAddress};
 use mmids_core::reactors::ReactorWorkflowUpdate;
@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
+use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 
 /// Starts a new RTMP server endpoint, returning a channel that can be used to send notifications
 /// and requests to it.
@@ -227,7 +228,6 @@ pub enum RtmpEndpointPublisherMessage {
     /// An RTMP publisher has sent in new video data
     NewVideoData {
         publisher: ConnectionId,
-        codec: VideoCodec,
         is_keyframe: bool,
         is_sequence_header: bool,
         data: Bytes,
@@ -294,7 +294,6 @@ pub enum RtmpEndpointMediaData {
     },
 
     NewVideoData {
-        codec: VideoCodec,
         is_keyframe: bool,
         is_sequence_header: bool,
         data: Bytes,
@@ -320,11 +319,13 @@ pub enum MediaDataConversionFailure {
     UnsupportedPayloadType(Arc<String>),
 }
 
-impl TryFrom<MediaNotificationContent> for RtmpEndpointMediaData {
-    type Error = MediaDataConversionFailure;
-
-    fn try_from(value: MediaNotificationContent) -> Result<Self, Self::Error> {
-        match value {
+impl RtmpEndpointMediaData {
+    pub fn from_media_notification_content(
+        content: MediaNotificationContent,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
+    ) -> Result<Self, MediaDataConversionFailure> {
+        match content {
             MediaNotificationContent::StreamDisconnected => {
                 Err(MediaDataConversionFailure::IncompatibleType)
             }
@@ -337,34 +338,47 @@ impl TryFrom<MediaNotificationContent> for RtmpEndpointMediaData {
                 })
             }
 
-            MediaNotificationContent::Video {
-                codec,
-                is_keyframe,
-                is_sequence_header,
-                data,
-                timestamp,
-            } => Ok(RtmpEndpointMediaData::NewVideoData {
-                data,
-                codec,
-                is_keyframe,
-                is_sequence_header,
-                timestamp: RtmpTimestamp::new(timestamp.dts().as_millis() as u32),
-                composition_time_offset: timestamp.pts_offset(),
-            }),
-
             MediaNotificationContent::MediaPayload {
                 payload_type,
                 media_type: _,
                 is_required_for_decoding,
                 timestamp,
                 data,
-                metadata: _,
+                metadata,
             } => match payload_type {
                 x if x == *AUDIO_CODEC_AAC_RAW => Ok(RtmpEndpointMediaData::NewAudioData {
                     data,
                     is_sequence_header: is_required_for_decoding,
                     timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
                 }),
+
+                x if x == *VIDEO_CODEC_H264_AVC => {
+                    let is_keyframe = metadata.iter()
+                        .filter(|m| m.key() == is_keyframe_metadata_key)
+                        .filter_map(|m| match m.value() {
+                            MetadataValue::Bool(val) => Some(val),
+                            _ => None,
+                        })
+                        .next()
+                        .unwrap_or_default();
+
+                    let pts_offset = metadata.iter()
+                        .filter(|m| m.key() == pts_offset_metadata_key)
+                        .filter_map(|m| match m.value() {
+                            MetadataValue::I32(val) => Some(val),
+                            _ => None,
+                        })
+                        .next()
+                        .unwrap_or_default();
+
+                    Ok(RtmpEndpointMediaData::NewVideoData {
+                        data,
+                        is_sequence_header: is_required_for_decoding,
+                        is_keyframe,
+                        composition_time_offset: pts_offset,
+                        timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                    })
+                }
 
                 other => Err(MediaDataConversionFailure::UnsupportedPayloadType(other)),
             },

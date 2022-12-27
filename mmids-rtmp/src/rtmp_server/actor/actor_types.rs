@@ -87,7 +87,6 @@ pub struct WatcherRegistrant {
 }
 
 pub struct VideoSequenceHeader {
-    pub codec: VideoCodec,
     pub data: Bytes,
 }
 

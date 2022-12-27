@@ -11,7 +11,7 @@ use bytes::{Bytes, BytesMut};
 use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
-use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataKeyMap};
 use mmids_core::workflows::steps::{StepStatus, StepTestContext};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId, VideoTimestamp};
@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
+use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
 
 struct TestContext {
     step_context: StepTestContext,
@@ -131,9 +132,15 @@ impl TestContext {
         let (rtmp_sender, rtmp_receiver) = unbounded_channel();
         let (ffmpeg_sender, ffmpeg_receiver) = unbounded_channel();
 
+        let mut metadata_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
+
         let generator = FfmpegTranscoderStepGenerator {
             ffmpeg_endpoint: ffmpeg_sender,
             rtmp_server_endpoint: rtmp_sender,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         };
 
         let step_context = StepTestContext::new(Box::new(generator), definition)?;
@@ -860,7 +867,6 @@ async fn video_packet_from_publisher_passed_as_media_output() {
         .send(RtmpEndpointPublisherMessage::NewVideoData {
             publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
-            codec: VideoCodec::H264,
             timestamp: RtmpTimestamp::new(5),
             is_keyframe: true,
             is_sequence_header: true,

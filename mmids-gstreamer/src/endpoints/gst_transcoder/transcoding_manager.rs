@@ -11,7 +11,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument};
 use uuid::Uuid;
 use mmids_core::VideoTimestamp;
-use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
+use mmids_core::workflows::metadata::{MetadataKey, MetadataKeyMap, MetadataValue};
+use mmids_core::workflows::metadata::common_metadata::get_pts_offset_metadata_key;
 
 pub enum TranscodeManagerRequest {
     StopTranscode,
@@ -51,9 +52,10 @@ struct GstError {
 
 pub fn start_transcode_manager(
     parameters: TranscoderParams,
+    pts_offset_metadata_key: MetadataKey,
 ) -> UnboundedSender<TranscodeManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = TranscodeManager::new(parameters, receiver);
+    let actor = TranscodeManager::new(parameters, receiver, pts_offset_metadata_key);
     tokio::spawn(actor.run());
 
     sender
@@ -66,7 +68,7 @@ struct TranscodeManager {
     video_encoder: Box<dyn VideoEncoder>,
     audio_encoder: Box<dyn AudioEncoder>,
     pipeline: Pipeline,
-    pst_offset_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 unsafe impl Send for TranscodeManager {}
@@ -76,6 +78,7 @@ impl TranscodeManager {
     fn new(
         parameters: TranscoderParams,
         receiver: UnboundedReceiver<TranscodeManagerRequest>,
+        pts_offset_metadata_key: MetadataKey,
     ) -> TranscodeManager {
         let futures = FuturesUnordered::new();
         futures.push(wait_for_request(receiver).boxed());
@@ -89,6 +92,7 @@ impl TranscodeManager {
             video_encoder: parameters.video_encoder,
             audio_encoder: parameters.audio_encoder,
             pipeline: parameters.pipeline,
+            pts_offset_metadata_key,
         }
     }
 
@@ -179,15 +183,6 @@ impl TranscodeManager {
 
     fn handle_media(&mut self, media: MediaNotificationContent) {
         match media {
-            MediaNotificationContent::Video {
-                timestamp,
-                codec,
-                data,
-                is_sequence_header,
-                is_keyframe: _,
-            } => {
-            }
-
             MediaNotificationContent::MediaPayload {
                 timestamp,
                 payload_type,
@@ -213,7 +208,7 @@ impl TranscodeManager {
 
                     MediaType::Video => {
                         let pts_offset = metadata.iter()
-                            .filter(|m| m.key() == self.pst_offset_metadata_key)
+                            .filter(|m| m.key() == self.pts_offset_metadata_key)
                             .filter_map(|m| match m.value() {
                                 MetadataValue::I32(num) => Some(num),
                                 _ => None,
@@ -221,12 +216,12 @@ impl TranscodeManager {
                             .next()
                             .unwrap_or_default();
 
-                        let pts_duration = Duration::from_millis(timestamp.as_millis() + pts_offset);
+                        let pts_duration = Duration::from_millis(timestamp.as_millis() as u64 + pts_offset as u64);
                         let video_timestamp = VideoTimestamp::from_durations(timestamp, pts_duration);
 
                         let result =
                             self.video_encoder
-                                .push_data(codec, data, video_timestamp, is_sequence_header);
+                                .push_data(payload_type, data, video_timestamp, is_required_for_decoding);
 
                         if let Err(error) = result {
                             error!("Failed to push media to video encoder: {}", error);

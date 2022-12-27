@@ -36,7 +36,7 @@ pub trait VideoEncoder {
     /// Pushes a video frame into the encoder's pipeline
     fn push_data(
         &self,
-        codec: VideoCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,

@@ -643,7 +643,6 @@ impl RtmpServerConnectionHandler {
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::NewVideoData {
                         publisher: self.id.clone(),
-                        codec,
                         is_keyframe,
                         is_sequence_header: is_parameter_set,
                         data,
@@ -965,28 +964,14 @@ impl RtmpServerConnectionHandler {
                 timestamp,
                 is_keyframe,
                 is_sequence_header,
-                codec,
                 composition_time_offset,
             } => {
-                let flv_video = match wrap_video_into_flv(
+                let flv_video = wrap_video_into_flv(
                     data,
-                    codec,
                     is_keyframe,
                     is_sequence_header,
                     composition_time_offset,
-                ) {
-                    Ok(x) => x,
-                    Err(()) => {
-                        if !self.video_parse_error_raised {
-                            error!(
-                                "Connection received video that could not be wrapped in FLV format"
-                            );
-                            self.video_parse_error_raised = true;
-                        }
-
-                        return;
-                    }
-                };
+                );
 
                 session.send_video_data(stream_id, flv_video, timestamp, !is_keyframe)
             }
@@ -1064,34 +1049,24 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
 
 fn wrap_video_into_flv(
     data: Bytes,
-    codec: VideoCodec,
     is_keyframe: bool,
     is_sequence_header: bool,
     composition_time_offset: i32,
-) -> Result<Bytes, ()> {
-    match codec {
-        VideoCodec::H264 => {
-            let flv_tag = if is_keyframe { 0x17 } else { 0x27 };
-            let avc_type = if is_sequence_header { 0 } else { 1 };
+) -> Bytes {
+    // Always assume h264
+    let flv_tag = if is_keyframe { 0x17 } else { 0x27 };
+    let avc_type = if is_sequence_header { 0 } else { 1 };
 
-            let mut header = vec![flv_tag, avc_type];
-            if let Err(error) = header.write_i24::<BigEndian>(composition_time_offset) {
-                error!("Failed to write composition time offset: {error:?}");
-                return Err(());
-            }
+    let mut pts_value = Vec::new();
+    pts_value.write_i24::<BigEndian>(composition_time_offset).unwrap(); // shouldn't fail
 
-            let mut wrapped = BytesMut::new();
-            wrapped.extend(header);
-            wrapped.extend(data);
+    let mut wrapped = BytesMut::new();
+    wrapped.put_u8(flv_tag);
+    wrapped.put_u8(avc_type);
+    wrapped.extend(pts_value);
+    wrapped.extend(data);
 
-            Ok(wrapped.freeze())
-        }
-
-        VideoCodec::Unknown => {
-            // Can't wrap unknown codec into FLV
-            Err(())
-        }
-    }
+    wrapped.freeze()
 }
 
 fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {

@@ -10,6 +10,7 @@ use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use std::iter;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
@@ -182,7 +183,7 @@ impl X264Encoder {
 impl VideoEncoder for X264Encoder {
     fn push_data(
         &self,
-        codec: VideoCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
@@ -192,7 +193,7 @@ impl VideoEncoder for X264Encoder {
                 .with_context(|| "Failed to set buffer")?;
 
         if is_sequence_header {
-            crate::utils::set_source_video_sequence_header(&self.source, codec, buffer)
+            crate::utils::set_source_video_sequence_header(&self.source, payload_type, buffer)
                 .with_context(|| "Failed to set sequence header for x264 encoder")?;
         } else {
             self.source

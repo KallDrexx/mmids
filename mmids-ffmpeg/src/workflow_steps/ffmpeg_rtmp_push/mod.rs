@@ -21,6 +21,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
+use mmids_core::workflows::metadata::MetadataKey;
 
 const TARGET: &str = "target";
 
@@ -28,12 +29,16 @@ const TARGET: &str = "target";
 pub struct FfmpegRtmpPushStepGenerator {
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct FfmpegRtmpPushStep {
     definition: WorkflowStepDefinition,
     status: StepStatus,
     stream_reader: ExternalStreamReader,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 enum FutureResult {
@@ -57,10 +62,14 @@ impl FfmpegRtmpPushStepGenerator {
     pub fn new(
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         FfmpegRtmpPushStepGenerator {
             rtmp_endpoint,
             ffmpeg_endpoint,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -84,12 +93,16 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
             Arc::new(format!("ffmpeg-rtmp-push-{}", definition.get_id())),
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
+            self.is_keyframe_metadata_key,
+            self.pts_offset_metadata_key,
         );
 
         let step = FfmpegRtmpPushStep {
             definition,
             status: StepStatus::Active,
             stream_reader: reader,
+            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
+            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());

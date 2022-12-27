@@ -890,7 +890,6 @@ async fn notification_raised_when_video_published() {
             timestamp: event_timestamp,
             data: event_data,
             is_sequence_header: _,
-            codec: _,
             is_keyframe: _,
             composition_time_offset: _,
         } => {
@@ -911,57 +910,18 @@ async fn notification_raised_when_video_published() {
 }
 
 #[tokio::test]
-async fn published_video_detects_h264_codec_when_first_byte_masks_to_0x07() {
+async fn published_video_when_first_byte_masks_to_0x07() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 2, 3, 4]);
+    let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 2, 3, 4]); // 0x07 == h264
     let timestamp = RtmpTimestamp::new(5);
     context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
     match response {
-        RtmpEndpointPublisherMessage::NewVideoData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-            is_keyframe: _,
-            composition_time_offset: _,
-        } => {
-            assert_eq!(codec, VideoCodec::H264, "Unexpected video codec");
-        }
-
-        message => panic!("Unexpected publisher message: {:?}", message),
-    };
-}
-
-#[tokio::test]
-async fn published_video_detects_unknown_codec_when_first_byte_does_not_mask_to_0x07() {
-    let mut context = TestContextBuilder::new().into_publisher().await;
-    context.set_as_active_publisher().await;
-
-    let data = Bytes::from(vec![0x08, 1, 0, 0, 0, 2, 3, 4]);
-    let timestamp = RtmpTimestamp::new(5);
-    context.client.publish_video(data.clone(), timestamp);
-
-    let receiver = context.publish_receiver.as_mut().unwrap();
-    let response = test_utils::expect_mpsc_response(receiver).await;
-    match response {
-        RtmpEndpointPublisherMessage::NewVideoData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-            is_keyframe: _,
-            composition_time_offset: _,
-        } => {
-            assert_eq!(codec, VideoCodec::Unknown, "Unexpected video codec");
-        }
-
+        RtmpEndpointPublisherMessage::NewVideoData { .. } => (),
         message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
@@ -983,7 +943,6 @@ async fn published_video_sequence_header_when_h264_and_second_byte_is_zero() {
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
             is_keyframe: _,
             composition_time_offset: _,
         } => {
@@ -1011,7 +970,6 @@ async fn published_video_not_sequence_header_when_h264_and_second_byte_is_not_ze
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
             is_keyframe: _,
             composition_time_offset: _,
         } => {
@@ -1039,7 +997,6 @@ async fn published_video_not_key_frame_when_first_4_half_octet_is_not_one() {
             timestamp: _,
             data: _,
             is_sequence_header: _,
-            codec: _,
             is_keyframe,
             composition_time_offset: _,
         } => {
@@ -1067,7 +1024,6 @@ async fn published_video_key_frame_when_first_4_half_octet_is_one() {
             timestamp: _,
             data: _,
             is_sequence_header: _,
-            codec: _,
             is_keyframe,
             composition_time_offset: _,
         } => {
@@ -1347,7 +1303,6 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_non_keyframe() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
-                codec: H264,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: false,
@@ -1394,7 +1349,6 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
-                codec: H264,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: true,
@@ -1441,7 +1395,6 @@ async fn watcher_does_not_receive_non_h264_video() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
-                codec: Unknown,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: false,

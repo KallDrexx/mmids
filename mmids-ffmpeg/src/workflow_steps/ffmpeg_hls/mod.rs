@@ -20,6 +20,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
+use mmids_core::workflows::metadata::MetadataKey;
 
 const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";
@@ -30,6 +31,8 @@ const STREAM_NAME: &str = "stream_name";
 pub struct FfmpegHlsStepGenerator {
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct FfmpegHlsStep {
@@ -37,6 +40,8 @@ struct FfmpegHlsStep {
     status: StepStatus,
     stream_reader: ExternalStreamReader,
     path: String,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 enum FutureResult {
@@ -73,10 +78,14 @@ impl FfmpegHlsStepGenerator {
     pub fn new(
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         FfmpegHlsStepGenerator {
             rtmp_endpoint,
             ffmpeg_endpoint,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -132,6 +141,8 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             rtmp_app,
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
+            self.is_keyframe_metadata_key,
+            self.pts_offset_metadata_key,
         );
 
         let path = path.clone();
@@ -140,6 +151,8 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             status: StepStatus::Created,
             stream_reader: reader,
             path: path.clone(),
+            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
+            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());
