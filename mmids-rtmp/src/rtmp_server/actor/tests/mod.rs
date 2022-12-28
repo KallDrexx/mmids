@@ -6,8 +6,6 @@ use crate::rtmp_server::{
     StreamKeyRegistration, ValidationResponse,
 };
 use bytes::Bytes;
-use mmids_core::codecs::VideoCodec;
-use mmids_core::codecs::VideoCodec::{Unknown, H264};
 use mmids_core::test_utils;
 use rml_rtmp::sessions::{ClientSessionEvent, StreamMetadata};
 use rml_rtmp::time::RtmpTimestamp;

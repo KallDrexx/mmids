@@ -14,11 +14,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot::channel;
+use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
+use mmids_core::workflows::metadata::MetadataKeyMap;
 
 struct TestContext {
     step_context: StepTestContext,
     rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
     reactor_manager: UnboundedReceiver<ReactorManagerRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct DefinitionBuilder {
@@ -105,9 +109,15 @@ impl TestContext {
         let (reactor_sender, reactor_receiver) = unbounded_channel();
         let (rtmp_sender, rtmp_receiver) = unbounded_channel();
 
+        let mut metadata_key_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
+
         let generator = RtmpReceiverStepGenerator {
             reactor_manager: reactor_sender,
             rtmp_endpoint_sender: rtmp_sender,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         };
 
         let step_context = StepTestContext::new(Box::new(generator), definition)?;
@@ -116,6 +126,8 @@ impl TestContext {
             step_context,
             rtmp_endpoint: rtmp_receiver,
             reactor_manager: reactor_receiver,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         })
     }
 
@@ -455,7 +467,6 @@ async fn video_notification_received_when_publisher_sends_video() {
         .send(RtmpEndpointPublisherMessage::NewVideoData {
             publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
-            codec: VideoCodec::H264,
             timestamp: RtmpTimestamp::new(5),
             is_keyframe: true,
             is_sequence_header: true,
@@ -475,19 +486,39 @@ async fn video_notification_received_when_publisher_sends_video() {
     assert_eq!(media.stream_id.0.as_str(), "test", "Unexpected stream id");
 
     match &media.content {
-        MediaNotificationContent::Video {
+        MediaNotificationContent::MediaPayload {
+            media_type,
+            payload_type,
             data,
             timestamp,
-            codec,
-            is_keyframe,
-            is_sequence_header,
+            is_required_for_decoding,
+            metadata
         } => {
-            assert_eq!(data, &vec![1, 2, 3], "Unexpected video data");
-            assert_eq!(timestamp.dts(), Duration::from_millis(5), "Unexpected dts");
-            assert_eq!(timestamp.pts_offset(), 123, "Unexpected pts offset");
-            assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
+            let is_keyframe = metadata.iter()
+                .filter(|m| m.key() == context.is_keyframe_metadata_key)
+                .filter_map(|m| match m.value() {
+                    MetadataValue::Bool(val) => Some(val),
+                    _ => None,
+                })
+                .next()
+                .unwrap_or_default();
+
+            let pts_offset = metadata.iter()
+                .filter(|m| m.key() == context.pts_offset_metadata_key)
+                .filter_map(|m| match m.value() {
+                    MetadataValue::I32(val) => Some(val),
+                    _ => None,
+                })
+                .next()
+                .unwrap_or_default();
+
+            assert_eq!(*media_type, MediaType::Video);
+            assert_eq!(*payload_type, *VIDEO_CODEC_H264_AVC, "Unexpected payload type");
+            assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
+            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected dts");
+            assert!(is_required_for_decoding, "Expected is_required_for_decoding to be true");
             assert!(is_keyframe, "Expected is_keyframe to be true");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
+            assert_eq!(pts_offset, 123, "Unexpected pts offset");
         }
 
         content => panic!("Unexpected media content: {:?}", content),
@@ -595,12 +626,13 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
         .step_context
         .assert_media_not_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("test".to_string())),
-            content: MediaNotificationContent::Video {
+            content: MediaNotificationContent::MediaPayload {
+                media_type: MediaType::Video,
+                payload_type: VIDEO_CODEC_H264_AVC.clone(),
                 data: Bytes::from(vec![1, 2]),
-                codec: VideoCodec::H264,
-                timestamp: VideoTimestamp::from_durations(Duration::new(0, 0), Duration::new(0, 0)),
-                is_keyframe: true,
-                is_sequence_header: true,
+                timestamp: Duration::new(0, 0),
+                is_required_for_decoding: true,
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         });
 }

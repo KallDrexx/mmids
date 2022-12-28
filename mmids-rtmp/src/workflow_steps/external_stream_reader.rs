@@ -395,8 +395,8 @@ mod tests {
     use bytes::{Bytes, BytesMut};
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
-    use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW};
-    use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataKeyMap};
+    use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
+    use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue};
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
@@ -661,15 +661,35 @@ mod tests {
         let video_timestamp =
             VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
 
+        let mut buffer = BytesMut::new();
+        let mut metadata_key_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
+        let is_keyframe_metadata =
+            MetadataEntry::new(is_keyframe_metadata_key, MetadataValue::Bool(true), &mut buffer)
+                .unwrap();
+
+        let pts_offset_metadata =
+            MetadataEntry::new(pts_offset_metadata_key, MetadataValue::I32(video_timestamp.pts_offset()), &mut buffer)
+                .unwrap();
+
+        let metadata = MediaPayloadMetadataCollection::new(
+            [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+            &mut buffer,
+        );
+
+        let media_content = MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
+            timestamp: video_timestamp.dts(),
+            is_required_for_decoding: true,
+            metadata,
+            data: Bytes::from(vec![1, 2, 3]),
+        };
+
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Video {
-                data: Bytes::from(vec![1, 2, 3]),
-                codec: VideoCodec::H264,
-                timestamp: video_timestamp.clone(),
-                is_keyframe: true,
-                is_sequence_header: true,
-            },
+            content: media_content.clone(),
         };
 
         context
@@ -682,23 +702,8 @@ mod tests {
             "abc",
             "Unexpected stream id"
         );
-        match &outputs.media[0].content {
-            MediaNotificationContent::Video {
-                data,
-                codec,
-                is_sequence_header,
-                is_keyframe,
-                timestamp,
-            } => {
-                assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-                assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-                assert!(is_sequence_header, "Expected sequence header");
-                assert!(is_keyframe, "Expected key frame");
-                assert_eq!(timestamp, &video_timestamp, "Unexpected video timestamp");
-            }
 
-            content => panic!("Expected NewIncomingStream, got {:?}", content),
-        }
+        assert_eq!(outputs.media[0].content, media_content, "Unexpected media content");
     }
 
     #[tokio::test]
@@ -856,14 +861,32 @@ mod tests {
         let video_timestamp =
             VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
 
+        let mut buffer = BytesMut::new();
+        let mut metadata_key_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
+        let is_keyframe_metadata =
+            MetadataEntry::new(is_keyframe_metadata_key, MetadataValue::Bool(true), &mut buffer)
+                .unwrap();
+
+        let pts_offset_metadata =
+            MetadataEntry::new(pts_offset_metadata_key, MetadataValue::I32(video_timestamp.pts_offset()), &mut buffer)
+                .unwrap();
+
+        let metadata = MediaPayloadMetadataCollection::new(
+            [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+            &mut buffer,
+        );
+
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Video {
+            content: MediaNotificationContent::MediaPayload {
+                media_type: MediaType::Video,
+                payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                timestamp: video_timestamp.dts(),
+                is_required_for_decoding: true,
                 data: Bytes::from(vec![1, 2, 3, 4]),
-                is_keyframe: true,
-                is_sequence_header: true,
-                codec: VideoCodec::H264,
-                timestamp: video_timestamp.clone(),
+                metadata,
             },
         };
 

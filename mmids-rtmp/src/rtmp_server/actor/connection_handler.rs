@@ -30,7 +30,6 @@ pub struct RtmpServerConnectionHandler {
     request_sender: UnboundedSender<ConnectionRequest>,
     force_disconnect: bool,
     published_event_channel: Option<UnboundedSender<RtmpEndpointPublisherMessage>>,
-    video_parse_error_raised: bool,
 }
 
 #[derive(Debug)]
@@ -114,7 +113,6 @@ enum FutureResult {
 }
 
 struct UnwrappedVideo {
-    codec: VideoCodec,
     is_keyframe: bool,
     is_sequence_header: bool,
     data: Bytes,
@@ -142,7 +140,6 @@ impl RtmpServerConnectionHandler {
             request_sender,
             force_disconnect: false,
             published_event_channel: None,
-            video_parse_error_raised: false,
         }
     }
 
@@ -634,7 +631,6 @@ impl RtmpServerConnectionHandler {
 
                 let UnwrappedVideo {
                     data,
-                    codec,
                     is_keyframe,
                     is_sequence_header: is_parameter_set,
                     composition_time_in_ms,
@@ -1008,7 +1004,6 @@ impl RtmpServerConnectionHandler {
 fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
     if data.len() < 2 {
         return UnwrappedVideo {
-            codec: VideoCodec::Unknown,
             is_keyframe: false,
             is_sequence_header: false,
             data,
@@ -1039,7 +1034,6 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
     };
 
     UnwrappedVideo {
-        codec,
         is_keyframe,
         is_sequence_header,
         data,

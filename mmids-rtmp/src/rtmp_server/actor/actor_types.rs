@@ -4,8 +4,6 @@ use crate::rtmp_server::{
     IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
     RtmpEndpointWatcherNotification, ValidationResponse,
 };
-use mmids_core::codecs::VideoCodec;
-
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;

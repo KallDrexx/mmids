@@ -8,7 +8,7 @@ use mmids_core::codecs::VideoCodec;
 use mmids_core::net::ConnectionId;
 use mmids_core::test_utils::expect_mpsc_response;
 use mmids_core::workflows::definitions::WorkflowStepType;
-use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataKeyMap};
 use mmids_core::workflows::steps::StepTestContext;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId, VideoTimestamp};
@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::channel;
+use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
 
 struct TestContext {
     step_context: StepTestContext,
@@ -110,9 +111,15 @@ impl TestContext {
         let (reactor_sender, reactor_receiver) = unbounded_channel();
         let (rtmp_sender, rtmp_receiver) = unbounded_channel();
 
+        let mut metadata_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
+
         let generator = RtmpWatchStepGenerator {
             reactor_manager: reactor_sender,
             rtmp_endpoint_sender: rtmp_sender,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         };
 
         let step_context = StepTestContext::new(Box::new(generator), definition)?;
@@ -333,12 +340,13 @@ async fn video_packet_not_sent_to_media_channel_if_new_stream_message_not_receiv
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
             data: Bytes::from(vec![3, 4]),
-            is_keyframe: true,
-            is_sequence_header: true,
-            timestamp: VideoTimestamp::from_durations(Duration::new(0, 0), Duration::new(0, 0)),
+            is_required_for_decoding: true,
+            timestamp: Duration::new(0, 0),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     });
 
@@ -378,14 +386,12 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
     match &media.data {
         RtmpEndpointMediaData::NewVideoData {
             data,
-            codec,
             timestamp,
             is_keyframe,
             is_sequence_header,
             composition_time_offset,
         } => {
             assert_eq!(data, &vec![3, 4], "Unexpected video bytes");
-            assert_eq!(codec, &VideoCodec::H264, "Unexpected video codec");
             assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert!(is_sequence_header, "Expected is_sequence_header to be true");

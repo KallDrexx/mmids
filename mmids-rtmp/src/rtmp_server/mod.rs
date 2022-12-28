@@ -19,7 +19,7 @@ use crate::utils::hash_map_to_stream_metadata;
 use actor::actor_types::RtmpServerEndpointActor;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
-use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::tcp::TcpSocketRequest;
 use mmids_core::net::{ConnectionId, IpAddress};
 use mmids_core::reactors::ReactorWorkflowUpdate;
