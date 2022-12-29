@@ -1,7 +1,6 @@
 use crate::encoders::{VideoEncoder, VideoEncoderGenerator};
 use bytes::Bytes;
 use gstreamer::Pipeline;
-use mmids_core::codecs::VideoCodec;
 use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;

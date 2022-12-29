@@ -6,7 +6,7 @@ use bytes::Bytes;
 use gstreamer::prelude::*;
 use gstreamer::{Buffer, Caps, ClockTime, Element, ElementFactory};
 use gstreamer_app::AppSrc;
-use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use std::sync::Arc;
 use std::time::Duration;
 

@@ -5,7 +5,7 @@ use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::{VIDEO_CODEC_H264_AVC, VideoCodec};
+use mmids_core::codecs::VIDEO_CODEC_H264_AVC;
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
@@ -33,7 +33,6 @@ impl VideoEncoderGenerator for VideoCopyEncoderGenerator {
 }
 
 struct CodecInfo {
-    payload_type: Arc<String>,
     sequence_header: Bytes,
 }
 
@@ -145,7 +144,7 @@ impl VideoCopyEncoder {
 impl VideoEncoder for VideoCopyEncoder {
     fn push_data(
         &self,
-        payload_type: Arc<String>,
+        _payload_type: Arc<String>,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
@@ -157,7 +156,6 @@ impl VideoEncoder for VideoCopyEncoder {
                 .map_err(|_| anyhow!("Video copy encoder's lock was poisoned"))?;
 
             *codec_data = Some(CodecInfo {
-                payload_type,
                 sequence_header: data,
             })
         } else {

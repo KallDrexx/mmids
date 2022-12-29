@@ -5,7 +5,7 @@ use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Caps, Element, FlowError, FlowSuccess, Fraction, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::{VIDEO_CODEC_H264_AVC, VideoCodec};
+use mmids_core::codecs::VIDEO_CODEC_H264_AVC;
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;

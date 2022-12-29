@@ -395,7 +395,7 @@ mod tests {
     use bytes::{Bytes, BytesMut};
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
-    use mmids_core::codecs::{VideoCodec, AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
+    use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
     use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue};
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};

@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use gstreamer::{Format, GenericFormattedValue, Pipeline};
 use gstreamer_app::AppSink;
-use mmids_core::codecs::VideoCodec;
 use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;

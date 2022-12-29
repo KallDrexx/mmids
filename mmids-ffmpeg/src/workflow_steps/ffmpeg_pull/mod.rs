@@ -24,7 +24,6 @@ use mmids_rtmp::rtmp_server::{
     IpRestriction, RegistrationType, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
     StreamKeyRegistration,
 };
-use mmids_rtmp::utils::video_timestamp_from_rtmp_data;
 use std::iter;
 use std::sync::Arc;
 use std::time::Duration;

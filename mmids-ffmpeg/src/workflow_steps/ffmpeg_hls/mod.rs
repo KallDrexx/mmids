@@ -40,8 +40,6 @@ struct FfmpegHlsStep {
     status: StepStatus,
     stream_reader: ExternalStreamReader,
     path: String,
-    is_keyframe_metadata_key: MetadataKey,
-    pts_offset_metadata_key: MetadataKey,
 }
 
 enum FutureResult {
@@ -151,8 +149,6 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             status: StepStatus::Created,
             stream_reader: reader,
             path: path.clone(),
-            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
-            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());

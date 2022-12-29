@@ -34,7 +34,7 @@ use mmids_rtmp::rtmp_server::{
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,
 };
-use mmids_rtmp::utils::{stream_metadata_to_hash_map, video_timestamp_from_rtmp_data};
+use mmids_rtmp::utils::{stream_metadata_to_hash_map};
 use std::collections::{HashMap, VecDeque};
 use std::iter;
 use std::sync::Arc;

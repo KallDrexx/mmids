@@ -4,14 +4,13 @@ use crate::rtmp_server::{
 };
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
-use mmids_core::codecs::VideoCodec;
 use mmids_core::net::ConnectionId;
 use mmids_core::test_utils::expect_mpsc_response;
 use mmids_core::workflows::definitions::WorkflowStepType;
-use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataKeyMap};
+use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap};
 use mmids_core::workflows::steps::StepTestContext;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
-use mmids_core::{test_utils, StreamId, VideoTimestamp};
+use mmids_core::{test_utils, StreamId};
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::{HashMap, HashSet};
 use std::iter;
@@ -25,6 +24,8 @@ struct TestContext {
     step_context: StepTestContext,
     rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
     reactor_manager: UnboundedReceiver<ReactorManagerRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct DefinitionBuilder {
@@ -128,6 +129,8 @@ impl TestContext {
             step_context,
             rtmp_endpoint: rtmp_receiver,
             reactor_manager: reactor_receiver,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         })
     }
 
@@ -366,17 +369,32 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
         },
     });
 
+    let is_keyframe_metadata = MetadataEntry::new(
+        context.is_keyframe_metadata_key,
+        MetadataValue::Bool(true),
+        &mut BytesMut::new(),
+    ).unwrap();
+
+    let pts_offset_metadata = MetadataEntry::new(
+        context.pts_offset_metadata_key,
+        MetadataValue::I32(10),
+        &mut BytesMut::new(),
+    ).unwrap();
+
+    let metadata = MediaPayloadMetadataCollection::new(
+        [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+        &mut BytesMut::new(),
+    );
+
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
             data: Bytes::from(vec![3, 4]),
-            is_keyframe: true,
-            is_sequence_header: true,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
+            is_required_for_decoding: true,
+            timestamp: Duration::from_millis(5),
+            metadata,
         },
     });
 
@@ -425,15 +443,13 @@ async fn video_packet_not_sent_to_media_channel_after_stream_disconnection_messa
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
             data: Bytes::from(vec![3, 4]),
-            is_keyframe: true,
-            is_sequence_header: true,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
+            is_required_for_decoding: true,
+            timestamp: Duration::from_millis(5),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     });
 
@@ -455,15 +471,13 @@ async fn video_packet_not_sent_to_media_channel_when_new_stream_is_for_different
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("def".to_string())),
-        content: MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
             data: Bytes::from(vec![3, 4]),
-            is_keyframe: true,
-            is_sequence_header: true,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
+            is_required_for_decoding: true,
+            timestamp: Duration::from_millis(5),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     });
 
@@ -561,15 +575,13 @@ async fn media_message_uses_strict_stream_key_when_exact_key_registered() {
 
     context.step_context.execute_with_media(MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            codec: VideoCodec::H264,
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
             data: Bytes::from(vec![3, 4]),
-            is_keyframe: true,
-            is_sequence_header: true,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(5),
-                Duration::from_millis(15),
-            ),
+            is_required_for_decoding: true,
+            timestamp: Duration::from_millis(5),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     });
 
@@ -621,15 +633,13 @@ async fn video_message_passed_as_output() {
         .step_context
         .assert_media_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Video {
-                codec: VideoCodec::H264,
+            content: MediaNotificationContent::MediaPayload {
+                media_type: MediaType::Video,
+                payload_type: VIDEO_CODEC_H264_AVC.clone(),
                 data: Bytes::from(vec![3, 4]),
-                is_keyframe: true,
-                is_sequence_header: true,
-                timestamp: VideoTimestamp::from_durations(
-                    Duration::from_millis(5),
-                    Duration::from_millis(15),
-                ),
+                is_required_for_decoding: true,
+                timestamp: Duration::from_millis(5),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         });
 }

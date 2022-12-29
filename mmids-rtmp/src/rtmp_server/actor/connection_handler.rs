@@ -6,7 +6,6 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use mmids_core::codecs::VideoCodec;
 use mmids_core::net::tcp::OutboundPacket;
 use mmids_core::net::ConnectionId;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
@@ -629,21 +628,24 @@ impl RtmpServerConnectionHandler {
                     return;
                 }
 
-                let UnwrappedVideo {
-                    data,
-                    is_keyframe,
-                    is_sequence_header: is_parameter_set,
-                    composition_time_in_ms,
-                } = unwrap_video_from_flv(data);
+                let unwrapped_video = match unwrap_video_from_flv(data) {
+                    Ok(video) => video,
+                    Err(()) => {
+                        error!("Video is using an unsupported set of flv video tags");
+                        self.force_disconnect = true;
+
+                        return;
+                    }
+                };
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::NewVideoData {
                         publisher: self.id.clone(),
-                        is_keyframe,
-                        is_sequence_header: is_parameter_set,
-                        data,
+                        is_keyframe: unwrapped_video.is_keyframe,
+                        is_sequence_header: unwrapped_video.is_sequence_header,
+                        data: unwrapped_video.data,
                         timestamp,
-                        composition_time_offset: composition_time_in_ms,
+                        composition_time_offset: unwrapped_video.composition_time_in_ms,
                     },
                 );
             }
@@ -1001,27 +1003,20 @@ impl RtmpServerConnectionHandler {
     }
 }
 
-fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
+fn unwrap_video_from_flv(mut data: Bytes) -> Result<UnwrappedVideo, ()> {
     if data.len() < 2 {
-        return UnwrappedVideo {
-            is_keyframe: false,
-            is_sequence_header: false,
-            data,
-            composition_time_in_ms: 0,
-        };
+        error!("FLV segment had less than 2 bytes, and thus invalid");
+        return Err(());
     }
 
     let flv_tag = data.split_to(1);
     let avc_header = data.split_to(4);
 
-    let is_sequence_header;
-    let codec = if flv_tag[0] & 0x07 == 0x07 {
-        is_sequence_header = avc_header[0] == 0x00;
-        VideoCodec::H264
-    } else {
-        is_sequence_header = false;
-        VideoCodec::Unknown
-    };
+    let is_sequence_header = avc_header[0] == 0x00;
+    if flv_tag[0] & 0x07 != 0x07 {
+        error!("FLV segment was not h264, and not supported");
+        return Err(());
+    }
 
     let is_keyframe = flv_tag[0] & 0x10 == 0x10;
 
@@ -1033,12 +1028,12 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
         0
     };
 
-    UnwrappedVideo {
+    Ok(UnwrappedVideo {
         is_keyframe,
         is_sequence_header,
         data,
         composition_time_in_ms: composition_time,
-    }
+    })
 }
 
 fn wrap_video_into_flv(

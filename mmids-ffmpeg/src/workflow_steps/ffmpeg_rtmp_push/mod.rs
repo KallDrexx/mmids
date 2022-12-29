@@ -37,8 +37,6 @@ struct FfmpegRtmpPushStep {
     definition: WorkflowStepDefinition,
     status: StepStatus,
     stream_reader: ExternalStreamReader,
-    is_keyframe_metadata_key: MetadataKey,
-    pts_offset_metadata_key: MetadataKey,
 }
 
 enum FutureResult {
@@ -101,8 +99,6 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
             definition,
             status: StepStatus::Active,
             stream_reader: reader,
-            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
-            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());

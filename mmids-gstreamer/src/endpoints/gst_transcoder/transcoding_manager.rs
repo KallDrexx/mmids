@@ -11,8 +11,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument};
 use uuid::Uuid;
 use mmids_core::VideoTimestamp;
-use mmids_core::workflows::metadata::{MetadataKey, MetadataKeyMap, MetadataValue};
-use mmids_core::workflows::metadata::common_metadata::get_pts_offset_metadata_key;
+use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 
 pub enum TranscodeManagerRequest {
     StopTranscode,
