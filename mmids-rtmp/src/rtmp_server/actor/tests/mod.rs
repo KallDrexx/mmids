@@ -1070,7 +1070,7 @@ async fn notification_raised_when_audio_published() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![1, 2, 3, 4]);
+    let data = Bytes::from(vec![0xa0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context.client.publish_audio(data.clone(), timestamp);
 

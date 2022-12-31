@@ -579,7 +579,6 @@ impl RtmpServerConnectionHandler {
                     Ok(audio) => audio,
                     Err(error) => {
                         error!("Failed to unwrap audio from FLV: {:?}", error);
-                        self.force_disconnect = true;
 
                         return;
                     }
@@ -630,8 +629,8 @@ impl RtmpServerConnectionHandler {
 
                 let unwrapped_video = match unwrap_video_from_flv(data) {
                     Ok(video) => video,
-                    Err(()) => {
-                        error!("Video is using an unsupported set of flv video tags");
+                    Err(error) => {
+                        error!("Video is using an unsupported set of flv video tags: {error}");
                         self.force_disconnect = true;
 
                         return;
@@ -1003,10 +1002,9 @@ impl RtmpServerConnectionHandler {
     }
 }
 
-fn unwrap_video_from_flv(mut data: Bytes) -> Result<UnwrappedVideo, ()> {
+fn unwrap_video_from_flv(mut data: Bytes) -> Result<UnwrappedVideo> {
     if data.len() < 2 {
-        error!("FLV segment had less than 2 bytes, and thus invalid");
-        return Err(());
+        return Err(anyhow!("FLV segment had less than 2 bytes, and thus invalid"));
     }
 
     let flv_tag = data.split_to(1);
@@ -1014,8 +1012,7 @@ fn unwrap_video_from_flv(mut data: Bytes) -> Result<UnwrappedVideo, ()> {
 
     let is_sequence_header = avc_header[0] == 0x00;
     if flv_tag[0] & 0x07 != 0x07 {
-        error!("FLV segment was not h264, and not supported");
-        return Err(());
+        return Err(anyhow!("FLV segment was not h264, and not supported"));
     }
 
     let is_keyframe = flv_tag[0] & 0x10 == 0x10;
@@ -1069,7 +1066,7 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {
     let packet_type = data.split_to(1);
     let is_sequence_header = packet_type[0] == 0;
     let codec_id = flv_tag[0] >> 4;
-    if codec_id != 10 {
+    if codec_id != 0x0a {
         // Only AAC is supported
         return Err(anyhow!(
             "FLV header specified codec {codec_id} but only AAC (10) is supported"
