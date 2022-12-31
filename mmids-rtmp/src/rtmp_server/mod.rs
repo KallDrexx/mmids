@@ -23,6 +23,7 @@ use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::tcp::TcpSocketRequest;
 use mmids_core::net::{ConnectionId, IpAddress};
 use mmids_core::reactors::ReactorWorkflowUpdate;
+use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::StreamId;
 use rml_rtmp::sessions::StreamMetadata;
@@ -31,7 +32,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
-use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 
 /// Starts a new RTMP server endpoint, returning a channel that can be used to send notifications
 /// and requests to it.
@@ -353,7 +353,8 @@ impl RtmpEndpointMediaData {
                 }),
 
                 x if x == *VIDEO_CODEC_H264_AVC => {
-                    let is_keyframe = metadata.iter()
+                    let is_keyframe = metadata
+                        .iter()
                         .filter(|m| m.key() == is_keyframe_metadata_key)
                         .filter_map(|m| match m.value() {
                             MetadataValue::Bool(val) => Some(val),
@@ -362,7 +363,8 @@ impl RtmpEndpointMediaData {
                         .next()
                         .unwrap_or_default();
 
-                    let pts_offset = metadata.iter()
+                    let pts_offset = metadata
+                        .iter()
                         .filter(|m| m.key() == pts_offset_metadata_key)
                         .filter_map(|m| match m.value() {
                             MetadataValue::I32(val) => Some(val),

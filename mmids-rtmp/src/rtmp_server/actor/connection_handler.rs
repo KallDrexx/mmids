@@ -1003,7 +1003,9 @@ impl RtmpServerConnectionHandler {
 
 fn unwrap_video_from_flv(mut data: Bytes) -> Result<UnwrappedVideo> {
     if data.len() < 2 {
-        return Err(anyhow!("FLV segment had less than 2 bytes, and thus invalid"));
+        return Err(anyhow!(
+            "FLV segment had less than 2 bytes, and thus invalid"
+        ));
     }
 
     let flv_tag = data.split_to(1);
@@ -1043,7 +1045,9 @@ fn wrap_video_into_flv(
     let avc_type = if is_sequence_header { 0 } else { 1 };
 
     let mut pts_value = Vec::new();
-    pts_value.write_i24::<BigEndian>(composition_time_offset).unwrap(); // shouldn't fail
+    pts_value
+        .write_i24::<BigEndian>(composition_time_offset)
+        .unwrap(); // shouldn't fail
 
     let mut wrapped = BytesMut::new();
     wrapped.put_u8(flv_tag);

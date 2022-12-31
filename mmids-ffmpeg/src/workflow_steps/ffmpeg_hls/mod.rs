@@ -9,6 +9,7 @@ use crate::endpoint::{
 use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -20,7 +21,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
-use mmids_core::workflows::metadata::MetadataKey;
 
 const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";

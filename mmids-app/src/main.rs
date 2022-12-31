@@ -16,6 +16,10 @@ use mmids_core::workflows::definitions::WorkflowStepType;
 use mmids_core::workflows::manager::{
     start_workflow_manager, WorkflowManagerRequest, WorkflowManagerRequestOperation,
 };
+use mmids_core::workflows::metadata::common_metadata::{
+    get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+};
+use mmids_core::workflows::metadata::MetadataKeyMap;
 use mmids_core::workflows::steps::factory::WorkflowStepFactory;
 use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
 use mmids_ffmpeg::endpoint::{start_ffmpeg_endpoint, FfmpegEndpointRequest};
@@ -43,8 +47,6 @@ use tokio::sync::oneshot::{channel, Sender};
 use tracing::{info, warn, Level};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt};
-use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
-use mmids_core::workflows::metadata::MetadataKeyMap;
 
 const RTMP_RECEIVE: &str = "rtmp_receive";
 const RTMP_WATCH: &str = "rtmp_watch";
@@ -104,7 +106,12 @@ pub async fn main() {
     let endpoints = start_endpoints(&config, tls_options, log_dir, &mut metadata_key_map);
     let (pub_sender, sub_sender) = start_event_hub();
     let reactor_manager = start_reactor(&config, sub_sender.clone()).await;
-    let step_factory = register_steps(endpoints, sub_sender, reactor_manager, &mut metadata_key_map);
+    let step_factory = register_steps(
+        endpoints,
+        sub_sender,
+        reactor_manager,
+        &mut metadata_key_map,
+    );
     let manager = start_workflows(&config, step_factory, pub_sender);
     let http_api_shutdown = start_http_api(&config, manager);
 
@@ -305,11 +312,21 @@ fn start_endpoints(
         .expect("Failed to add video drop encoder");
 
     encoder_factory
-        .register_video_encoder("copy", Box::new(VideoCopyEncoderGenerator {pts_offset_metadata_key}))
+        .register_video_encoder(
+            "copy",
+            Box::new(VideoCopyEncoderGenerator {
+                pts_offset_metadata_key,
+            }),
+        )
         .expect("Failed to add video copy encoder");
 
     encoder_factory
-        .register_video_encoder("x264", Box::new(X264EncoderGenerator {pts_offset_metadata_key}))
+        .register_video_encoder(
+            "x264",
+            Box::new(X264EncoderGenerator {
+                pts_offset_metadata_key,
+            }),
+        )
         .expect("Failed to add the x264 encoder");
 
     encoder_factory
@@ -324,8 +341,8 @@ fn start_endpoints(
         .register_audio_encoder("avenc_aac", Box::new(AvencAacEncoderGenerator {}))
         .expect("Failed to add the avenc_aac encoder");
 
-    let gst_transcoder =
-        start_gst_transcoder(Arc::new(encoder_factory), pts_offset_metadata_key).expect("Failed to start gst transcoder");
+    let gst_transcoder = start_gst_transcoder(Arc::new(encoder_factory), pts_offset_metadata_key)
+        .expect("Failed to start gst transcoder");
 
     Endpoints {
         rtmp: rtmp_endpoint,

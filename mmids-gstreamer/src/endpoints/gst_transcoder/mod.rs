@@ -10,13 +10,13 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use gstreamer::{glib, Pipeline};
+use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::MediaNotificationContent;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
-use mmids_core::workflows::metadata::MetadataKey;
 
 /// Requests that can be made to the gstreamer transcoding endpoint
 pub enum GstTranscoderRequest {

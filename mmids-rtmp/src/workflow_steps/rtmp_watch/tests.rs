@@ -7,7 +7,12 @@ use bytes::{Bytes, BytesMut};
 use mmids_core::net::ConnectionId;
 use mmids_core::test_utils::expect_mpsc_response;
 use mmids_core::workflows::definitions::WorkflowStepType;
-use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap};
+use mmids_core::workflows::metadata::common_metadata::{
+    get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+};
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap,
+};
 use mmids_core::workflows::steps::StepTestContext;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId};
@@ -18,7 +23,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::channel;
-use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
 
 struct TestContext {
     step_context: StepTestContext,
@@ -373,13 +377,15 @@ async fn video_packet_sent_to_media_channel_after_new_stream_message_received() 
         context.is_keyframe_metadata_key,
         MetadataValue::Bool(true),
         &mut BytesMut::new(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let pts_offset_metadata = MetadataEntry::new(
         context.pts_offset_metadata_key,
         MetadataValue::I32(10),
         &mut BytesMut::new(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let metadata = MediaPayloadMetadataCollection::new(
         [is_keyframe_metadata, pts_offset_metadata].into_iter(),

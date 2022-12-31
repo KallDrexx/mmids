@@ -22,7 +22,9 @@ use bytes::BytesMut;
 use futures::FutureExt;
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
-use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue};
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
+};
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -34,7 +36,7 @@ use mmids_rtmp::rtmp_server::{
     RtmpEndpointPublisherMessage, RtmpEndpointRequest, RtmpEndpointWatcherNotification,
     StreamKeyRegistration,
 };
-use mmids_rtmp::utils::{stream_metadata_to_hash_map};
+use mmids_rtmp::utils::stream_metadata_to_hash_map;
 use std::collections::{HashMap, VecDeque};
 use std::iter;
 use std::sync::Arc;
@@ -459,11 +461,13 @@ impl FfmpegTranscoder {
                     if let WatchRegistrationStatus::Active { media_channel } =
                         &stream.rtmp_output_status
                     {
-                        if let Ok(media_data) = RtmpEndpointMediaData::from_media_notification_content(
-                            media.content,
-                            self.is_keyframe_metadata_key,
-                            self.pts_offset_metadata_key,
-                        ) {
+                        if let Ok(media_data) =
+                            RtmpEndpointMediaData::from_media_notification_content(
+                                media.content,
+                                self.is_keyframe_metadata_key,
+                                self.pts_offset_metadata_key,
+                            )
+                        {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -519,11 +523,13 @@ impl FfmpegTranscoder {
                 // so clients don't miss them
                 if let Some(media_channel) = output_media_channel {
                     for media in stream.pending_media.drain(..) {
-                        if let Ok(media_data) = RtmpEndpointMediaData::from_media_notification_content(
-                            media,
-                            self.is_keyframe_metadata_key,
-                            self.pts_offset_metadata_key,
-                        ) {
+                        if let Ok(media_data) =
+                            RtmpEndpointMediaData::from_media_notification_content(
+                                media,
+                                self.is_keyframe_metadata_key,
+                                self.pts_offset_metadata_key,
+                            )
+                        {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -763,13 +769,15 @@ impl FfmpegTranscoder {
                         self.is_keyframe_metadata_key,
                         MetadataValue::Bool(is_keyframe),
                         &mut self.metadata_buffer,
-                    ).unwrap(); // Only fails from type mismatch
+                    )
+                    .unwrap(); // Only fails from type mismatch
 
                     let pts_offset_metadata = MetadataEntry::new(
                         self.pts_offset_metadata_key,
                         MetadataValue::I32(composition_time_offset),
                         &mut self.metadata_buffer,
-                    ).unwrap(); // Only fails from type mismatch
+                    )
+                    .unwrap(); // Only fails from type mismatch
 
                     let metadata = MediaPayloadMetadataCollection::new(
                         [is_keyframe_metadata, pts_offset_metadata].into_iter(),
@@ -785,9 +793,9 @@ impl FfmpegTranscoder {
                             is_required_for_decoding: is_sequence_header,
                             data,
                             metadata,
-                        }
+                        },
                     })
-                },
+                }
 
                 RtmpEndpointPublisherMessage::NewAudioData {
                     publisher: _,

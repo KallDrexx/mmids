@@ -3,6 +3,10 @@ use anyhow::Result;
 use bytes::Bytes;
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::definitions::WorkflowStepType;
+use mmids_core::workflows::metadata::common_metadata::{
+    get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+};
+use mmids_core::workflows::metadata::MetadataKeyMap;
 use mmids_core::workflows::steps::StepTestContext;
 use mmids_core::workflows::MediaNotificationContent::StreamDisconnected;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
@@ -13,8 +17,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot::channel;
-use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
-use mmids_core::workflows::metadata::MetadataKeyMap;
 
 struct TestContext {
     step_context: StepTestContext,
@@ -491,9 +493,10 @@ async fn video_notification_received_when_publisher_sends_video() {
             data,
             timestamp,
             is_required_for_decoding,
-            metadata
+            metadata,
         } => {
-            let is_keyframe = metadata.iter()
+            let is_keyframe = metadata
+                .iter()
                 .filter(|m| m.key() == context.is_keyframe_metadata_key)
                 .filter_map(|m| match m.value() {
                     MetadataValue::Bool(val) => Some(val),
@@ -502,7 +505,8 @@ async fn video_notification_received_when_publisher_sends_video() {
                 .next()
                 .unwrap_or_default();
 
-            let pts_offset = metadata.iter()
+            let pts_offset = metadata
+                .iter()
                 .filter(|m| m.key() == context.pts_offset_metadata_key)
                 .filter_map(|m| match m.value() {
                     MetadataValue::I32(val) => Some(val),
@@ -512,10 +516,16 @@ async fn video_notification_received_when_publisher_sends_video() {
                 .unwrap_or_default();
 
             assert_eq!(*media_type, MediaType::Video);
-            assert_eq!(*payload_type, *VIDEO_CODEC_H264_AVC, "Unexpected payload type");
+            assert_eq!(
+                *payload_type, *VIDEO_CODEC_H264_AVC,
+                "Unexpected payload type"
+            );
             assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
             assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected dts");
-            assert!(is_required_for_decoding, "Expected is_required_for_decoding to be true");
+            assert!(
+                is_required_for_decoding,
+                "Expected is_required_for_decoding to be true"
+            );
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert_eq!(pts_offset, 123, "Unexpected pts offset");
         }

@@ -6,6 +6,9 @@ use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
 use mmids_core::codecs::VIDEO_CODEC_H264_AVC;
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
+};
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
@@ -14,7 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
-use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue};
 
 /// Creates an encoder that passes video packets through to the output channel without modification
 pub struct VideoCopyEncoderGenerator {
@@ -28,7 +30,11 @@ impl VideoEncoderGenerator for VideoCopyEncoderGenerator {
         _parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn VideoEncoder>> {
-        Ok(Box::new(VideoCopyEncoder::new(media_sender, pipeline, self.pts_offset_metadata_key)?))
+        Ok(Box::new(VideoCopyEncoder::new(
+            media_sender,
+            pipeline,
+            self.pts_offset_metadata_key,
+        )?))
     }
 }
 

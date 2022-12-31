@@ -346,9 +346,8 @@ impl RtmpServerEndpointActor {
                 ..
             } => {
                 if *is_sequence_header {
-                    key_details.latest_video_sequence_header = Some(VideoSequenceHeader {
-                        data: data.clone(),
-                    });
+                    key_details.latest_video_sequence_header =
+                        Some(VideoSequenceHeader { data: data.clone() });
                 }
             }
 

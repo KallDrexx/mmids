@@ -27,6 +27,7 @@ use mmids_core::net::{IpAddress, IpAddressParseError};
 use mmids_core::reactors::manager::ReactorManagerRequest;
 use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -40,7 +41,6 @@ use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, warn};
-use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -451,7 +451,8 @@ impl RtmpWatchStep {
                         },
 
                         x if *x == *VIDEO_CODEC_H264_AVC => {
-                            let is_keyframe = metadata.iter()
+                            let is_keyframe = metadata
+                                .iter()
                                 .filter(|m| m.key() == self.is_keyframe_metadata_key)
                                 .filter_map(|m| match m.value() {
                                     MetadataValue::Bool(val) => Some(val),
@@ -460,7 +461,8 @@ impl RtmpWatchStep {
                                 .next()
                                 .unwrap_or_default();
 
-                            let pts_offset = metadata.iter()
+                            let pts_offset = metadata
+                                .iter()
                                 .filter(|m| m.key() == self.pts_offset_metadata_key)
                                 .filter_map(|m| match m.value() {
                                     MetadataValue::I32(val) => Some(val),

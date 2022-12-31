@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 mmids-core = {path = "../mmids-core"}
 
-anyhow = "1.0.53"
+anyhow = "1.0"
 bytes = "1.1.0"
 futures = "0.3"
 gstreamer = "0.18.3"

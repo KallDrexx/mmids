@@ -11,7 +11,12 @@ use bytes::{Bytes, BytesMut};
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
-use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataKey, MetadataKeyMap, MetadataValue};
+use mmids_core::workflows::metadata::common_metadata::{
+    get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+};
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataKey, MetadataKeyMap, MetadataValue,
+};
 use mmids_core::workflows::steps::{StepStatus, StepTestContext};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId};
@@ -27,7 +32,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
-use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
 
 struct TestContext {
     step_context: StepTestContext,
@@ -739,9 +743,13 @@ async fn video_packet_sent_to_watcher_media_channel() {
         media.content,
         context.is_keyframe_metadata_key,
         context.pts_offset_metadata_key,
-    ).unwrap();
+    )
+    .unwrap();
 
-    assert_eq!(response.data, expected_endpoint_media_data, "Unexpected media sent");
+    assert_eq!(
+        response.data, expected_endpoint_media_data,
+        "Unexpected media sent"
+    );
 }
 
 #[tokio::test]
@@ -781,9 +789,13 @@ async fn audio_packet_sent_to_watcher_media_channel() {
         media.content,
         context.is_keyframe_metadata_key,
         context.pts_offset_metadata_key,
-    ).unwrap();
+    )
+    .unwrap();
 
-    assert_eq!(response.data, expected_endpoint_media_data, "Unexpected media sent");
+    assert_eq!(
+        response.data, expected_endpoint_media_data,
+        "Unexpected media sent"
+    );
 }
 
 #[tokio::test]
@@ -819,9 +831,13 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
         media.content,
         context.is_keyframe_metadata_key,
         context.pts_offset_metadata_key,
-    ).unwrap();
+    )
+    .unwrap();
 
-    assert_eq!(response.data, expected_endpoint_media_data, "Unexpected media sent");
+    assert_eq!(
+        response.data, expected_endpoint_media_data,
+        "Unexpected media sent"
+    );
 }
 
 #[tokio::test]
@@ -908,7 +924,8 @@ async fn video_packet_from_publisher_passed_as_media_output() {
             is_required_for_decoding,
             metadata,
         } => {
-            let is_keyframe = metadata.iter()
+            let is_keyframe = metadata
+                .iter()
                 .filter(|m| m.key() == context.is_keyframe_metadata_key)
                 .filter_map(|m| match m.value() {
                     MetadataValue::Bool(val) => Some(val),
@@ -917,7 +934,8 @@ async fn video_packet_from_publisher_passed_as_media_output() {
                 .next()
                 .unwrap_or_default();
 
-            let pts_offset = metadata.iter()
+            let pts_offset = metadata
+                .iter()
                 .filter(|m| m.key() == context.pts_offset_metadata_key)
                 .filter_map(|m| match m.value() {
                     MetadataValue::I32(val) => Some(val),
@@ -927,10 +945,16 @@ async fn video_packet_from_publisher_passed_as_media_output() {
                 .unwrap_or_default();
 
             assert_eq!(*media_type, MediaType::Video);
-            assert_eq!(*payload_type, *VIDEO_CODEC_H264_AVC, "Unexpected payload type");
+            assert_eq!(
+                *payload_type, *VIDEO_CODEC_H264_AVC,
+                "Unexpected payload type"
+            );
             assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
             assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected dts");
-            assert!(is_required_for_decoding, "Expected is_required_for_decoding to be true");
+            assert!(
+                is_required_for_decoding,
+                "Expected is_required_for_decoding to be true"
+            );
             assert!(is_keyframe, "Expected is_keyframe to be true");
             assert_eq!(pts_offset, 123, "Unexpected pts offset");
         }

@@ -6,6 +6,9 @@ use gstreamer::prelude::*;
 use gstreamer::{Caps, Element, FlowError, FlowSuccess, Fraction, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
 use mmids_core::codecs::VIDEO_CODEC_H264_AVC;
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
+};
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
@@ -14,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
-use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue};
 
 /// Creates a video encoder that uses the gstreamer `x264enc` encoder to encode video into h264
 /// video.
@@ -246,7 +248,8 @@ fn sample_received(
         pts_offset_metadata_key,
         MetadataValue::I32(timestamp.pts_offset()),
         metadata_buffer,
-    ).unwrap(); // Can only panic if the key is not for an i32
+    )
+    .unwrap(); // Can only panic if the key is not for an i32
 
     let _ = media_sender.send(MediaNotificationContent::MediaPayload {
         media_type: MediaType::Video,
@@ -254,10 +257,7 @@ fn sample_received(
         timestamp: timestamp.dts(),
         is_required_for_decoding: false,
         data: sample.content,
-        metadata: MediaPayloadMetadataCollection::new(
-            [pts_offset].into_iter(),
-            metadata_buffer,
-        ),
+        metadata: MediaPayloadMetadataCollection::new([pts_offset].into_iter(), metadata_buffer),
     });
 
     Ok(())

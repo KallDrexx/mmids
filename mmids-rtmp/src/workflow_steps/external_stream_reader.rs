@@ -7,6 +7,7 @@ use crate::workflow_steps::external_stream_handler::{
     ExternalStreamHandlerGenerator, ResolvedFutureStatus,
 };
 use futures::FutureExt;
+use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::{FutureList, StepFutureResult, StepOutputs, StepStatus};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
@@ -14,7 +15,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
-use mmids_core::workflows::metadata::MetadataKey;
 
 /// Represents logic for a basic workflow step that exposes streams to an RTMP endpoint
 /// so that an external system can read the video stream.  This exposes a read-only interface for
@@ -205,7 +205,13 @@ impl ExternalStreamReader {
                     {
                         let media = media.clone();
 
-                        if let Ok(media_data) = RtmpEndpointMediaData::from_media_notification_content(media.content, self.is_keyframe_metadata_key, self.pts_offset_metadata_key) {
+                        if let Ok(media_data) =
+                            RtmpEndpointMediaData::from_media_notification_content(
+                                media.content,
+                                self.is_keyframe_metadata_key,
+                                self.pts_offset_metadata_key,
+                            )
+                        {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -260,7 +266,13 @@ impl ExternalStreamReader {
                 // so clients don't miss them
                 if let Some(media_channel) = output_media_channel {
                     for media in stream.pending_media.drain(..) {
-                        if let Ok(media_data) = RtmpEndpointMediaData::from_media_notification_content(media, self.is_keyframe_metadata_key, self.pts_offset_metadata_key) {
+                        if let Ok(media_data) =
+                            RtmpEndpointMediaData::from_media_notification_content(
+                                media,
+                                self.is_keyframe_metadata_key,
+                                self.pts_offset_metadata_key,
+                            )
+                        {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -396,14 +408,18 @@ mod tests {
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
     use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
-    use mmids_core::workflows::metadata::{MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue};
+    use mmids_core::workflows::metadata::common_metadata::{
+        get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+    };
+    use mmids_core::workflows::metadata::{
+        MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue,
+    };
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
     use std::iter;
     use std::sync::Arc;
     use std::time::Duration;
-    use mmids_core::workflows::metadata::common_metadata::{get_is_keyframe_metadata_key, get_pts_offset_metadata_key};
 
     struct TestContext {
         external_stream_reader: ExternalStreamReader,
@@ -464,8 +480,13 @@ mod tests {
             let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
             let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
 
-            let (reader, future_list) =
-                ExternalStreamReader::new(Arc::new("app".to_string()), rtmp_sender, generator, is_keyframe_metadata_key, pts_offset_metadata_key);
+            let (reader, future_list) = ExternalStreamReader::new(
+                Arc::new("app".to_string()),
+                rtmp_sender,
+                generator,
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
+            );
             let mut futures = FuturesUnordered::new();
             futures.extend(future_list);
 
@@ -665,13 +686,19 @@ mod tests {
         let mut metadata_key_map = MetadataKeyMap::new();
         let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
         let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
-        let is_keyframe_metadata =
-            MetadataEntry::new(is_keyframe_metadata_key, MetadataValue::Bool(true), &mut buffer)
-                .unwrap();
+        let is_keyframe_metadata = MetadataEntry::new(
+            is_keyframe_metadata_key,
+            MetadataValue::Bool(true),
+            &mut buffer,
+        )
+        .unwrap();
 
-        let pts_offset_metadata =
-            MetadataEntry::new(pts_offset_metadata_key, MetadataValue::I32(video_timestamp.pts_offset()), &mut buffer)
-                .unwrap();
+        let pts_offset_metadata = MetadataEntry::new(
+            pts_offset_metadata_key,
+            MetadataValue::I32(video_timestamp.pts_offset()),
+            &mut buffer,
+        )
+        .unwrap();
 
         let metadata = MediaPayloadMetadataCollection::new(
             [is_keyframe_metadata, pts_offset_metadata].into_iter(),
@@ -703,7 +730,10 @@ mod tests {
             "Unexpected stream id"
         );
 
-        assert_eq!(outputs.media[0].content, media_content, "Unexpected media content");
+        assert_eq!(
+            outputs.media[0].content, media_content,
+            "Unexpected media content"
+        );
     }
 
     #[tokio::test]
@@ -865,13 +895,19 @@ mod tests {
         let mut metadata_key_map = MetadataKeyMap::new();
         let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
         let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
-        let is_keyframe_metadata =
-            MetadataEntry::new(is_keyframe_metadata_key, MetadataValue::Bool(true), &mut buffer)
-                .unwrap();
+        let is_keyframe_metadata = MetadataEntry::new(
+            is_keyframe_metadata_key,
+            MetadataValue::Bool(true),
+            &mut buffer,
+        )
+        .unwrap();
 
-        let pts_offset_metadata =
-            MetadataEntry::new(pts_offset_metadata_key, MetadataValue::I32(video_timestamp.pts_offset()), &mut buffer)
-                .unwrap();
+        let pts_offset_metadata = MetadataEntry::new(
+            pts_offset_metadata_key,
+            MetadataValue::I32(video_timestamp.pts_offset()),
+            &mut buffer,
+        )
+        .unwrap();
 
         let metadata = MediaPayloadMetadataCollection::new(
             [is_keyframe_metadata, pts_offset_metadata].into_iter(),
