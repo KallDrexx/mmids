@@ -631,7 +631,6 @@ impl RtmpServerConnectionHandler {
                     Ok(video) => video,
                     Err(error) => {
                         error!("Video is using an unsupported set of flv video tags: {error}");
-                        self.force_disconnect = true;
 
                         return;
                     }

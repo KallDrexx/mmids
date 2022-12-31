@@ -876,7 +876,7 @@ async fn notification_raised_when_video_published() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![1, 2, 3, 4, 5, 6, 7]);
+    let data = Bytes::from(vec![0x27, 2, 3, 4, 5, 6, 7]);
     let timestamp = RtmpTimestamp::new(5);
     context.client.publish_video(data.clone(), timestamp);
 
@@ -1379,38 +1379,6 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
 }
 
 #[tokio::test]
-async fn watcher_does_not_receive_non_h264_video() {
-    let mut context = TestContextBuilder::new().into_watcher().await;
-    context.set_as_active_watcher().await;
-
-    let sent_data = Bytes::from(vec![1, 2, 3, 4]);
-    let sent_timestamp = RtmpTimestamp::new(5);
-
-    match context
-        .media_sender
-        .as_ref()
-        .unwrap()
-        .send(RtmpEndpointMediaMessage {
-            stream_key: Arc::new("key".to_string()),
-            data: RtmpEndpointMediaData::NewVideoData {
-                data: sent_data.clone(),
-                is_sequence_header: false,
-                is_keyframe: false,
-                timestamp: sent_timestamp,
-                composition_time_offset: 0,
-            },
-        }) {
-        Ok(_) => (),
-        Err(_) => panic!("Failed to send media message"),
-    }
-
-    let event = context.client.get_next_event().await;
-    if let Some(event) = event {
-        panic!("Expected no events, but got {:?}", event);
-    }
-}
-
-#[tokio::test]
 async fn aac_audio_has_flv_headers_added_for_sequence_header() {
     let mut context = TestContextBuilder::new().into_watcher().await;
     context.set_as_active_watcher().await;
@@ -1485,36 +1453,6 @@ async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
         }
 
         event => panic!("Unexpected event: {:?}", event),
-    }
-}
-
-#[tokio::test]
-async fn watcher_does_not_receives_unknown_audio_codec() {
-    let mut context = TestContextBuilder::new().into_watcher().await;
-    context.set_as_active_watcher().await;
-
-    let sent_data = Bytes::from(vec![1, 2, 3, 4]);
-    let sent_timestamp = RtmpTimestamp::new(5);
-
-    match context
-        .media_sender
-        .as_ref()
-        .unwrap()
-        .send(RtmpEndpointMediaMessage {
-            stream_key: Arc::new("key".to_string()),
-            data: RtmpEndpointMediaData::NewAudioData {
-                data: sent_data.clone(),
-                is_sequence_header: false,
-                timestamp: sent_timestamp,
-            },
-        }) {
-        Ok(_) => (),
-        Err(_) => panic!("Failed to send media message"),
-    };
-
-    let event = context.client.get_next_event().await;
-    if let Some(event) = event {
-        panic!("Expected no events, but got {:?}", event);
     }
 }
 
