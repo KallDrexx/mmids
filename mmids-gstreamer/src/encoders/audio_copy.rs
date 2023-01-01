@@ -1,13 +1,14 @@
 use crate::encoders::{AudioEncoder, AudioEncoderGenerator, SampleResult};
 use crate::utils::{create_gst_element, set_gst_buffer};
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::AudioCodec;
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use std::collections::HashMap;
+use std::iter;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
@@ -28,7 +29,7 @@ impl AudioEncoderGenerator for AudioCopyEncoderGenerator {
 }
 
 struct CodecInfo {
-    codec: AudioCodec,
+    payload_type: Arc<String>,
     sequence_header: Bytes,
 }
 
@@ -64,47 +65,57 @@ impl AudioCopyEncoder {
         let copy_of_codec_data = codec_data.clone();
         let mut sent_codec_data = false;
         let mut codec_data_error_raised = false;
-        let mut codec = AudioCodec::Unknown;
+        let mut metadata_buffer = BytesMut::new();
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    if !sent_codec_data {
-                        let data = match copy_of_codec_data.lock() {
-                            Ok(data) => data,
-                            Err(_) => {
-                                if !codec_data_error_raised {
-                                    error!("codec data lock was poisoned");
-                                    codec_data_error_raised = true;
-                                }
-
-                                return Err(FlowError::Error);
+                    let data = match copy_of_codec_data.lock() {
+                        Ok(data) => data,
+                        Err(_) => {
+                            if !codec_data_error_raised {
+                                error!("codec data lock was poisoned");
+                                codec_data_error_raised = true;
                             }
-                        };
 
-                        if let Some(info) = &*data {
-                            let _ = media_sender.send(MediaNotificationContent::Audio {
-                                codec: info.codec,
-                                data: info.sequence_header.clone(),
-                                timestamp: Duration::new(0, 0),
-                                is_sequence_header: true,
-                            });
-
-                            codec = info.codec;
-                            sent_codec_data = true;
-                        } else if !codec_data_error_raised {
-                            error!("Received data prior to codec data being set. This shouldn't happen");
-                            codec_data_error_raised = true;
+                            return Err(FlowError::Error);
                         }
+                    };
+
+                    let info = match &*data {
+                        Some(info) => info,
+                        None => {
+                            if !codec_data_error_raised {
+                                error!("Received data prior to codec data being set. This shouldn't happen");
+                                codec_data_error_raised = true;
+                            }
+
+                            return Err(FlowError::Error);
+                        }
+                    };
+
+                    if !sent_codec_data {
+                        let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+                            payload_type: info.payload_type.clone(),
+                            media_type: MediaType::Audio,
+                            data: info.sequence_header.clone(),
+                            timestamp: Duration::new(0, 0),
+                            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut metadata_buffer),
+                            is_required_for_decoding: true,
+                        });
+
+                        sent_codec_data = true;
                     }
 
                     let sample = SampleResult::from_sink(sink)
                         .map_err(|_| FlowError::CustomError)?;
 
-                    let _ = media_sender.send(MediaNotificationContent::Audio {
-                        codec,
+                    let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+                        payload_type: info.payload_type.clone(),
+                        media_type: MediaType::Audio,
                         data: sample.content,
                         timestamp: sample.dts.unwrap_or(Duration::new(0, 0)),
-                        is_sequence_header: false,
+                        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut metadata_buffer),
+                        is_required_for_decoding: false,
                     });
 
                     Ok(FlowSuccess::Ok)
@@ -126,7 +137,7 @@ impl AudioCopyEncoder {
 impl AudioEncoder for AudioCopyEncoder {
     fn push_data(
         &self,
-        codec: AudioCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: Duration,
         is_sequence_header: bool,
@@ -138,7 +149,7 @@ impl AudioEncoder for AudioCopyEncoder {
                 .map_err(|_| anyhow!("Audio copy encoder's lock was poisoned"))?;
 
             *codec_data = Some(CodecInfo {
-                codec,
+                payload_type,
                 sequence_header: data,
             })
         } else {

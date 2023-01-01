@@ -143,7 +143,6 @@ pub async fn main() {
                         timestamp,
                         is_keyframe,
                         is_sequence_header,
-                        codec,
                         composition_time_offset,
                     } => {
                         if announce_video_data {
@@ -164,7 +163,6 @@ pub async fn main() {
                             data: RtmpEndpointMediaData::NewVideoData {
                                 data,
                                 timestamp,
-                                codec,
                                 is_sequence_header,
                                 is_keyframe,
                                 composition_time_offset,
@@ -177,7 +175,6 @@ pub async fn main() {
                         data,
                         is_sequence_header,
                         timestamp,
-                        codec,
                     } => {
                         if announce_audio_data {
                             info!("Connection {} sent audio data", publisher);
@@ -198,7 +195,6 @@ pub async fn main() {
                                 data,
                                 is_sequence_header,
                                 timestamp,
-                                codec,
                             },
                         });
                     }

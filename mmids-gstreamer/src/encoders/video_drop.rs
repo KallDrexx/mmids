@@ -1,10 +1,10 @@
 use crate::encoders::{VideoEncoder, VideoEncoderGenerator};
 use bytes::Bytes;
 use gstreamer::Pipeline;
-use mmids_core::codecs::VideoCodec;
 use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Creates a video encoder that drops audio.
@@ -26,7 +26,7 @@ struct VideoDropEncoder {}
 impl VideoEncoder for VideoDropEncoder {
     fn push_data(
         &self,
-        _codec: VideoCodec,
+        _payload: Arc<String>,
         _data: Bytes,
         _timestamp: VideoTimestamp,
         _is_sequence_header: bool,

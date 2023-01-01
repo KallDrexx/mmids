@@ -7,6 +7,7 @@ use crate::workflow_steps::external_stream_handler::{
     ExternalStreamHandlerGenerator, ResolvedFutureStatus,
 };
 use futures::FutureExt;
+use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::{FutureList, StepFutureResult, StepOutputs, StepStatus};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
@@ -29,6 +30,8 @@ pub struct ExternalStreamReader {
     watcher_app_name: Arc<String>,
     active_streams: HashMap<StreamId, ActiveStream>,
     stream_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 #[derive(Debug)]
@@ -67,6 +70,8 @@ impl ExternalStreamReader {
         watcher_rtmp_app_name: Arc<String>,
         rtmp_server: UnboundedSender<RtmpEndpointRequest>,
         external_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> (Self, FutureList) {
         let step = ExternalStreamReader {
             status: StepStatus::Active,
@@ -74,6 +79,8 @@ impl ExternalStreamReader {
             rtmp_server_endpoint: rtmp_server.clone(),
             active_streams: HashMap::new(),
             stream_handler_generator: external_handler_generator,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         };
 
         let futures = vec![notify_when_rtmp_endpoint_is_gone(rtmp_server).boxed()];
@@ -197,7 +204,14 @@ impl ExternalStreamReader {
                         &stream.rtmp_output_status
                     {
                         let media = media.clone();
-                        if let Ok(media_data) = RtmpEndpointMediaData::try_from(media.content) {
+
+                        if let Ok(media_data) =
+                            RtmpEndpointMediaData::from_media_notification_content(
+                                media.content,
+                                self.is_keyframe_metadata_key,
+                                self.pts_offset_metadata_key,
+                            )
+                        {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -252,7 +266,13 @@ impl ExternalStreamReader {
                 // so clients don't miss them
                 if let Some(media_channel) = output_media_channel {
                     for media in stream.pending_media.drain(..) {
-                        if let Ok(media_data) = RtmpEndpointMediaData::try_from(media) {
+                        if let Ok(media_data) =
+                            RtmpEndpointMediaData::from_media_notification_content(
+                                media,
+                                self.is_keyframe_metadata_key,
+                                self.pts_offset_metadata_key,
+                            )
+                        {
                             let _ = media_channel.send(RtmpEndpointMediaMessage {
                                 stream_key: stream.id.0.clone(),
                                 data: media_data,
@@ -384,12 +404,20 @@ mod tests {
     use crate::rtmp_server::RtmpEndpointMediaData;
     use crate::utils::hash_map_to_stream_metadata;
     use crate::workflow_steps::external_stream_handler::StreamHandlerFutureResult;
-    use bytes::Bytes;
+    use bytes::{Bytes, BytesMut};
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
-    use mmids_core::codecs::{AudioCodec, VideoCodec};
+    use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
+    use mmids_core::workflows::metadata::common_metadata::{
+        get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+    };
+    use mmids_core::workflows::metadata::{
+        MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue,
+    };
+    use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
+    use std::iter;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -448,8 +476,17 @@ mod tests {
                 stop_stream_sender: stop_sender,
             });
 
-            let (reader, future_list) =
-                ExternalStreamReader::new(Arc::new("app".to_string()), rtmp_sender, generator);
+            let mut metadata_map = MetadataKeyMap::new();
+            let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
+            let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
+
+            let (reader, future_list) = ExternalStreamReader::new(
+                Arc::new("app".to_string()),
+                rtmp_sender,
+                generator,
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
+            );
             let mut futures = FuturesUnordered::new();
             futures.extend(future_list);
 
@@ -645,15 +682,41 @@ mod tests {
         let video_timestamp =
             VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
 
+        let mut buffer = BytesMut::new();
+        let mut metadata_key_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
+        let is_keyframe_metadata = MetadataEntry::new(
+            is_keyframe_metadata_key,
+            MetadataValue::Bool(true),
+            &mut buffer,
+        )
+        .unwrap();
+
+        let pts_offset_metadata = MetadataEntry::new(
+            pts_offset_metadata_key,
+            MetadataValue::I32(video_timestamp.pts_offset()),
+            &mut buffer,
+        )
+        .unwrap();
+
+        let metadata = MediaPayloadMetadataCollection::new(
+            [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+            &mut buffer,
+        );
+
+        let media_content = MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
+            timestamp: video_timestamp.dts(),
+            is_required_for_decoding: true,
+            metadata,
+            data: Bytes::from(vec![1, 2, 3]),
+        };
+
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Video {
-                data: Bytes::from(vec![1, 2, 3]),
-                codec: VideoCodec::H264,
-                timestamp: video_timestamp.clone(),
-                is_keyframe: true,
-                is_sequence_header: true,
-            },
+            content: media_content.clone(),
         };
 
         context
@@ -666,23 +729,11 @@ mod tests {
             "abc",
             "Unexpected stream id"
         );
-        match &outputs.media[0].content {
-            MediaNotificationContent::Video {
-                data,
-                codec,
-                is_sequence_header,
-                is_keyframe,
-                timestamp,
-            } => {
-                assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-                assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-                assert!(is_sequence_header, "Expected sequence header");
-                assert!(is_keyframe, "Expected key frame");
-                assert_eq!(timestamp, &video_timestamp, "Unexpected video timestamp");
-            }
 
-            content => panic!("Expected NewIncomingStream, got {:?}", content),
-        }
+        assert_eq!(
+            outputs.media[0].content, media_content,
+            "Unexpected media content"
+        );
     }
 
     #[tokio::test]
@@ -692,17 +743,19 @@ mod tests {
 
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2, 3]),
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
-                is_sequence_header: true,
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         };
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media.clone(), &mut outputs);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -710,21 +763,11 @@ mod tests {
             "abc",
             "Unexpected stream id"
         );
-        match &outputs.media[0].content {
-            MediaNotificationContent::Audio {
-                data,
-                codec,
-                timestamp,
-                is_sequence_header,
-            } => {
-                assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-                assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
-                assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
-                assert!(is_sequence_header, "Expected sequence header");
-            }
 
-            content => panic!("Expected NewIncomingStream, got {:?}", content),
-        }
+        assert_eq!(
+            outputs.media[0].content, media.content,
+            "Unexpected media content"
+        );
     }
 
     #[tokio::test]
@@ -848,14 +891,38 @@ mod tests {
         let video_timestamp =
             VideoTimestamp::from_durations(Duration::from_millis(5), Duration::from_millis(15));
 
+        let mut buffer = BytesMut::new();
+        let mut metadata_key_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_key_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_key_map);
+        let is_keyframe_metadata = MetadataEntry::new(
+            is_keyframe_metadata_key,
+            MetadataValue::Bool(true),
+            &mut buffer,
+        )
+        .unwrap();
+
+        let pts_offset_metadata = MetadataEntry::new(
+            pts_offset_metadata_key,
+            MetadataValue::I32(video_timestamp.pts_offset()),
+            &mut buffer,
+        )
+        .unwrap();
+
+        let metadata = MediaPayloadMetadataCollection::new(
+            [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+            &mut buffer,
+        );
+
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Video {
+            content: MediaNotificationContent::MediaPayload {
+                media_type: MediaType::Video,
+                payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                timestamp: video_timestamp.dts(),
+                is_required_for_decoding: true,
                 data: Bytes::from(vec![1, 2, 3, 4]),
-                is_keyframe: true,
-                is_sequence_header: true,
-                codec: VideoCodec::H264,
-                timestamp: video_timestamp.clone(),
+                metadata,
             },
         };
 
@@ -875,7 +942,6 @@ mod tests {
             RtmpEndpointMediaData::NewVideoData {
                 data,
                 timestamp,
-                codec,
                 is_sequence_header,
                 is_keyframe,
                 composition_time_offset,
@@ -888,7 +954,6 @@ mod tests {
                 );
                 assert!(is_sequence_header, "Expected sequence header to be true");
                 assert!(is_keyframe, "Expected key frame to be true");
-                assert_eq!(codec, &VideoCodec::H264, "Expected h264 codec");
                 assert_eq!(
                     composition_time_offset,
                     &video_timestamp.pts_offset(),
@@ -907,11 +972,13 @@ mod tests {
 
         let media = MediaNotification {
             stream_id: StreamId(Arc::new("abc".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2, 3, 4]),
-                is_sequence_header: true,
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         };
 
@@ -931,13 +998,11 @@ mod tests {
             RtmpEndpointMediaData::NewAudioData {
                 data,
                 timestamp,
-                codec,
                 is_sequence_header,
             } => {
                 assert_eq!(data, &vec![1, 2, 3, 4], "Unexpected bytes");
                 assert_eq!(timestamp, &RtmpTimestamp::new(5), "Unexpected timestamp");
                 assert!(is_sequence_header, "Expected sequence header to be true");
-                assert_eq!(codec, &AudioCodec::Aac, "Expected h264 codec");
             }
 
             data => panic!("Unexpected media data: {:?}", data),

@@ -1,6 +1,7 @@
 //! This module contains functionality for storing and retrieving metadata about individual
 //! media payloads.
 
+pub mod common_metadata;
 mod keys;
 mod klv;
 

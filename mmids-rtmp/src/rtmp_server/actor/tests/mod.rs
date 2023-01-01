@@ -6,8 +6,6 @@ use crate::rtmp_server::{
     StreamKeyRegistration, ValidationResponse,
 };
 use bytes::Bytes;
-use mmids_core::codecs::VideoCodec::{Unknown, H264};
-use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::test_utils;
 use rml_rtmp::sessions::{ClientSessionEvent, StreamMetadata};
 use rml_rtmp::time::RtmpTimestamp;
@@ -878,7 +876,7 @@ async fn notification_raised_when_video_published() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![1, 2, 3, 4, 5, 6, 7]);
+    let data = Bytes::from(vec![0x27, 2, 3, 4, 5, 6, 7]);
     let timestamp = RtmpTimestamp::new(5);
     context.client.publish_video(data.clone(), timestamp);
 
@@ -890,7 +888,6 @@ async fn notification_raised_when_video_published() {
             timestamp: event_timestamp,
             data: event_data,
             is_sequence_header: _,
-            codec: _,
             is_keyframe: _,
             composition_time_offset: _,
         } => {
@@ -911,57 +908,18 @@ async fn notification_raised_when_video_published() {
 }
 
 #[tokio::test]
-async fn published_video_detects_h264_codec_when_first_byte_masks_to_0x07() {
+async fn published_video_when_first_byte_masks_to_0x07() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 2, 3, 4]);
+    let data = Bytes::from(vec![0x07, 1, 0, 0, 0, 2, 3, 4]); // 0x07 == h264
     let timestamp = RtmpTimestamp::new(5);
     context.client.publish_video(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
     match response {
-        RtmpEndpointPublisherMessage::NewVideoData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-            is_keyframe: _,
-            composition_time_offset: _,
-        } => {
-            assert_eq!(codec, VideoCodec::H264, "Unexpected video codec");
-        }
-
-        message => panic!("Unexpected publisher message: {:?}", message),
-    };
-}
-
-#[tokio::test]
-async fn published_video_detects_unknown_codec_when_first_byte_does_not_mask_to_0x07() {
-    let mut context = TestContextBuilder::new().into_publisher().await;
-    context.set_as_active_publisher().await;
-
-    let data = Bytes::from(vec![0x08, 1, 0, 0, 0, 2, 3, 4]);
-    let timestamp = RtmpTimestamp::new(5);
-    context.client.publish_video(data.clone(), timestamp);
-
-    let receiver = context.publish_receiver.as_mut().unwrap();
-    let response = test_utils::expect_mpsc_response(receiver).await;
-    match response {
-        RtmpEndpointPublisherMessage::NewVideoData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-            is_keyframe: _,
-            composition_time_offset: _,
-        } => {
-            assert_eq!(codec, VideoCodec::Unknown, "Unexpected video codec");
-        }
-
+        RtmpEndpointPublisherMessage::NewVideoData { .. } => (),
         message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
@@ -983,7 +941,6 @@ async fn published_video_sequence_header_when_h264_and_second_byte_is_zero() {
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
             is_keyframe: _,
             composition_time_offset: _,
         } => {
@@ -1011,7 +968,6 @@ async fn published_video_not_sequence_header_when_h264_and_second_byte_is_not_ze
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
             is_keyframe: _,
             composition_time_offset: _,
         } => {
@@ -1039,7 +995,6 @@ async fn published_video_not_key_frame_when_first_4_half_octet_is_not_one() {
             timestamp: _,
             data: _,
             is_sequence_header: _,
-            codec: _,
             is_keyframe,
             composition_time_offset: _,
         } => {
@@ -1067,7 +1022,6 @@ async fn published_video_key_frame_when_first_4_half_octet_is_one() {
             timestamp: _,
             data: _,
             is_sequence_header: _,
-            codec: _,
             is_keyframe,
             composition_time_offset: _,
         } => {
@@ -1116,7 +1070,7 @@ async fn notification_raised_when_audio_published() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
-    let data = Bytes::from(vec![1, 2, 3, 4]);
+    let data = Bytes::from(vec![0xa0, 2, 3, 4]);
     let timestamp = RtmpTimestamp::new(5);
     context.client.publish_audio(data.clone(), timestamp);
 
@@ -1128,7 +1082,6 @@ async fn notification_raised_when_audio_published() {
             timestamp: event_timestamp,
             data: event_data,
             is_sequence_header: _,
-            codec: _,
         } => {
             assert_eq!(
                 publisher.0.as_str(),
@@ -1147,7 +1100,7 @@ async fn notification_raised_when_audio_published() {
 }
 
 #[tokio::test]
-async fn published_audio_aac_codec_if_first_byte_0xa0() {
+async fn published_audio_received_if_first_byte_0xa0() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
@@ -1158,22 +1111,13 @@ async fn published_audio_aac_codec_if_first_byte_0xa0() {
     let receiver = context.publish_receiver.as_mut().unwrap();
     let response = test_utils::expect_mpsc_response(receiver).await;
     match response {
-        RtmpEndpointPublisherMessage::NewAudioData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-        } => {
-            assert_eq!(codec, AudioCodec::Aac, "Unexpected audio codec");
-        }
-
+        RtmpEndpointPublisherMessage::NewAudioData { .. } => (),
         message => panic!("Unexpected publisher message: {:?}", message),
     };
 }
 
 #[tokio::test]
-async fn published_audio_unknown_codec_if_first_byte_not_0xa0() {
+async fn no_published_audio_when_first_byte_is_not_0xa0() {
     let mut context = TestContextBuilder::new().into_publisher().await;
     context.set_as_active_publisher().await;
 
@@ -1182,20 +1126,7 @@ async fn published_audio_unknown_codec_if_first_byte_not_0xa0() {
     context.client.publish_audio(data.clone(), timestamp);
 
     let receiver = context.publish_receiver.as_mut().unwrap();
-    let response = test_utils::expect_mpsc_response(receiver).await;
-    match response {
-        RtmpEndpointPublisherMessage::NewAudioData {
-            publisher: _,
-            timestamp: _,
-            data: _,
-            is_sequence_header: _,
-            codec,
-        } => {
-            assert_eq!(codec, AudioCodec::Unknown, "Unexpected audio codec");
-        }
-
-        message => panic!("Unexpected publisher message: {:?}", message),
-    };
+    test_utils::expect_mpsc_timeout(receiver).await;
 }
 
 #[tokio::test]
@@ -1215,7 +1146,6 @@ async fn published_audio_aac_sequence_header_if_second_byte_is_zero() {
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
         } => {
             assert!(is_sequence_header, "Expected is sequence header to be true");
         }
@@ -1241,7 +1171,6 @@ async fn published_audio_aac_not_sequence_header_if_second_byte_is_not_zero() {
             timestamp: _,
             data: _,
             is_sequence_header,
-            codec: _,
         } => {
             assert!(
                 !is_sequence_header,
@@ -1372,7 +1301,6 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_non_keyframe() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
-                codec: H264,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: false,
@@ -1419,7 +1347,6 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewVideoData {
-                codec: H264,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 is_keyframe: true,
@@ -1452,39 +1379,6 @@ async fn watcher_receives_video_wrapped_in_flv_tag_denoting_keyframe() {
 }
 
 #[tokio::test]
-async fn watcher_does_not_receive_non_h264_video() {
-    let mut context = TestContextBuilder::new().into_watcher().await;
-    context.set_as_active_watcher().await;
-
-    let sent_data = Bytes::from(vec![1, 2, 3, 4]);
-    let sent_timestamp = RtmpTimestamp::new(5);
-
-    match context
-        .media_sender
-        .as_ref()
-        .unwrap()
-        .send(RtmpEndpointMediaMessage {
-            stream_key: Arc::new("key".to_string()),
-            data: RtmpEndpointMediaData::NewVideoData {
-                codec: Unknown,
-                data: sent_data.clone(),
-                is_sequence_header: false,
-                is_keyframe: false,
-                timestamp: sent_timestamp,
-                composition_time_offset: 0,
-            },
-        }) {
-        Ok(_) => (),
-        Err(_) => panic!("Failed to send media message"),
-    }
-
-    let event = context.client.get_next_event().await;
-    if let Some(event) = event {
-        panic!("Expected no events, but got {:?}", event);
-    }
-}
-
-#[tokio::test]
 async fn aac_audio_has_flv_headers_added_for_sequence_header() {
     let mut context = TestContextBuilder::new().into_watcher().await;
     context.set_as_active_watcher().await;
@@ -1499,7 +1393,6 @@ async fn aac_audio_has_flv_headers_added_for_sequence_header() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
-                codec: AudioCodec::Aac,
                 data: sent_data.clone(),
                 is_sequence_header: true,
                 timestamp: sent_timestamp,
@@ -1539,7 +1432,6 @@ async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
         .send(RtmpEndpointMediaMessage {
             stream_key: Arc::new("key".to_string()),
             data: RtmpEndpointMediaData::NewAudioData {
-                codec: AudioCodec::Aac,
                 data: sent_data.clone(),
                 is_sequence_header: false,
                 timestamp: sent_timestamp,
@@ -1561,37 +1453,6 @@ async fn aac_audio_has_flv_headers_added_for_non_sequence_header() {
         }
 
         event => panic!("Unexpected event: {:?}", event),
-    }
-}
-
-#[tokio::test]
-async fn watcher_does_not_receives_unknown_audio_codec() {
-    let mut context = TestContextBuilder::new().into_watcher().await;
-    context.set_as_active_watcher().await;
-
-    let sent_data = Bytes::from(vec![1, 2, 3, 4]);
-    let sent_timestamp = RtmpTimestamp::new(5);
-
-    match context
-        .media_sender
-        .as_ref()
-        .unwrap()
-        .send(RtmpEndpointMediaMessage {
-            stream_key: Arc::new("key".to_string()),
-            data: RtmpEndpointMediaData::NewAudioData {
-                codec: AudioCodec::Unknown,
-                data: sent_data.clone(),
-                is_sequence_header: false,
-                timestamp: sent_timestamp,
-            },
-        }) {
-        Ok(_) => (),
-        Err(_) => panic!("Failed to send media message"),
-    };
-
-    let event = context.client.get_next_event().await;
-    if let Some(event) = event {
-        panic!("Expected no events, but got {:?}", event);
     }
 }
 

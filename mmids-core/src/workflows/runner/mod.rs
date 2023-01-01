@@ -593,8 +593,6 @@ impl Actor {
     fn update_stream_details(&mut self, current_step_id: u64) {
         for media in &self.step_outputs.media {
             match &media.content {
-                MediaNotificationContent::Video { .. } => (),
-                MediaNotificationContent::Audio { .. } => (),
                 MediaNotificationContent::Metadata { .. } => (),
                 MediaNotificationContent::MediaPayload { .. } => (),
                 MediaNotificationContent::NewIncomingStream { .. } => {
@@ -634,21 +632,12 @@ impl Actor {
                 self.cached_inbound_media.remove(&media.stream_id);
             }
 
-            MediaNotificationContent::Audio {
-                is_sequence_header: true,
+            MediaNotificationContent::MediaPayload {
+                is_required_for_decoding: true,
                 ..
             } => {
                 if let Some(collection) = self.cached_inbound_media.get_mut(&media.stream_id) {
                     collection.push(media.clone());
-                }
-            }
-
-            MediaNotificationContent::Video {
-                is_sequence_header: true,
-                ..
-            } => {
-                if let Some(collectoin) = self.cached_inbound_media.get_mut(&media.stream_id) {
-                    collectoin.push(media.clone());
                 }
             }
 
@@ -677,27 +666,6 @@ impl Actor {
                     // I *think* we can ignore these, since the sequence headers are really
                     // what's important to replay
                     Operation::Ignore
-                }
-
-                MediaNotificationContent::Video {
-                    is_sequence_header, ..
-                } => {
-                    // We must cache sequence headers.  We *may* need to cache the latest key frame
-                    if *is_sequence_header {
-                        Operation::Add
-                    } else {
-                        Operation::Ignore
-                    }
-                }
-
-                MediaNotificationContent::Audio {
-                    is_sequence_header, ..
-                } => {
-                    if *is_sequence_header {
-                        Operation::Add
-                    } else {
-                        Operation::Ignore
-                    }
                 }
 
                 MediaNotificationContent::MediaPayload {

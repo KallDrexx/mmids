@@ -11,8 +11,7 @@ pub mod steps;
 
 pub use runner::{start_workflow, WorkflowRequest, WorkflowRequestOperation, WorkflowStatus};
 
-use crate::codecs::{AudioCodec, VideoCodec};
-use crate::{StreamId, VideoTimestamp};
+use crate::StreamId;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -54,23 +53,6 @@ pub enum MediaNotificationContent {
     /// information they are tracking about this stream, as no new media will arrive without
     /// a new `NewIncomingStream` announcement.
     StreamDisconnected,
-
-    /// Video content
-    Video {
-        codec: VideoCodec,
-        is_sequence_header: bool,
-        is_keyframe: bool,
-        data: Bytes,
-        timestamp: VideoTimestamp,
-    },
-
-    /// Audio content
-    Audio {
-        codec: AudioCodec,
-        is_sequence_header: bool,
-        data: Bytes,
-        timestamp: Duration,
-    },
 
     /// New stream metadata
     Metadata { data: HashMap<String, String> },

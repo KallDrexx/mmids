@@ -10,6 +10,7 @@ use crate::endpoint::{
 use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -28,6 +29,8 @@ const TARGET: &str = "target";
 pub struct FfmpegRtmpPushStepGenerator {
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct FfmpegRtmpPushStep {
@@ -57,10 +60,14 @@ impl FfmpegRtmpPushStepGenerator {
     pub fn new(
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         FfmpegRtmpPushStepGenerator {
             rtmp_endpoint,
             ffmpeg_endpoint,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -84,6 +91,8 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
             Arc::new(format!("ffmpeg-rtmp-push-{}", definition.get_id())),
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
+            self.is_keyframe_metadata_key,
+            self.pts_offset_metadata_key,
         );
 
         let step = FfmpegRtmpPushStep {

@@ -4,8 +4,6 @@ use crate::rtmp_server::{
     IpRestriction, RtmpEndpointMediaData, RtmpEndpointMediaMessage,
     RtmpEndpointWatcherNotification, ValidationResponse,
 };
-use mmids_core::codecs::{AudioCodec, VideoCodec};
-
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -87,12 +85,10 @@ pub struct WatcherRegistrant {
 }
 
 pub struct VideoSequenceHeader {
-    pub codec: VideoCodec,
     pub data: Bytes,
 }
 
 pub struct AudioSequenceHeader {
-    pub codec: AudioCodec,
     pub data: Bytes,
 }
 

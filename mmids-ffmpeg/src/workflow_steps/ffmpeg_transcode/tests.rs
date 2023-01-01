@@ -7,13 +7,19 @@ use crate::workflow_steps::ffmpeg_transcode::{
     VIDEO_CODEC_NAME,
 };
 use anyhow::Result;
-use bytes::Bytes;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
+use bytes::{Bytes, BytesMut};
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::ConnectionId;
 use mmids_core::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
+use mmids_core::workflows::metadata::common_metadata::{
+    get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+};
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataKey, MetadataKeyMap, MetadataValue,
+};
 use mmids_core::workflows::steps::{StepStatus, StepTestContext};
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
-use mmids_core::{test_utils, StreamId, VideoTimestamp};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
+use mmids_core::{test_utils, StreamId};
 use mmids_rtmp::rtmp_server::{
     RtmpEndpointMediaData, RtmpEndpointMediaMessage, RtmpEndpointPublisherMessage,
     RtmpEndpointRequest, RtmpEndpointWatcherNotification, StreamKeyRegistration,
@@ -21,6 +27,7 @@ use mmids_rtmp::rtmp_server::{
 use rml_rtmp::sessions::StreamMetadata;
 use rml_rtmp::time::RtmpTimestamp;
 use std::collections::HashMap;
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -30,6 +37,8 @@ struct TestContext {
     step_context: StepTestContext,
     rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
     ffmpeg_endpoint: UnboundedReceiver<FfmpegEndpointRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct DefinitionBuilder {
@@ -129,9 +138,15 @@ impl TestContext {
         let (rtmp_sender, rtmp_receiver) = unbounded_channel();
         let (ffmpeg_sender, ffmpeg_receiver) = unbounded_channel();
 
+        let mut metadata_map = MetadataKeyMap::new();
+        let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
+        let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
+
         let generator = FfmpegTranscoderStepGenerator {
             ffmpeg_endpoint: ffmpeg_sender,
             rtmp_server_endpoint: rtmp_sender,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         };
 
         let step_context = StepTestContext::new(Box::new(generator), definition)?;
@@ -140,6 +155,8 @@ impl TestContext {
             step_context,
             rtmp_endpoint: rtmp_receiver,
             ffmpeg_endpoint: ffmpeg_receiver,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         })
     }
 
@@ -658,15 +675,13 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
         .step_context
         .assert_media_not_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("test".to_string())),
-            content: MediaNotificationContent::Video {
+            content: MediaNotificationContent::MediaPayload {
+                media_type: MediaType::Video,
+                payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                timestamp: Duration::from_millis(0),
+                is_required_for_decoding: true,
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
                 data: Bytes::from(vec![1, 2]),
-                codec: VideoCodec::H264,
-                is_keyframe: true,
-                is_sequence_header: true,
-                timestamp: VideoTimestamp::from_durations(
-                    Duration::from_millis(0),
-                    Duration::from_millis(0),
-                ),
             },
         });
 }
@@ -680,11 +695,13 @@ fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
         .step_context
         .assert_media_not_passed_through(MediaNotification {
             stream_id: StreamId(Arc::new("test".to_string())),
-            content: MediaNotificationContent::Audio {
+            content: MediaNotificationContent::MediaPayload {
                 data: Bytes::from(vec![1, 2]),
-                codec: AudioCodec::Aac,
                 timestamp: Duration::from_millis(5),
-                is_sequence_header: true,
+                is_required_for_decoding: true,
+                media_type: MediaType::Audio,
+                payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
             },
         });
 }
@@ -707,15 +724,13 @@ async fn video_packet_sent_to_watcher_media_channel() {
 
     let media = MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Video {
-            data: Bytes::from(vec![1, 2]),
-            codec: VideoCodec::H264,
-            timestamp: VideoTimestamp::from_durations(
-                Duration::from_millis(0),
-                Duration::from_millis(0),
-            ),
-            is_keyframe: true,
-            is_sequence_header: true,
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
+            timestamp: Duration::from_millis(0),
+            is_required_for_decoding: false,
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+            data: Bytes::from_static(&[1, 2]),
         },
     };
 
@@ -723,9 +738,16 @@ async fn video_packet_sent_to_watcher_media_channel() {
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
+
+    let expected_endpoint_media_data = RtmpEndpointMediaData::from_media_notification_content(
+        media.content,
+        context.is_keyframe_metadata_key,
+        context.pts_offset_metadata_key,
+    )
+    .unwrap();
+
     assert_eq!(
-        response.data,
-        RtmpEndpointMediaData::try_from(media.content).unwrap(),
+        response.data, expected_endpoint_media_data,
         "Unexpected media sent"
     );
 }
@@ -748,11 +770,13 @@ async fn audio_packet_sent_to_watcher_media_channel() {
 
     let media = MediaNotification {
         stream_id: StreamId(Arc::new("abc".to_string())),
-        content: MediaNotificationContent::Audio {
+        content: MediaNotificationContent::MediaPayload {
             data: Bytes::from(vec![1, 2]),
-            codec: AudioCodec::Aac,
             timestamp: Duration::from_millis(5),
-            is_sequence_header: true,
+            is_required_for_decoding: true,
+            media_type: MediaType::Audio,
+            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     };
 
@@ -760,10 +784,17 @@ async fn audio_packet_sent_to_watcher_media_channel() {
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
+
+    let expected_endpoint_media_data = RtmpEndpointMediaData::from_media_notification_content(
+        media.content,
+        context.is_keyframe_metadata_key,
+        context.pts_offset_metadata_key,
+    )
+    .unwrap();
+
     assert_eq!(
-        response.data,
-        RtmpEndpointMediaData::try_from(media.content).unwrap(),
-        "Unexpected media data sent"
+        response.data, expected_endpoint_media_data,
+        "Unexpected media sent"
     );
 }
 
@@ -795,10 +826,17 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
+
+    let expected_endpoint_media_data = RtmpEndpointMediaData::from_media_notification_content(
+        media.content,
+        context.is_keyframe_metadata_key,
+        context.pts_offset_metadata_key,
+    )
+    .unwrap();
+
     assert_eq!(
-        response.data,
-        RtmpEndpointMediaData::try_from(media.content).unwrap(),
-        "Unexpected media data sent"
+        response.data, expected_endpoint_media_data,
+        "Unexpected media sent"
     );
 }
 
@@ -820,12 +858,13 @@ async fn video_packet_with_other_stream_id_not_sent_to_watcher_media_channel() {
 
     let media = MediaNotification {
         stream_id: StreamId(Arc::new("test".to_string())),
-        content: MediaNotificationContent::Video {
+        content: MediaNotificationContent::MediaPayload {
+            media_type: MediaType::Video,
+            payload_type: VIDEO_CODEC_H264_AVC.clone(),
             data: Bytes::from(vec![1, 2]),
-            codec: VideoCodec::H264,
-            timestamp: VideoTimestamp::from_durations(Duration::new(0, 0), Duration::new(0, 0)),
-            is_keyframe: true,
-            is_sequence_header: true,
+            timestamp: Duration::new(0, 0),
+            is_required_for_decoding: true,
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
         },
     };
 
@@ -854,7 +893,6 @@ async fn video_packet_from_publisher_passed_as_media_output() {
         .send(RtmpEndpointPublisherMessage::NewVideoData {
             publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
-            codec: VideoCodec::H264,
             timestamp: RtmpTimestamp::new(5),
             is_keyframe: true,
             is_sequence_header: true,
@@ -878,19 +916,47 @@ async fn video_packet_from_publisher_passed_as_media_output() {
     );
 
     match &media.content {
-        MediaNotificationContent::Video {
+        MediaNotificationContent::MediaPayload {
+            media_type,
+            payload_type,
             data,
-            codec,
             timestamp,
-            is_keyframe,
-            is_sequence_header,
+            is_required_for_decoding,
+            metadata,
         } => {
+            let is_keyframe = metadata
+                .iter()
+                .filter(|m| m.key() == context.is_keyframe_metadata_key)
+                .filter_map(|m| match m.value() {
+                    MetadataValue::Bool(val) => Some(val),
+                    _ => None,
+                })
+                .next()
+                .unwrap_or_default();
+
+            let pts_offset = metadata
+                .iter()
+                .filter(|m| m.key() == context.pts_offset_metadata_key)
+                .filter_map(|m| match m.value() {
+                    MetadataValue::I32(val) => Some(val),
+                    _ => None,
+                })
+                .next()
+                .unwrap_or_default();
+
+            assert_eq!(*media_type, MediaType::Video);
+            assert_eq!(
+                *payload_type, *VIDEO_CODEC_H264_AVC,
+                "Unexpected payload type"
+            );
             assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-            assert_eq!(codec, &VideoCodec::H264, "Unexpected codec");
-            assert_eq!(timestamp.dts(), Duration::from_millis(5), "Unexpected dts");
-            assert_eq!(timestamp.pts_offset(), 123, "Unexpected pts offset");
+            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected dts");
+            assert!(
+                is_required_for_decoding,
+                "Expected is_required_for_decoding to be true"
+            );
             assert!(is_keyframe, "Expected is_keyframe to be true");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
+            assert_eq!(pts_offset, 123, "Unexpected pts offset");
         }
 
         _ => panic!("Unexpected media content: {:?}", media.content),
@@ -917,7 +983,6 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
         .send(RtmpEndpointPublisherMessage::NewAudioData {
             publisher: ConnectionId(Arc::new("connection".to_string())),
             data: Bytes::from(vec![1, 2, 3]),
-            codec: AudioCodec::Aac,
             timestamp: RtmpTimestamp::new(5),
             is_sequence_header: true,
         })
@@ -938,21 +1003,16 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
         "Expected media to have original stream id"
     );
 
-    match &media.content {
-        MediaNotificationContent::Audio {
-            data,
-            codec,
-            timestamp,
-            is_sequence_header,
-        } => {
-            assert_eq!(data, &vec![1, 2, 3], "Unexpected bytes");
-            assert_eq!(codec, &AudioCodec::Aac, "Unexpected codec");
-            assert_eq!(timestamp, &Duration::from_millis(5), "Unexpected timestamp");
-            assert!(is_sequence_header, "Expected is_sequence_header to be true");
-        }
+    let expected_content = MediaNotificationContent::MediaPayload {
+        is_required_for_decoding: true,
+        timestamp: Duration::from_millis(5),
+        data: Bytes::from_static(&[1, 2, 3]),
+        media_type: MediaType::Audio,
+        payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+        metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut BytesMut::new()),
+    };
 
-        _ => panic!("Unexpected media content: {:?}", media.content),
-    }
+    assert_eq!(media.content, expected_content, "Unexpected media content");
 }
 
 #[tokio::test]

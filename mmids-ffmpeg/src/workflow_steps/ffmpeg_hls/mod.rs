@@ -9,6 +9,7 @@ use crate::endpoint::{
 use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
 use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -30,6 +31,8 @@ const STREAM_NAME: &str = "stream_name";
 pub struct FfmpegHlsStepGenerator {
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct FfmpegHlsStep {
@@ -73,10 +76,14 @@ impl FfmpegHlsStepGenerator {
     pub fn new(
         rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
         ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         FfmpegHlsStepGenerator {
             rtmp_endpoint,
             ffmpeg_endpoint,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -132,6 +139,8 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             rtmp_app,
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
+            self.is_keyframe_metadata_key,
+            self.pts_offset_metadata_key,
         );
 
         let path = path.clone();

@@ -22,10 +22,12 @@ use crate::rtmp_server::{
 };
 use crate::utils::hash_map_to_stream_metadata;
 use futures::FutureExt;
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::{IpAddress, IpAddressParseError};
 use mmids_core::reactors::manager::ReactorManagerRequest;
 use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -52,6 +54,8 @@ pub const REACTOR_NAME: &str = "reactor";
 pub struct RtmpWatchStepGenerator {
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct StreamWatchers {
@@ -73,6 +77,8 @@ struct RtmpWatchStep {
     media_channel: UnboundedSender<RtmpEndpointMediaMessage>,
     stream_id_to_name_map: HashMap<StreamId, Arc<String>>,
     stream_watchers: HashMap<Arc<String>, StreamWatchers>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 impl StepFutureResult for RtmpWatchStepFutureResult {}
@@ -138,10 +144,14 @@ impl RtmpWatchStepGenerator {
     pub fn new(
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
         reactor_manager: UnboundedSender<ReactorManagerRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         RtmpWatchStepGenerator {
             rtmp_endpoint_sender,
             reactor_manager,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -220,6 +230,8 @@ impl StepGenerator for RtmpWatchStepGenerator {
             stream_id_to_name_map: HashMap::new(),
             reactor_name,
             stream_watchers: HashMap::new(),
+            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
+            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         let (notification_sender, notification_receiver) = unbounded_channel();
@@ -418,58 +430,66 @@ impl RtmpWatchStep {
                     let _ = self.media_channel.send(rtmp_media);
                 }
 
-                MediaNotificationContent::Video {
-                    is_keyframe,
-                    is_sequence_header,
-                    codec,
-                    timestamp,
+                MediaNotificationContent::MediaPayload {
                     data,
+                    payload_type,
+                    media_type: _,
+                    timestamp,
+                    metadata,
+                    is_required_for_decoding,
                 } => {
                     let stream_key = match self.stream_id_to_name_map.get(&media.stream_id) {
                         Some(key) => key,
                         None => return,
                     };
 
-                    let rtmp_media = RtmpEndpointMediaMessage {
-                        stream_key: stream_key.clone(),
-                        data: RtmpEndpointMediaData::NewVideoData {
-                            is_keyframe: *is_keyframe,
-                            is_sequence_header: *is_sequence_header,
-                            codec: *codec,
-                            data: data.clone(),
-                            timestamp: RtmpTimestamp::new(timestamp.dts().as_millis() as u32),
-                            composition_time_offset: timestamp.pts_offset(),
-                        },
-                    };
-
-                    let _ = self.media_channel.send(rtmp_media);
-                }
-
-                MediaNotificationContent::Audio {
-                    is_sequence_header,
-                    codec,
-                    timestamp,
-                    data,
-                } => {
-                    let stream_key = match self.stream_id_to_name_map.get(&media.stream_id) {
-                        Some(key) => key,
-                        None => return,
-                    };
-
-                    let rtmp_media = RtmpEndpointMediaMessage {
-                        stream_key: stream_key.clone(),
-                        data: RtmpEndpointMediaData::NewAudioData {
-                            is_sequence_header: *is_sequence_header,
-                            codec: *codec,
+                    let rtmp_media_data = match payload_type {
+                        x if *x == *AUDIO_CODEC_AAC_RAW => RtmpEndpointMediaData::NewAudioData {
+                            is_sequence_header: *is_required_for_decoding,
                             data: data.clone(),
                             timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
                         },
+
+                        x if *x == *VIDEO_CODEC_H264_AVC => {
+                            let is_keyframe = metadata
+                                .iter()
+                                .filter(|m| m.key() == self.is_keyframe_metadata_key)
+                                .filter_map(|m| match m.value() {
+                                    MetadataValue::Bool(val) => Some(val),
+                                    _ => None,
+                                })
+                                .next()
+                                .unwrap_or_default();
+
+                            let pts_offset = metadata
+                                .iter()
+                                .filter(|m| m.key() == self.pts_offset_metadata_key)
+                                .filter_map(|m| match m.value() {
+                                    MetadataValue::I32(val) => Some(val),
+                                    _ => None,
+                                })
+                                .next()
+                                .unwrap_or_default();
+
+                            RtmpEndpointMediaData::NewVideoData {
+                                is_sequence_header: *is_required_for_decoding,
+                                is_keyframe,
+                                data: data.clone(),
+                                timestamp: RtmpTimestamp::new(timestamp.as_millis() as u32),
+                                composition_time_offset: pts_offset,
+                            }
+                        }
+
+                        _ => return, // Payload type not supported by RTMP
+                    };
+
+                    let rtmp_media = RtmpEndpointMediaMessage {
+                        stream_key: stream_key.clone(),
+                        data: rtmp_media_data,
                     };
 
                     let _ = self.media_channel.send(rtmp_media);
                 }
-
-                MediaNotificationContent::MediaPayload { .. } => unimplemented!(),
             }
         }
     }

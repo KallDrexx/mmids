@@ -13,7 +13,7 @@ documentation = "https://kalldrexx.github.io/mmids/"
 test-utils = []
 
 [dependencies]
-anyhow = "1.0.54"
+anyhow = "1.0"
 async-recursion = "0.3.2"
 async-trait = "0.1.51"
 byteorder = "1.4.3"
@@ -22,6 +22,7 @@ cidr-utils = "0.5.5"
 downcast-rs = "1.2.0"
 futures = "0.3"
 hyper = { version = "0.14", features = ["full"] }
+lazy_static = "1.4"
 native-tls = "0.2"
 pest = "2.1"
 pest_derive = "2.1"

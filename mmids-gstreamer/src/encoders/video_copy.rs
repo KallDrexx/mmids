@@ -1,20 +1,27 @@
 use crate::encoders::{SampleResult, VideoEncoder, VideoEncoderGenerator};
 use crate::utils::create_gst_element;
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::VideoCodec;
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::codecs::VIDEO_CODEC_H264_AVC;
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
+};
+use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
+use std::iter;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
 
 /// Creates an encoder that passes video packets through to the output channel without modification
-pub struct VideoCopyEncoderGenerator {}
+pub struct VideoCopyEncoderGenerator {
+    pub pts_offset_metadata_key: MetadataKey,
+}
 
 impl VideoEncoderGenerator for VideoCopyEncoderGenerator {
     fn create(
@@ -23,12 +30,15 @@ impl VideoEncoderGenerator for VideoCopyEncoderGenerator {
         _parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
     ) -> Result<Box<dyn VideoEncoder>> {
-        Ok(Box::new(VideoCopyEncoder::new(media_sender, pipeline)?))
+        Ok(Box::new(VideoCopyEncoder::new(
+            media_sender,
+            pipeline,
+            self.pts_offset_metadata_key,
+        )?))
     }
 }
 
 struct CodecInfo {
-    codec: VideoCodec,
     sequence_header: Bytes,
 }
 
@@ -41,6 +51,7 @@ impl VideoCopyEncoder {
     fn new(
         media_sender: UnboundedSender<MediaNotificationContent>,
         pipeline: &Pipeline,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Result<VideoCopyEncoder> {
         // While we won't be mutating the stream, we want to pass it through a gstreamer pipeline
         // so the packets will be synchronized with audio in case of transcoding delay.
@@ -64,7 +75,7 @@ impl VideoCopyEncoder {
         let copy_of_codec_data = codec_data.clone();
         let mut sent_codec_data = false;
         let mut codec_data_error_raised = false;
-        let mut codec = VideoCodec::Unknown;
+        let mut metadata_buffer = BytesMut::new();
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -82,15 +93,15 @@ impl VideoCopyEncoder {
                         };
 
                         if let Some(info) = &*data {
-                            let _ = media_sender.send(MediaNotificationContent::Video {
-                                codec: info.codec,
+                            let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+                                media_type: MediaType::Video,
+                                payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                                timestamp: Duration::new(0, 0),
+                                is_required_for_decoding: true,
                                 data: info.sequence_header.clone(),
-                                timestamp: VideoTimestamp::from_zero(),
-                                is_keyframe: false,
-                                is_sequence_header: true,
+                                metadata: MediaPayloadMetadataCollection::new(iter::empty(), &mut metadata_buffer),
                             });
 
-                            codec = info.codec;
                             sent_codec_data = true;
                         } else if !codec_data_error_raised {
                             error!("Received data prior to codec data being set. This shouldn't happen");
@@ -102,12 +113,22 @@ impl VideoCopyEncoder {
                         .map_err(|_| FlowError::CustomError)?;
 
                     let timestamp = sample.to_video_timestamp();
-                    let _ = media_sender.send(MediaNotificationContent::Video {
-                        codec,
+                    let pts_offset = MetadataEntry::new(
+                        pts_offset_metadata_key,
+                        MetadataValue::I32(timestamp.pts_offset()),
+                        &mut metadata_buffer,
+                    ).unwrap(); // Can only panic if the key is not for an i32
+
+                    let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+                        media_type: MediaType::Video,
+                        payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                        timestamp: timestamp.dts(),
+                        is_required_for_decoding: false,
                         data: sample.content,
-                        timestamp,
-                        is_sequence_header: false,
-                        is_keyframe: false, // TODO: preserve this somehow
+                        metadata: MediaPayloadMetadataCollection::new(
+                            [pts_offset].into_iter(),
+                            &mut metadata_buffer,
+                        ),
                     });
 
                     Ok(FlowSuccess::Ok)
@@ -129,7 +150,7 @@ impl VideoCopyEncoder {
 impl VideoEncoder for VideoCopyEncoder {
     fn push_data(
         &self,
-        codec: VideoCodec,
+        _payload_type: Arc<String>,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
@@ -141,7 +162,6 @@ impl VideoEncoder for VideoCopyEncoder {
                 .map_err(|_| anyhow!("Video copy encoder's lock was poisoned"))?;
 
             *codec_data = Some(CodecInfo {
-                codec,
                 sequence_header: data,
             })
         } else {

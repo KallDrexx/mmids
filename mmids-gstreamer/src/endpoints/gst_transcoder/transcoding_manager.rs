@@ -5,7 +5,10 @@ use futures::{FutureExt, StreamExt};
 use gstreamer::bus::BusStream;
 use gstreamer::prelude::*;
 use gstreamer::{MessageView, Pipeline, State};
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
+use mmids_core::workflows::{MediaNotificationContent, MediaType};
+use mmids_core::VideoTimestamp;
+use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument};
 use uuid::Uuid;
@@ -48,9 +51,10 @@ struct GstError {
 
 pub fn start_transcode_manager(
     parameters: TranscoderParams,
+    pts_offset_metadata_key: MetadataKey,
 ) -> UnboundedSender<TranscodeManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = TranscodeManager::new(parameters, receiver);
+    let actor = TranscodeManager::new(parameters, receiver, pts_offset_metadata_key);
     tokio::spawn(actor.run());
 
     sender
@@ -63,6 +67,7 @@ struct TranscodeManager {
     video_encoder: Box<dyn VideoEncoder>,
     audio_encoder: Box<dyn AudioEncoder>,
     pipeline: Pipeline,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 unsafe impl Send for TranscodeManager {}
@@ -72,6 +77,7 @@ impl TranscodeManager {
     fn new(
         parameters: TranscoderParams,
         receiver: UnboundedReceiver<TranscodeManagerRequest>,
+        pts_offset_metadata_key: MetadataKey,
     ) -> TranscodeManager {
         let futures = FuturesUnordered::new();
         futures.push(wait_for_request(receiver).boxed());
@@ -85,6 +91,7 @@ impl TranscodeManager {
             video_encoder: parameters.video_encoder,
             audio_encoder: parameters.audio_encoder,
             pipeline: parameters.pipeline,
+            pts_offset_metadata_key,
         }
     }
 
@@ -174,42 +181,60 @@ impl TranscodeManager {
     }
 
     fn handle_media(&mut self, media: MediaNotificationContent) {
-        match media {
-            MediaNotificationContent::Video {
-                timestamp,
-                codec,
-                data,
-                is_sequence_header,
-                is_keyframe: _,
-            } => {
-                let result =
-                    self.video_encoder
-                        .push_data(codec, data, timestamp, is_sequence_header);
+        if let MediaNotificationContent::MediaPayload {
+            timestamp,
+            payload_type,
+            media_type,
+            data,
+            metadata,
+            is_required_for_decoding,
+        } = media
+        {
+            match media_type {
+                MediaType::Audio => {
+                    let result = self.audio_encoder.push_data(
+                        payload_type,
+                        data,
+                        timestamp,
+                        is_required_for_decoding,
+                    );
 
-                if let Err(error) = result {
-                    error!("Failed to push media to video encoder: {}", error);
-                    self.termination_requested = true;
+                    if let Err(error) = result {
+                        error!("Failed to push media to audio encoder: {}", error);
+                        self.termination_requested = true;
+                    }
                 }
-            }
 
-            MediaNotificationContent::Audio {
-                timestamp,
-                codec,
-                data,
-                is_sequence_header,
-            } => {
-                let result =
-                    self.audio_encoder
-                        .push_data(codec, data, timestamp, is_sequence_header);
+                MediaType::Video => {
+                    let pts_offset = metadata
+                        .iter()
+                        .filter(|m| m.key() == self.pts_offset_metadata_key)
+                        .filter_map(|m| match m.value() {
+                            MetadataValue::I32(num) => Some(num),
+                            _ => None,
+                        })
+                        .next()
+                        .unwrap_or_default();
 
-                if let Err(error) = result {
-                    error!("Failed to push media to audio encoder: {}", error);
-                    self.termination_requested = true;
+                    let pts_duration =
+                        Duration::from_millis(timestamp.as_millis() as u64 + pts_offset as u64);
+                    let video_timestamp = VideoTimestamp::from_durations(timestamp, pts_duration);
+
+                    let result = self.video_encoder.push_data(
+                        payload_type,
+                        data,
+                        video_timestamp,
+                        is_required_for_decoding,
+                    );
+
+                    if let Err(error) = result {
+                        error!("Failed to push media to video encoder: {}", error);
+                        self.termination_requested = true;
+                    }
                 }
-            }
 
-            // Don't care about other content types for now
-            _ => (),
+                MediaType::Other => (), // ignore non audio/video types
+            }
         }
     }
 

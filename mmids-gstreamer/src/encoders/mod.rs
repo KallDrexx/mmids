@@ -12,11 +12,11 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use gstreamer::{Format, GenericFormattedValue, Pipeline};
 use gstreamer_app::AppSink;
-use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::workflows::MediaNotificationContent;
 use mmids_core::VideoTimestamp;
 use std::collections::HashMap;
 use std::default::Default;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -35,7 +35,7 @@ pub trait VideoEncoder {
     /// Pushes a video frame into the encoder's pipeline
     fn push_data(
         &self,
-        codec: VideoCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: VideoTimestamp,
         is_sequence_header: bool,
@@ -49,7 +49,7 @@ pub trait AudioEncoder {
     /// Pushes an audio frame into the encoder's pipeline
     fn push_data(
         &self,
-        codec: AudioCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: Duration,
         is_sequence_header: bool,

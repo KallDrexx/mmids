@@ -1,11 +1,11 @@
 use super::RtmpEndpointPublisherMessage;
 use crate::rtmp_server::RtmpEndpointMediaData;
+use anyhow::{anyhow, Result};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use mmids_core::codecs::{AudioCodec, VideoCodec};
 use mmids_core::net::tcp::OutboundPacket;
 use mmids_core::net::ConnectionId;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
@@ -29,8 +29,6 @@ pub struct RtmpServerConnectionHandler {
     request_sender: UnboundedSender<ConnectionRequest>,
     force_disconnect: bool,
     published_event_channel: Option<UnboundedSender<RtmpEndpointPublisherMessage>>,
-    video_parse_error_raised: bool,
-    audio_parse_error_raised: bool,
 }
 
 #[derive(Debug)]
@@ -114,7 +112,6 @@ enum FutureResult {
 }
 
 struct UnwrappedVideo {
-    codec: VideoCodec,
     is_keyframe: bool,
     is_sequence_header: bool,
     data: Bytes,
@@ -122,7 +119,6 @@ struct UnwrappedVideo {
 }
 
 struct UnwrappedAudio {
-    codec: AudioCodec,
     is_sequence_header: bool,
     data: Bytes,
 }
@@ -143,8 +139,6 @@ impl RtmpServerConnectionHandler {
             request_sender,
             force_disconnect: false,
             published_event_channel: None,
-            video_parse_error_raised: false,
-            audio_parse_error_raised: false,
         }
     }
 
@@ -581,19 +575,21 @@ impl RtmpServerConnectionHandler {
                     return;
                 }
 
-                let UnwrappedAudio {
-                    data,
-                    is_sequence_header,
-                    codec,
-                } = unwrap_audio_from_flv(data);
+                let unwrapped_audio = match unwrap_audio_from_flv(data) {
+                    Ok(audio) => audio,
+                    Err(error) => {
+                        error!("Failed to unwrap audio from FLV: {:?}", error);
+
+                        return;
+                    }
+                };
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::NewAudioData {
                         publisher: self.id.clone(),
-                        codec,
-                        data,
+                        data: unwrapped_audio.data,
                         timestamp,
-                        is_sequence_header,
+                        is_sequence_header: unwrapped_audio.is_sequence_header,
                     },
                 );
             }
@@ -631,23 +627,23 @@ impl RtmpServerConnectionHandler {
                     return;
                 }
 
-                let UnwrappedVideo {
-                    data,
-                    codec,
-                    is_keyframe,
-                    is_sequence_header: is_parameter_set,
-                    composition_time_in_ms,
-                } = unwrap_video_from_flv(data);
+                let unwrapped_video = match unwrap_video_from_flv(data) {
+                    Ok(video) => video,
+                    Err(error) => {
+                        error!("Video is using an unsupported set of flv video tags: {error}");
+
+                        return;
+                    }
+                };
 
                 let _ = self.published_event_channel.as_ref().unwrap().send(
                     RtmpEndpointPublisherMessage::NewVideoData {
                         publisher: self.id.clone(),
-                        codec,
-                        is_keyframe,
-                        is_sequence_header: is_parameter_set,
-                        data,
+                        is_keyframe: unwrapped_video.is_keyframe,
+                        is_sequence_header: unwrapped_video.is_sequence_header,
+                        data: unwrapped_video.data,
                         timestamp,
-                        composition_time_offset: composition_time_in_ms,
+                        composition_time_offset: unwrapped_video.composition_time_in_ms,
                     },
                 );
             }
@@ -964,28 +960,14 @@ impl RtmpServerConnectionHandler {
                 timestamp,
                 is_keyframe,
                 is_sequence_header,
-                codec,
                 composition_time_offset,
             } => {
-                let flv_video = match wrap_video_into_flv(
+                let flv_video = wrap_video_into_flv(
                     data,
-                    codec,
                     is_keyframe,
                     is_sequence_header,
                     composition_time_offset,
-                ) {
-                    Ok(x) => x,
-                    Err(()) => {
-                        if !self.video_parse_error_raised {
-                            error!(
-                                "Connection received video that could not be wrapped in FLV format"
-                            );
-                            self.video_parse_error_raised = true;
-                        }
-
-                        return;
-                    }
-                };
+                );
 
                 session.send_video_data(stream_id, flv_video, timestamp, !is_keyframe)
             }
@@ -993,23 +975,9 @@ impl RtmpServerConnectionHandler {
             RtmpEndpointMediaData::NewAudioData {
                 data,
                 timestamp,
-                codec,
                 is_sequence_header,
             } => {
-                let flv_audio = match wrap_audio_into_flv(data, codec, is_sequence_header) {
-                    Ok(x) => x,
-                    Err(()) => {
-                        if !self.audio_parse_error_raised {
-                            error!(
-                                "Connection received audio that could not be wrapped in FLV format"
-                            );
-                            self.audio_parse_error_raised = true;
-                        }
-
-                        return;
-                    }
-                };
-
+                let flv_audio = wrap_audio_into_flv(data, is_sequence_header);
                 session.send_audio_data(stream_id, flv_audio, timestamp, is_sequence_header)
             }
         };
@@ -1033,28 +1001,20 @@ impl RtmpServerConnectionHandler {
     }
 }
 
-fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
+fn unwrap_video_from_flv(mut data: Bytes) -> Result<UnwrappedVideo> {
     if data.len() < 2 {
-        return UnwrappedVideo {
-            codec: VideoCodec::Unknown,
-            is_keyframe: false,
-            is_sequence_header: false,
-            data,
-            composition_time_in_ms: 0,
-        };
+        return Err(anyhow!(
+            "FLV segment had less than 2 bytes, and thus invalid"
+        ));
     }
 
     let flv_tag = data.split_to(1);
     let avc_header = data.split_to(4);
 
-    let is_sequence_header;
-    let codec = if flv_tag[0] & 0x07 == 0x07 {
-        is_sequence_header = avc_header[0] == 0x00;
-        VideoCodec::H264
-    } else {
-        is_sequence_header = false;
-        VideoCodec::Unknown
-    };
+    let is_sequence_header = avc_header[0] == 0x00;
+    if flv_tag[0] & 0x07 != 0x07 {
+        return Err(anyhow!("FLV segment was not h264, and not supported"));
+    }
 
     let is_keyframe = flv_tag[0] & 0x10 == 0x10;
 
@@ -1066,94 +1026,71 @@ fn unwrap_video_from_flv(mut data: Bytes) -> UnwrappedVideo {
         0
     };
 
-    UnwrappedVideo {
-        codec,
+    Ok(UnwrappedVideo {
         is_keyframe,
         is_sequence_header,
         data,
         composition_time_in_ms: composition_time,
-    }
+    })
 }
 
 fn wrap_video_into_flv(
     data: Bytes,
-    codec: VideoCodec,
     is_keyframe: bool,
     is_sequence_header: bool,
     composition_time_offset: i32,
-) -> Result<Bytes, ()> {
-    match codec {
-        VideoCodec::H264 => {
-            let flv_tag = if is_keyframe { 0x17 } else { 0x27 };
-            let avc_type = if is_sequence_header { 0 } else { 1 };
+) -> Bytes {
+    // Always assume h264
+    let flv_tag = if is_keyframe { 0x17 } else { 0x27 };
+    let avc_type = if is_sequence_header { 0 } else { 1 };
 
-            let mut header = vec![flv_tag, avc_type];
-            if let Err(error) = header.write_i24::<BigEndian>(composition_time_offset) {
-                error!("Failed to write composition time offset: {error:?}");
-                return Err(());
-            }
+    let mut pts_value = Vec::new();
+    pts_value
+        .write_i24::<BigEndian>(composition_time_offset)
+        .unwrap(); // shouldn't fail
 
-            let mut wrapped = BytesMut::new();
-            wrapped.extend(header);
-            wrapped.extend(data);
+    let mut wrapped = BytesMut::new();
+    wrapped.put_u8(flv_tag);
+    wrapped.put_u8(avc_type);
+    wrapped.extend(pts_value);
+    wrapped.extend(data);
 
-            Ok(wrapped.freeze())
-        }
-
-        VideoCodec::Unknown => {
-            // Can't wrap unknown codec into FLV
-            Err(())
-        }
-    }
+    wrapped.freeze()
 }
 
-fn unwrap_audio_from_flv(mut data: Bytes) -> UnwrappedAudio {
+fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {
     if data.len() < 2 {
-        return UnwrappedAudio {
-            codec: AudioCodec::Unknown,
-            is_sequence_header: false,
-            data,
-        };
+        return Err(anyhow!(
+            "Not enough bytes received for a complete flv header"
+        ));
     }
 
     let flv_tag = data.split_to(1);
     let packet_type = data.split_to(1);
     let is_sequence_header = packet_type[0] == 0;
-    let codec = if flv_tag[0] & 0xa0 == 0xa0 {
-        AudioCodec::Aac
-    } else {
-        AudioCodec::Unknown
-    };
+    let codec_id = flv_tag[0] >> 4;
+    if codec_id != 0x0a {
+        // Only AAC is supported
+        return Err(anyhow!(
+            "FLV header specified codec {codec_id} but only AAC (10) is supported"
+        ));
+    }
 
-    UnwrappedAudio {
-        codec,
+    Ok(UnwrappedAudio {
         is_sequence_header,
         data,
-    }
+    })
 }
 
-fn wrap_audio_into_flv(
-    data: Bytes,
-    codec: AudioCodec,
-    is_sequence_header: bool,
-) -> Result<Bytes, ()> {
-    match codec {
-        AudioCodec::Aac => {
-            let flv_tag = 0xaf;
-            let packet_type = if is_sequence_header { 0 } else { 1 };
-            let mut wrapped = BytesMut::new();
-            wrapped.put_u8(flv_tag);
-            wrapped.put_u8(packet_type);
-            wrapped.extend(data);
+fn wrap_audio_into_flv(data: Bytes, is_sequence_header: bool) -> Bytes {
+    let flv_tag = 0xaf; // Assume always aac
+    let packet_type = if is_sequence_header { 0 } else { 1 };
+    let mut wrapped = BytesMut::new();
+    wrapped.put_u8(flv_tag);
+    wrapped.put_u8(packet_type);
+    wrapped.extend(data);
 
-            Ok(wrapped.freeze())
-        }
-
-        AudioCodec::Unknown => {
-            // Need to know the codec to wrap it into flv
-            Err(())
-        }
-    }
+    wrapped.freeze()
 }
 
 mod internal_futures {

@@ -16,6 +16,10 @@ use mmids_core::workflows::definitions::WorkflowStepType;
 use mmids_core::workflows::manager::{
     start_workflow_manager, WorkflowManagerRequest, WorkflowManagerRequestOperation,
 };
+use mmids_core::workflows::metadata::common_metadata::{
+    get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
+};
+use mmids_core::workflows::metadata::MetadataKeyMap;
 use mmids_core::workflows::steps::factory::WorkflowStepFactory;
 use mmids_core::workflows::steps::workflow_forwarder::WorkflowForwarderStepGenerator;
 use mmids_ffmpeg::endpoint::{start_ffmpeg_endpoint, FfmpegEndpointRequest};
@@ -95,12 +99,19 @@ pub async fn main() {
     info!("mmmids {} started", env!("CARGO_PKG_VERSION"));
     info!("Logging to {}", app_log_path.display().to_string());
 
+    let mut metadata_key_map = MetadataKeyMap::new();
+
     let config = read_config();
     let tls_options = load_tls_options(&config).await;
-    let endpoints = start_endpoints(&config, tls_options, log_dir);
+    let endpoints = start_endpoints(&config, tls_options, log_dir, &mut metadata_key_map);
     let (pub_sender, sub_sender) = start_event_hub();
     let reactor_manager = start_reactor(&config, sub_sender.clone()).await;
-    let step_factory = register_steps(endpoints, sub_sender, reactor_manager);
+    let step_factory = register_steps(
+        endpoints,
+        sub_sender,
+        reactor_manager,
+        &mut metadata_key_map,
+    );
     let manager = start_workflows(&config, step_factory, pub_sender);
     let http_api_shutdown = start_http_api(&config, manager);
 
@@ -136,8 +147,12 @@ fn register_steps(
     endpoints: Endpoints,
     subscription_sender: UnboundedSender<SubscriptionRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
+    metadata_key_map: &mut MetadataKeyMap,
 ) -> Arc<WorkflowStepFactory> {
     info!("Starting workflow step factory, and adding known step types to it");
+    let is_keyframe_metadata_key = get_is_keyframe_metadata_key(metadata_key_map);
+    let pts_offset_metadata_key = get_pts_offset_metadata_key(metadata_key_map);
+
     let mut step_factory = WorkflowStepFactory::new();
     step_factory
         .register(
@@ -145,6 +160,8 @@ fn register_steps(
             Box::new(RtmpReceiverStepGenerator::new(
                 endpoints.rtmp.clone(),
                 reactor_manager.clone(),
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
             )),
         )
         .expect("Failed to register rtmp_receive step");
@@ -155,6 +172,8 @@ fn register_steps(
             Box::new(RtmpWatchStepGenerator::new(
                 endpoints.rtmp.clone(),
                 reactor_manager.clone(),
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
             )),
         )
         .expect("Failed to register rtmp_watch step");
@@ -165,6 +184,8 @@ fn register_steps(
             Box::new(FfmpegTranscoderStepGenerator::new(
                 endpoints.rtmp.clone(),
                 endpoints.ffmpeg.clone(),
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
             )),
         )
         .expect("Failed to register ffmpeg_transcode step");
@@ -175,6 +196,8 @@ fn register_steps(
             Box::new(FfmpegHlsStepGenerator::new(
                 endpoints.rtmp.clone(),
                 endpoints.ffmpeg.clone(),
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
             )),
         )
         .expect("Failed to register ffmpeg_hls step");
@@ -185,6 +208,8 @@ fn register_steps(
             Box::new(FfmpegRtmpPushStepGenerator::new(
                 endpoints.rtmp.clone(),
                 endpoints.ffmpeg.clone(),
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
             )),
         )
         .expect("Failed to register ffmpeg_push step");
@@ -195,6 +220,8 @@ fn register_steps(
             Box::new(FfmpegPullStepGenerator::new(
                 endpoints.rtmp.clone(),
                 endpoints.ffmpeg.clone(),
+                is_keyframe_metadata_key,
+                pts_offset_metadata_key,
             )),
         )
         .expect("Failed to register ffmpeg_push step");
@@ -261,9 +288,11 @@ fn start_endpoints(
     config: &MmidsConfig,
     tls_options: Option<TlsOptions>,
     log_dir: String,
+    metadata_key_map: &mut MetadataKeyMap,
 ) -> Endpoints {
     info!("Starting all endpoints");
 
+    let pts_offset_metadata_key = get_pts_offset_metadata_key(metadata_key_map);
     let socket_manager = start_socket_manager(tls_options);
     let rtmp_endpoint = start_rtmp_server_endpoint(socket_manager);
 
@@ -283,11 +312,21 @@ fn start_endpoints(
         .expect("Failed to add video drop encoder");
 
     encoder_factory
-        .register_video_encoder("copy", Box::new(VideoCopyEncoderGenerator {}))
+        .register_video_encoder(
+            "copy",
+            Box::new(VideoCopyEncoderGenerator {
+                pts_offset_metadata_key,
+            }),
+        )
         .expect("Failed to add video copy encoder");
 
     encoder_factory
-        .register_video_encoder("x264", Box::new(X264EncoderGenerator {}))
+        .register_video_encoder(
+            "x264",
+            Box::new(X264EncoderGenerator {
+                pts_offset_metadata_key,
+            }),
+        )
         .expect("Failed to add the x264 encoder");
 
     encoder_factory
@@ -302,8 +341,8 @@ fn start_endpoints(
         .register_audio_encoder("avenc_aac", Box::new(AvencAacEncoderGenerator {}))
         .expect("Failed to add the avenc_aac encoder");
 
-    let gst_transcoder =
-        start_gst_transcoder(Arc::new(encoder_factory)).expect("Failed to start gst transcoder");
+    let gst_transcoder = start_gst_transcoder(Arc::new(encoder_factory), pts_offset_metadata_key)
+        .expect("Failed to start gst transcoder");
 
     Endpoints {
         rtmp: rtmp_endpoint,

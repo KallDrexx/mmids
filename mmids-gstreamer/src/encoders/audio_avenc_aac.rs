@@ -4,13 +4,16 @@ use crate::utils::{
     set_source_audio_sequence_header,
 };
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use gstreamer::prelude::*;
 use gstreamer::{Element, FlowError, FlowSuccess, Pipeline};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mmids_core::codecs::AudioCodec;
-use mmids_core::workflows::MediaNotificationContent;
+use mmids_core::codecs::AUDIO_CODEC_AAC_RAW;
+use mmids_core::workflows::metadata::MediaPayloadMetadataCollection;
+use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use std::collections::HashMap;
+use std::iter;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, warn};
@@ -95,6 +98,7 @@ impl AvencAacEncoder {
             .map_err(|_| anyhow!("appsink could not be cast to `AppSink`"))?;
 
         let mut sent_codec_data = false;
+        let mut metadata_buffer = BytesMut::new();
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -103,6 +107,7 @@ impl AvencAacEncoder {
                         &mut sent_codec_data,
                         &output_parser,
                         media_sender.clone(),
+                        &mut metadata_buffer,
                     ) {
                         Ok(_) => Ok(FlowSuccess::Ok),
                         Err(error) => {
@@ -125,7 +130,7 @@ impl AvencAacEncoder {
 impl AudioEncoder for AvencAacEncoder {
     fn push_data(
         &self,
-        codec: AudioCodec,
+        payload_type: Arc<String>,
         data: Bytes,
         timestamp: Duration,
         is_sequence_header: bool,
@@ -134,7 +139,7 @@ impl AudioEncoder for AvencAacEncoder {
             .with_context(|| "Failed to create aac buffer")?;
 
         if is_sequence_header {
-            set_source_audio_sequence_header(&self.source, codec, buffer)
+            set_source_audio_sequence_header(&self.source, payload_type, buffer)
                 .with_context(|| " Failed to set aac sequence header into pipeline")?;
         } else {
             self.source
@@ -162,15 +167,18 @@ fn sample_received(
     codec_data_sent: &mut bool,
     output_parser: &Element,
     media_sender: UnboundedSender<MediaNotificationContent>,
+    metadata_buffer: &mut BytesMut,
 ) -> Result<()> {
     if !*codec_data_sent {
         // Pull the codec_data out of the output parser to get the sequence header
         let codec_data = get_codec_data_from_element(output_parser)?;
-        let _ = media_sender.send(MediaNotificationContent::Audio {
-            codec: AudioCodec::Aac,
+        let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+            media_type: MediaType::Audio,
             timestamp: Duration::from_millis(0),
-            is_sequence_header: true,
+            is_required_for_decoding: true,
             data: codec_data,
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), metadata_buffer),
         });
 
         *codec_data_sent = true;
@@ -179,11 +187,13 @@ fn sample_received(
     let sample = SampleResult::from_sink(sink).with_context(|| "Failed to get aac sample")?;
 
     if let Some(dts) = sample.dts {
-        let _ = media_sender.send(MediaNotificationContent::Audio {
-            codec: AudioCodec::Aac,
+        let _ = media_sender.send(MediaNotificationContent::MediaPayload {
+            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+            media_type: MediaType::Audio,
             timestamp: dts,
-            is_sequence_header: false,
+            is_required_for_decoding: false,
             data: sample.content,
+            metadata: MediaPayloadMetadataCollection::new(iter::empty(), metadata_buffer),
         });
 
         Ok(())

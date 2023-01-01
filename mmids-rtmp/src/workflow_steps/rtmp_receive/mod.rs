@@ -10,21 +10,24 @@ use crate::rtmp_server::{
     IpRestriction, RegistrationType, RtmpEndpointPublisherMessage, RtmpEndpointRequest,
     StreamKeyRegistration, ValidationResponse,
 };
-
+use bytes::BytesMut;
+use futures::FutureExt;
+use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::{ConnectionId, IpAddress, IpAddressParseError};
+use mmids_core::reactors::manager::ReactorManagerRequest;
+use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
+use mmids_core::workflows::metadata::{
+    MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
+};
 use mmids_core::workflows::steps::factory::StepGenerator;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
-
-use crate::utils::video_timestamp_from_rtmp_data;
-use futures::FutureExt;
-use mmids_core::reactors::manager::ReactorManagerRequest;
-use mmids_core::reactors::ReactorWorkflowUpdate;
-use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
+use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::StreamId;
 use std::collections::HashMap;
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error as ThisError;
@@ -44,6 +47,8 @@ pub const REACTOR_NAME: &str = "reactor";
 pub struct RtmpReceiverStepGenerator {
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 struct ConnectionDetails {
@@ -67,6 +72,9 @@ struct RtmpReceiverStep {
     status: StepStatus,
     connection_details: HashMap<ConnectionId, ConnectionDetails>,
     reactor_name: Option<Arc<String>>,
+    metadata_buffer: BytesMut,
+    is_keyframe_metadata_key: MetadataKey,
+    pts_offset_metadata_key: MetadataKey,
 }
 
 impl StepFutureResult for FutureResult {}
@@ -130,10 +138,14 @@ impl RtmpReceiverStepGenerator {
     pub fn new(
         rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
         reactor_manager: UnboundedSender<ReactorManagerRequest>,
+        is_keyframe_metadata_key: MetadataKey,
+        pts_offset_metadata_key: MetadataKey,
     ) -> Self {
         RtmpReceiverStepGenerator {
             rtmp_endpoint_sender,
             reactor_manager,
+            is_keyframe_metadata_key,
+            pts_offset_metadata_key,
         }
     }
 }
@@ -206,6 +218,9 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             } else {
                 StreamKeyRegistration::Exact(stream_key)
             },
+            metadata_buffer: BytesMut::new(),
+            is_keyframe_metadata_key: self.is_keyframe_metadata_key,
+            pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
         let (sender, receiver) = unbounded_channel();
@@ -331,24 +346,40 @@ impl RtmpReceiverStep {
                 publisher,
                 data,
                 timestamp,
-                codec,
                 is_sequence_header,
                 is_keyframe,
                 composition_time_offset,
             } => match self.connection_details.get(&publisher) {
                 None => (),
                 Some(connection) => {
+                    let is_keyframe_metadata = MetadataEntry::new(
+                        self.is_keyframe_metadata_key,
+                        MetadataValue::Bool(is_keyframe),
+                        &mut self.metadata_buffer,
+                    )
+                    .unwrap(); // Should only happen if type mismatch occurs
+
+                    let pts_offset_metadata = MetadataEntry::new(
+                        self.pts_offset_metadata_key,
+                        MetadataValue::I32(composition_time_offset),
+                        &mut self.metadata_buffer,
+                    )
+                    .unwrap(); // Should only happen if type mismatch occurs
+
+                    let metadata = MediaPayloadMetadataCollection::new(
+                        [is_keyframe_metadata, pts_offset_metadata].into_iter(),
+                        &mut self.metadata_buffer,
+                    );
+
                     outputs.media.push(MediaNotification {
                         stream_id: connection.stream_id.clone(),
-                        content: MediaNotificationContent::Video {
-                            is_keyframe,
-                            is_sequence_header,
+                        content: MediaNotificationContent::MediaPayload {
+                            media_type: MediaType::Video,
+                            payload_type: VIDEO_CODEC_H264_AVC.clone(),
+                            is_required_for_decoding: is_sequence_header,
+                            timestamp: Duration::from_millis(timestamp.value.into()),
+                            metadata,
                             data,
-                            codec,
-                            timestamp: video_timestamp_from_rtmp_data(
-                                timestamp,
-                                composition_time_offset,
-                            ),
                         },
                     });
                 }
@@ -358,18 +389,22 @@ impl RtmpReceiverStep {
                 publisher,
                 is_sequence_header,
                 data,
-                codec,
                 timestamp,
             } => match self.connection_details.get(&publisher) {
                 None => (),
                 Some(connection) => {
                     outputs.media.push(MediaNotification {
                         stream_id: connection.stream_id.clone(),
-                        content: MediaNotificationContent::Audio {
-                            is_sequence_header,
-                            data,
-                            codec,
+                        content: MediaNotificationContent::MediaPayload {
+                            payload_type: AUDIO_CODEC_AAC_RAW.clone(),
+                            media_type: MediaType::Audio,
                             timestamp: Duration::from_millis(timestamp.value as u64),
+                            metadata: MediaPayloadMetadataCollection::new(
+                                iter::empty(),
+                                &mut self.metadata_buffer,
+                            ),
+                            is_required_for_decoding: is_sequence_header,
+                            data,
                         },
                     });
                 }
