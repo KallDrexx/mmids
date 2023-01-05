@@ -1,13 +1,11 @@
 //! The reactor manager creates new reactors and allows relaying requests to the correct reactor
 //! based on names.
 
+use crate::actor_utils::notify_on_unbounded_recv;
 use crate::event_hub::SubscriptionRequest;
 use crate::reactors::executors::{GenerationError, ReactorExecutorFactory};
 use crate::reactors::reactor::ReactorWorkflowUpdate;
 use crate::reactors::{start_reactor, ReactorDefinition, ReactorRequest};
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -51,24 +49,26 @@ pub fn start_reactor_manager(
     event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
 ) -> UnboundedSender<ReactorManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(executor_factory, receiver, event_hub_subscriber);
-    tokio::spawn(actor.run());
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = Actor::new(
+        executor_factory,
+        receiver,
+        event_hub_subscriber,
+        actor_sender,
+    );
+    tokio::spawn(actor.run(actor_receiver));
 
     sender
 }
 
 enum FutureResult {
     AllConsumersGone,
-    RequestReceived(
-        ReactorManagerRequest,
-        UnboundedReceiver<ReactorManagerRequest>,
-    ),
+    RequestReceived(ReactorManagerRequest),
 }
 
 struct Actor {
     executor_factory: ReactorExecutorFactory,
     event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
-    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     reactors: HashMap<Arc<String>, UnboundedSender<ReactorRequest>>,
 }
 
@@ -79,31 +79,34 @@ impl Actor {
         executor_factory: ReactorExecutorFactory,
         receiver: UnboundedReceiver<ReactorManagerRequest>,
         event_hub_subscriber: UnboundedSender<SubscriptionRequest>,
+        actor_sender: UnboundedSender<FutureResult>,
     ) -> Self {
-        let futures = FuturesUnordered::new();
-        futures.push(wait_for_request(receiver).boxed());
+        notify_on_unbounded_recv(
+            receiver,
+            actor_sender,
+            FutureResult::RequestReceived,
+            || FutureResult::AllConsumersGone,
+        );
 
         Actor {
             executor_factory,
             event_hub_subscriber,
-            futures,
             reactors: HashMap::new(),
         }
     }
 
     #[instrument(name = "Reactor Manager Execution", skip(self))]
-    async fn run(mut self) {
+    async fn run(mut self, mut receiver: UnboundedReceiver<FutureResult>) {
         info!("Starting reactor manager");
 
-        while let Some(result) = self.futures.next().await {
+        while let Some(result) = receiver.recv().await {
             match result {
                 FutureResult::AllConsumersGone => {
                     info!("All consumers gone");
                     break;
                 }
 
-                FutureResult::RequestReceived(request, receiver) => {
-                    self.futures.push(wait_for_request(receiver).boxed());
+                FutureResult::RequestReceived(request) => {
                     self.handle_request(request);
                 }
             }
@@ -199,13 +202,6 @@ impl Actor {
     }
 }
 
-async fn wait_for_request(mut receiver: UnboundedReceiver<ReactorManagerRequest>) -> FutureResult {
-    match receiver.recv().await {
-        Some(request) => FutureResult::RequestReceived(request, receiver),
-        None => FutureResult::AllConsumersGone,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +210,8 @@ mod tests {
     };
     use crate::test_utils;
     use crate::workflows::definitions::WorkflowDefinition;
+    use futures::future::BoxFuture;
+    use futures::FutureExt;
     use std::error::Error;
     use std::time::Duration;
     use tokio::sync::oneshot::channel;
