@@ -1,9 +1,7 @@
 use super::listener::{start as start_listener, ListenerParams};
 use super::{TcpSocketRequest, TcpSocketResponse};
+use crate::actor_utils::notify_on_unbounded_recv;
 use crate::net::tcp::{RequestFailureReason, TlsOptions};
-use futures::future::BoxFuture;
-use futures::stream::{FuturesUnordered, StreamExt};
-use futures::FutureExt;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,21 +14,18 @@ use tracing::{debug, error, info};
 /// for that connection.
 pub fn start(tls_options: Option<TlsOptions>) -> UnboundedSender<TcpSocketRequest> {
     let (request_sender, request_receiver) = unbounded_channel();
+    let (actor_sender, actor_receiver) = unbounded_channel();
 
-    let manager = SocketManager::new();
-    tokio::spawn(manager.run(request_receiver, tls_options));
+    let manager = SocketManager::new(request_receiver, actor_sender);
+    tokio::spawn(manager.run(actor_receiver, tls_options));
 
     request_sender
 }
 
 enum SocketManagerFutureResult {
-    IncomingRequest {
-        request: Option<TcpSocketRequest>,
-        receiver: UnboundedReceiver<TcpSocketRequest>,
-    },
-    ListenerShutdown {
-        port: u16,
-    },
+    AllRequestSendersGone,
+    IncomingRequest(TcpSocketRequest),
+    ListenerShutdown { port: u16 },
 }
 
 struct OpenPort {
@@ -38,38 +33,45 @@ struct OpenPort {
 }
 
 struct SocketManager {
+    internal_sender: UnboundedSender<SocketManagerFutureResult>,
     open_ports: HashMap<u16, OpenPort>,
-    futures: FuturesUnordered<BoxFuture<'static, SocketManagerFutureResult>>,
 }
 
 impl SocketManager {
-    fn new() -> Self {
+    fn new(
+        request_receiver: UnboundedReceiver<TcpSocketRequest>,
+        actor_sender: UnboundedSender<SocketManagerFutureResult>,
+    ) -> Self {
+        notify_on_unbounded_recv(
+            request_receiver,
+            actor_sender.clone(),
+            SocketManagerFutureResult::IncomingRequest,
+            || SocketManagerFutureResult::AllRequestSendersGone,
+        );
+
         SocketManager {
+            internal_sender: actor_sender,
             open_ports: HashMap::new(),
-            futures: FuturesUnordered::new(),
         }
     }
 
     async fn run(
         mut self,
-        request_receiver: UnboundedReceiver<TcpSocketRequest>,
+        mut actor_receiver: UnboundedReceiver<SocketManagerFutureResult>,
         tls_options: Option<TlsOptions>,
     ) {
         info!("Starting TCP socket manager");
         let tls_options = Arc::new(tls_options);
 
-        self.futures
-            .push(request_receiver_future(request_receiver).boxed());
-
-        while let Some(future_result) = self.futures.next().await {
+        while let Some(future_result) = actor_receiver.recv().await {
             match future_result {
-                SocketManagerFutureResult::IncomingRequest { request, receiver } => {
-                    self.futures.push(request_receiver_future(receiver).boxed());
+                SocketManagerFutureResult::AllRequestSendersGone => {
+                    info!("All TCP socket manager requesters gone");
+                    break;
+                }
 
-                    match request {
-                        Some(request) => self.handle_request(request, tls_options.clone()),
-                        None => break, // no more senders of requests
-                    }
+                SocketManagerFutureResult::IncomingRequest(request) => {
+                    self.handle_request(request, tls_options.clone());
                 }
 
                 SocketManagerFutureResult::ListenerShutdown { port } => {
@@ -122,8 +124,11 @@ impl SocketManager {
                         tls_options,
                     });
 
-                    self.futures
-                        .push(listener_shutdown_future(port, listener_shutdown).boxed());
+                    notify_on_listener_shutdown(
+                        port,
+                        listener_shutdown,
+                        self.internal_sender.clone(),
+                    );
 
                     let _ = response_channel.send(TcpSocketResponse::RequestAccepted {});
                 } else {
@@ -139,22 +144,18 @@ impl SocketManager {
     }
 }
 
-async fn request_receiver_future(
-    mut receiver: UnboundedReceiver<TcpSocketRequest>,
-) -> SocketManagerFutureResult {
-    let result = receiver.recv().await;
-
-    SocketManagerFutureResult::IncomingRequest {
-        request: result,
-        receiver,
-    }
-}
-
-async fn listener_shutdown_future(
+fn notify_on_listener_shutdown(
     port: u16,
     signal: UnboundedSender<()>,
-) -> SocketManagerFutureResult {
-    signal.closed().await;
+    actor_sender: UnboundedSender<SocketManagerFutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = signal.closed() => {
+                let _ = actor_sender.send(SocketManagerFutureResult::ListenerShutdown { port });
+            }
 
-    SocketManagerFutureResult::ListenerShutdown { port }
+            _ = actor_sender.closed() => {}
+        }
+    });
 }
