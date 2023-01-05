@@ -27,7 +27,7 @@ pub trait ReactorExecutorGenerator {
     fn generate(
         &self,
         parameters: &HashMap<String, Option<String>>,
-    ) -> Result<Box<dyn ReactorExecutor>, Box<dyn std::error::Error + Sync + Send>>;
+    ) -> Result<Box<dyn ReactorExecutor + Send>, Box<dyn std::error::Error + Sync + Send>>;
 }
 
 #[derive(Default)]

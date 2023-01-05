@@ -481,7 +481,7 @@ mod tests {
         fn generate(
             &self,
             parameters: &HashMap<String, Option<String>>,
-        ) -> Result<Box<dyn ReactorExecutor>, Box<dyn Error + Sync + Send>> {
+        ) -> Result<Box<dyn ReactorExecutor + Send>, Box<dyn Error + Sync + Send>> {
             if parameters.contains_key("abc") {
                 Ok(Box::new(TestExecutor))
             } else {

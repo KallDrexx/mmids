@@ -53,7 +53,7 @@ impl ReactorExecutorGenerator for SimpleHttpExecutorGenerator {
     fn generate(
         &self,
         parameters: &HashMap<String, Option<String>>,
-    ) -> Result<Box<dyn ReactorExecutor>, Box<dyn Error + Sync + Send>> {
+    ) -> Result<Box<dyn ReactorExecutor + Send>, Box<dyn Error + Sync + Send>> {
         let url = match parameters.get("url") {
             Some(Some(url)) => Arc::new(url.trim().to_string()),
             _ => return Err(Box::new(SimpleHttpExecutorError::UrlParameterNotProvided)),
