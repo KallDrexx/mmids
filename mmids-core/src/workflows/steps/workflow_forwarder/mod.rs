@@ -439,6 +439,7 @@ impl WorkflowStep for WorkflowForwarderStep {
 
     fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
         for notification in inputs.notifications.drain(..) {
+            let notification: Box<dyn StepFutureResult> = notification;
             let future_result = match notification.downcast::<FutureResult>() {
                 Ok(x) => *x,
                 Err(_) => {

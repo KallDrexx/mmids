@@ -10,7 +10,7 @@ use futures::future::BoxFuture;
 
 /// Represents the result of a future for a workflow step.  It is expected that the workflow step
 /// will downcast this result into a struct that it owns.
-pub trait StepFutureResult: Downcast {}
+pub trait StepFutureResult: Downcast + Send {}
 impl_downcast!(StepFutureResult);
 
 pub type FutureList = Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>;

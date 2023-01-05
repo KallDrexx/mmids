@@ -5,6 +5,7 @@ mod test_steps;
 #[cfg(test)]
 mod tests;
 
+use crate::actor_utils::notify_on_unbounded_recv;
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::{
@@ -13,8 +14,6 @@ use crate::workflows::steps::{
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
 use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -80,15 +79,16 @@ pub fn start_workflow(
     step_factory: Arc<WorkflowStepFactory>,
 ) -> UnboundedSender<WorkflowRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(&definition, step_factory, receiver);
-    tokio::spawn(actor.run(definition));
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = Actor::new(&definition, step_factory, receiver, actor_sender);
+    tokio::spawn(actor.run(definition, actor_receiver));
 
     sender
 }
 
 enum FutureResult {
     AllConsumersGone,
-    WorkflowRequestReceived(WorkflowRequest, UnboundedReceiver<WorkflowRequest>),
+    WorkflowRequestReceived(WorkflowRequest),
 
     StepFutureResolved {
         step_id: u64,
@@ -103,11 +103,11 @@ struct StreamDetails {
 }
 
 struct Actor {
+    internal_sender: UnboundedSender<FutureResult>,
     name: Arc<String>,
-    steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep>>,
+    steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep + Send>>,
     active_steps: Vec<u64>,
     pending_steps: Vec<u64>,
-    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     step_inputs: StepInputs,
     step_outputs: StepOutputs,
     cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
@@ -119,20 +119,23 @@ struct Actor {
 }
 
 impl Actor {
-    #[instrument(skip(definition, step_factory, receiver), fields(workflow_name = %definition.name))]
+    #[instrument(skip_all, fields(workflow_name = %definition.name))]
     fn new(
         definition: &WorkflowDefinition,
         step_factory: Arc<WorkflowStepFactory>,
         receiver: UnboundedReceiver<WorkflowRequest>,
+        actor_sender: UnboundedSender<FutureResult>,
     ) -> Self {
-        let futures = FuturesUnordered::new();
-        info!("Creating workflow");
-
-        futures.push(wait_for_workflow_request(receiver).boxed());
+        notify_on_unbounded_recv(
+            receiver,
+            actor_sender.clone(),
+            FutureResult::WorkflowRequestReceived,
+            || FutureResult::AllConsumersGone,
+        );
 
         Actor {
+            internal_sender: actor_sender,
             name: definition.name.clone(),
-            futures,
             steps_by_definition_id: HashMap::new(),
             active_steps: Vec::new(),
             pending_steps: Vec::new(),
@@ -147,23 +150,24 @@ impl Actor {
         }
     }
 
-    #[instrument(name = "Workflow Execution", skip(self, initial_definition), fields(workflow_name = %self.name))]
-    async fn run(mut self, initial_definition: WorkflowDefinition) {
+    #[instrument(name = "Workflow Execution", skip_all, fields(workflow_name = %self.name))]
+    async fn run(
+        mut self,
+        initial_definition: WorkflowDefinition,
+        mut receiver: UnboundedReceiver<FutureResult>,
+    ) {
         info!("Starting workflow");
 
         self.apply_new_definition(initial_definition);
 
-        while let Some(future) = self.futures.next().await {
+        while let Some(future) = receiver.recv().await {
             match future {
                 FutureResult::AllConsumersGone => {
                     warn!("All channel owners gone");
                     break;
                 }
 
-                FutureResult::WorkflowRequestReceived(request, receiver) => {
-                    self.futures
-                        .push(wait_for_workflow_request(receiver).boxed());
-
+                FutureResult::WorkflowRequestReceived(request) => {
                     let mut stop_workflow = false;
                     self.handle_workflow_request(request, &mut stop_workflow);
 
@@ -352,7 +356,7 @@ impl Actor {
                 };
 
                 for future in futures {
-                    self.futures.push(wait_for_step_future(id, future).boxed());
+                    notify_on_step_future_resolve(id, future, self.internal_sender.clone());
                 }
 
                 entry.insert(step);
@@ -438,8 +442,11 @@ impl Actor {
         }
 
         for future in self.step_outputs.futures.drain(..) {
-            self.futures
-                .push(wait_for_step_future(step.get_definition().get_id(), future).boxed());
+            notify_on_step_future_resolve(
+                step.get_definition().get_id(),
+                future,
+                self.internal_sender.clone(),
+            );
         }
 
         self.update_stream_details(step_id);
@@ -719,21 +726,18 @@ impl Actor {
     }
 }
 
-unsafe impl Send for Actor {}
-
-async fn wait_for_workflow_request(
-    mut receiver: UnboundedReceiver<WorkflowRequest>,
-) -> FutureResult {
-    match receiver.recv().await {
-        Some(x) => FutureResult::WorkflowRequestReceived(x, receiver),
-        None => FutureResult::AllConsumersGone,
-    }
-}
-
-async fn wait_for_step_future(
+fn notify_on_step_future_resolve(
     step_id: u64,
     future: BoxFuture<'static, Box<dyn StepFutureResult>>,
-) -> FutureResult {
-    let result = future.await;
-    FutureResult::StepFutureResolved { step_id, result }
+    actor_channel: UnboundedSender<FutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            result = future => {
+                let _ = actor_channel.send(FutureResult::StepFutureResolved {step_id, result});
+            }
+
+            _ = actor_channel.closed() => { }
+        }
+    });
 }
