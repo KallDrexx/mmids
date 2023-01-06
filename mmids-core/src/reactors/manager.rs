@@ -72,8 +72,6 @@ struct Actor {
     reactors: HashMap<Arc<String>, UnboundedSender<ReactorRequest>>,
 }
 
-unsafe impl Send for Actor {}
-
 impl Actor {
     fn new(
         executor_factory: ReactorExecutorFactory,
