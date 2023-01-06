@@ -15,10 +15,11 @@
 
 mod actor;
 
+use crate::rtmp_server::actor::actor_types::FutureResult;
 use crate::utils::hash_map_to_stream_metadata;
 use actor::actor_types::RtmpServerEndpointActor;
 use bytes::Bytes;
-use futures::stream::FuturesUnordered;
+use mmids_core::actor_utils::notify_on_unbounded_recv;
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::tcp::TcpSocketRequest;
 use mmids_core::net::{ConnectionId, IpAddress};
@@ -39,13 +40,21 @@ pub fn start_rtmp_server_endpoint(
     socket_request_sender: UnboundedSender<TcpSocketRequest>,
 ) -> UnboundedSender<RtmpEndpointRequest> {
     let (endpoint_sender, endpoint_receiver) = unbounded_channel();
+    let (actor_sender, actor_receiver) = unbounded_channel();
+
+    notify_on_unbounded_recv(
+        endpoint_receiver,
+        actor_sender.clone(),
+        FutureResult::EndpointRequestReceived,
+        || FutureResult::NoMoreEndpointRequesters,
+    );
 
     let endpoint = RtmpServerEndpointActor {
-        futures: FuturesUnordered::new(),
+        internal_actor: actor_sender,
         ports: HashMap::new(),
     };
 
-    tokio::spawn(endpoint.run(endpoint_receiver, socket_request_sender));
+    tokio::spawn(endpoint.run(actor_receiver, socket_request_sender));
 
     endpoint_sender
 }
