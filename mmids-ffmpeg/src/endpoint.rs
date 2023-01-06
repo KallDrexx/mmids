@@ -2,9 +2,7 @@
 //! with specific parameters, and the endpoint will run it.  If the ffmpeg process stops before
 //! being requested to stop, then the endpoint will ensure it gets re-run.
 
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+use mmids_core::actor_utils::notify_on_unbounded_recv;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -149,10 +147,11 @@ pub fn start_ffmpeg_endpoint(
     ffmpeg_exe_path: String,
     log_root: String,
 ) -> Result<UnboundedSender<FfmpegEndpointRequest>, FfmpegEndpointStartError> {
-    let actor = Actor::new(ffmpeg_exe_path, log_root)?;
     let (sender, receiver) = unbounded_channel();
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = Actor::new(ffmpeg_exe_path, log_root, receiver, actor_sender)?;
 
-    tokio::spawn(actor.run(receiver));
+    tokio::spawn(actor.run(actor_receiver));
 
     Ok(sender)
 }
@@ -160,10 +159,7 @@ pub fn start_ffmpeg_endpoint(
 enum FutureResult {
     AllConsumersGone,
     NotificationChannelGone(Uuid),
-    RequestReceived(
-        FfmpegEndpointRequest,
-        UnboundedReceiver<FfmpegEndpointRequest>,
-    ),
+    RequestReceived(FfmpegEndpointRequest),
     CheckProcess(Uuid),
 }
 
@@ -173,14 +169,19 @@ struct FfmpegProcess {
 }
 
 struct Actor {
+    internal_sender: UnboundedSender<FutureResult>,
     ffmpeg_exe_path: String,
     log_path: PathBuf,
-    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     processes: HashMap<Uuid, FfmpegProcess>,
 }
 
 impl Actor {
-    fn new(ffmpeg_exe_path: String, log_root: String) -> Result<Self, FfmpegEndpointStartError> {
+    fn new(
+        ffmpeg_exe_path: String,
+        log_root: String,
+        request_receiver: UnboundedReceiver<FfmpegEndpointRequest>,
+        actor_sender: UnboundedSender<FutureResult>,
+    ) -> Result<Self, FfmpegEndpointStartError> {
         let path = Path::new(ffmpeg_exe_path.as_str());
         if !path.is_file() {
             return Err(FfmpegEndpointStartError::FfmpegExecutableNotFound(
@@ -206,20 +207,26 @@ impl Actor {
             }
         }
 
+        notify_on_unbounded_recv(
+            request_receiver,
+            actor_sender.clone(),
+            FutureResult::RequestReceived,
+            || FutureResult::AllConsumersGone,
+        );
+
         Ok(Actor {
+            internal_sender: actor_sender,
             ffmpeg_exe_path,
             log_path: path,
             processes: HashMap::new(),
-            futures: FuturesUnordered::new(),
         })
     }
 
-    async fn run(mut self, receiver: UnboundedReceiver<FfmpegEndpointRequest>) {
-        self.futures.push(wait_for_request(receiver).boxed());
-
+    async fn run(mut self, mut receiver: UnboundedReceiver<FutureResult>) {
         info!("Ffmpeg endpoint started");
         info!("Ffmpeg path: {}", self.ffmpeg_exe_path);
-        while let Some(result) = self.futures.next().await {
+
+        while let Some(result) = receiver.recv().await {
             match result {
                 FutureResult::AllConsumersGone => {
                     info!("All consumers gone");
@@ -234,8 +241,7 @@ impl Actor {
                     self.check_status(id);
                 }
 
-                FutureResult::RequestReceived(request, receiver) => {
-                    self.futures.push(wait_for_request(receiver).boxed());
+                FutureResult::RequestReceived(request) => {
                     self.handle_request(request).await;
                 }
             }
@@ -270,7 +276,7 @@ impl Actor {
             };
 
             if !has_exited {
-                self.futures.push(wait_for_next_check(id).boxed());
+                notify_on_next_check(id, self.internal_sender.clone());
             }
         }
 
@@ -358,7 +364,7 @@ impl Actor {
                     }
                 };
 
-                self.futures.push(wait_for_next_check(id).boxed());
+                notify_on_next_check(id, self.internal_sender.clone());
                 let _ = notification_channel.send(FfmpegEndpointNotification::FfmpegStarted);
                 self.processes.insert(
                     id,
@@ -368,8 +374,11 @@ impl Actor {
                     },
                 );
 
-                self.futures
-                    .push(wait_for_notification_channel_gone(id, notification_channel).boxed());
+                notify_on_notification_channel_gone(
+                    id,
+                    notification_channel,
+                    self.internal_sender.clone(),
+                );
             }
         }
     }
@@ -493,24 +502,30 @@ fn stop_process(id: Uuid, mut process: FfmpegProcess) {
         .send(FfmpegEndpointNotification::FfmpegStopped);
 }
 
-async fn wait_for_request(mut receiver: UnboundedReceiver<FfmpegEndpointRequest>) -> FutureResult {
-    match receiver.recv().await {
-        Some(x) => FutureResult::RequestReceived(x, receiver),
-        None => FutureResult::AllConsumersGone,
-    }
+fn notify_on_next_check(id: Uuid, actor_sender: UnboundedSender<FutureResult>) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = sleep(Duration::from_secs(5)) => {
+                let _ = actor_sender.send(FutureResult::CheckProcess(id));
+            }
+
+            _ = actor_sender.closed() => { }
+        }
+    });
 }
 
-async fn wait_for_next_check(id: Uuid) -> FutureResult {
-    sleep(Duration::from_secs(5)).await;
-
-    FutureResult::CheckProcess(id)
-}
-
-async fn wait_for_notification_channel_gone(
+fn notify_on_notification_channel_gone(
     id: Uuid,
     channel: UnboundedSender<FfmpegEndpointNotification>,
-) -> FutureResult {
-    channel.closed().await;
+    actor_channel: UnboundedSender<FutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = channel.closed() => {
+                let _ = actor_channel.send(FutureResult::NotificationChannelGone(id));
+            }
 
-    FutureResult::NotificationChannelGone(id)
+            _ = actor_channel.closed() => { }
+        }
+    });
 }
