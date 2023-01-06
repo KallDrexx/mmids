@@ -3,9 +3,7 @@ use crate::rtmp_server::RtmpEndpointMediaData;
 use anyhow::{anyhow, Result};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+use mmids_core::actor_utils::notify_on_unbounded_recv;
 use mmids_core::net::tcp::OutboundPacket;
 use mmids_core::net::ConnectionId;
 use rml_rtmp::handshake::{Handshake, HandshakeProcessResult, PeerType};
@@ -17,15 +15,15 @@ use rml_rtmp::time::RtmpTimestamp;
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tracing::{debug, error, info, instrument};
+use tracing::{error, info, instrument};
 
 pub struct RtmpServerConnectionHandler {
+    internal_sender: UnboundedSender<FutureResult>,
     id: ConnectionId,
     state: ConnectionState,
     handshake: Handshake,
     rtmp_session: Option<ServerSession>,
     outgoing_byte_channel: UnboundedSender<OutboundPacket>,
-    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
     request_sender: UnboundedSender<ConnectionRequest>,
     force_disconnect: bool,
     published_event_channel: Option<UnboundedSender<RtmpEndpointPublisherMessage>>,
@@ -99,13 +97,10 @@ enum ConnectionState {
     },
 }
 
-enum FutureResult {
-    ResponseReceived(ConnectionResponse, UnboundedReceiver<ConnectionResponse>),
-    BytesReceived(Bytes, UnboundedReceiver<Bytes>),
-    WatchedMediaReceived(
-        RtmpEndpointMediaData,
-        UnboundedReceiver<RtmpEndpointMediaData>,
-    ),
+pub enum FutureResult {
+    ResponseReceived(ConnectionResponse),
+    BytesReceived(Bytes),
+    WatchedMediaReceived(RtmpEndpointMediaData),
 
     Disconnected,
     RtmpServerEndpointGone,
@@ -128,14 +123,15 @@ impl RtmpServerConnectionHandler {
         id: ConnectionId,
         outgoing_bytes: UnboundedSender<OutboundPacket>,
         request_sender: UnboundedSender<ConnectionRequest>,
+        actor_sender: UnboundedSender<FutureResult>,
     ) -> Self {
         RtmpServerConnectionHandler {
+            internal_sender: actor_sender,
             id,
             state: ConnectionState::Handshaking,
             handshake: Handshake::new(PeerType::Server),
             rtmp_session: None,
             outgoing_byte_channel: outgoing_bytes,
-            futures: FuturesUnordered::new(),
             request_sender,
             force_disconnect: false,
             published_event_channel: None,
@@ -143,23 +139,32 @@ impl RtmpServerConnectionHandler {
     }
 
     #[instrument(name = "Connection Handler Execution",
-        skip(self, response_receiver, incoming_bytes),
+        skip_all,
         fields(connection_id = ?self.id))]
     pub async fn run_async(
         mut self,
         response_receiver: UnboundedReceiver<ConnectionResponse>,
         incoming_bytes: UnboundedReceiver<Bytes>,
+        mut actor_receiver: UnboundedReceiver<FutureResult>,
     ) {
-        debug!("Starting new rtmp connection handler");
-        self.futures
-            .push(internal_futures::wait_for_request_response(response_receiver).boxed());
+        info!("Starting new rtmp connection handler");
+        notify_on_unbounded_recv(
+            response_receiver,
+            self.internal_sender.clone(),
+            FutureResult::ResponseReceived,
+            || FutureResult::RtmpServerEndpointGone,
+        );
 
-        self.futures
-            .push(internal_futures::wait_for_incoming_bytes(incoming_bytes).boxed());
+        notify_on_unbounded_recv(
+            incoming_bytes,
+            self.internal_sender.clone(),
+            FutureResult::BytesReceived,
+            || FutureResult::Disconnected,
+        );
 
-        self.futures.push(
-            internal_futures::wait_for_outbound_bytes_closed(self.outgoing_byte_channel.clone())
-                .boxed(),
+        internal_futures::notify_on_outbound_bytes_closed(
+            self.outgoing_byte_channel.clone(),
+            self.internal_sender.clone(),
         );
 
         // Start the handshake process
@@ -179,7 +184,7 @@ impl RtmpServerConnectionHandler {
             can_be_dropped: false,
         });
 
-        while let Some(result) = self.futures.next().await {
+        while let Some(result) = actor_receiver.recv().await {
             match result {
                 FutureResult::Disconnected => {
                     info!("Connection disconnected");
@@ -191,26 +196,17 @@ impl RtmpServerConnectionHandler {
                     break;
                 }
 
-                FutureResult::BytesReceived(bytes, receiver) => {
-                    self.futures
-                        .push(internal_futures::wait_for_incoming_bytes(receiver).boxed());
-
+                FutureResult::BytesReceived(bytes) => {
                     if self.handle_bytes(bytes).is_err() {
                         break;
                     }
                 }
 
-                FutureResult::ResponseReceived(response, receiver) => {
-                    self.futures
-                        .push(internal_futures::wait_for_request_response(receiver).boxed());
-
+                FutureResult::ResponseReceived(response) => {
                     self.handle_endpoint_response(response);
                 }
 
-                FutureResult::WatchedMediaReceived(data, receiver) => {
-                    self.futures
-                        .push(internal_futures::wait_for_media_data(receiver).boxed());
-
+                FutureResult::WatchedMediaReceived(data) => {
                     self.handle_media_from_endpoint(data);
                 }
             }
@@ -807,8 +803,7 @@ impl RtmpServerConnectionHandler {
         &mut self,
         media_channel: UnboundedReceiver<RtmpEndpointMediaData>,
     ) {
-        self.futures
-            .push(internal_futures::wait_for_media_data(media_channel).boxed());
+        internal_futures::notify_on_media_data(media_channel, self.internal_sender.clone());
 
         match &self.state {
             ConnectionState::RequestedWatch {
@@ -1094,44 +1089,49 @@ fn wrap_audio_into_flv(data: Bytes, is_sequence_header: bool) -> Bytes {
 }
 
 mod internal_futures {
-    use super::{ConnectionResponse, FutureResult};
+    use super::FutureResult;
     use crate::rtmp_server::RtmpEndpointMediaData;
-    use bytes::Bytes;
     use mmids_core::net::tcp::OutboundPacket;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-    pub(super) async fn wait_for_request_response(
-        mut receiver: UnboundedReceiver<ConnectionResponse>,
-    ) -> super::FutureResult {
-        match receiver.recv().await {
-            None => FutureResult::RtmpServerEndpointGone,
-            Some(x) => FutureResult::ResponseReceived(x, receiver),
-        }
-    }
-
-    pub(super) async fn wait_for_incoming_bytes(
-        mut receiver: UnboundedReceiver<Bytes>,
-    ) -> super::FutureResult {
-        match receiver.recv().await {
-            None => FutureResult::Disconnected,
-            Some(x) => FutureResult::BytesReceived(x, receiver),
-        }
-    }
-
-    pub(super) async fn wait_for_outbound_bytes_closed(
+    pub(super) fn notify_on_outbound_bytes_closed(
         sender: UnboundedSender<OutboundPacket>,
-    ) -> super::FutureResult {
-        sender.closed().await;
+        actor_sender: UnboundedSender<FutureResult>,
+    ) {
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = sender.closed() => {
+                    let _ = actor_sender.send(FutureResult::Disconnected);
+                }
 
-        FutureResult::Disconnected
+                _ = actor_sender.closed() => { }
+            }
+        });
     }
 
-    pub(super) async fn wait_for_media_data(
+    pub(super) fn notify_on_media_data(
         mut receiver: UnboundedReceiver<RtmpEndpointMediaData>,
-    ) -> super::FutureResult {
-        match receiver.recv().await {
-            None => FutureResult::RtmpServerEndpointGone,
-            Some(data) => FutureResult::WatchedMediaReceived(data, receiver),
-        }
+        actor_sender: UnboundedSender<FutureResult>,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = receiver.recv() => {
+                        match result {
+                            Some(data) => {
+                                let _ = actor_sender.send(FutureResult::WatchedMediaReceived(data));
+                            }
+
+                            None => {
+                                let _ = actor_sender.send(FutureResult::RtmpServerEndpointGone);
+                                break;
+                            }
+                        }
+                    }
+
+                    _ = actor_sender.closed() => { }
+                }
+            }
+        });
     }
 }

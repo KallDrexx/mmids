@@ -712,12 +712,20 @@ impl RtmpServerEndpointActor {
                 } => {
                     let (request_sender, request_receiver) = unbounded_channel();
                     let (response_sender, response_receiver) = unbounded_channel();
+                    let (actor_sender, actor_receiver) = unbounded_channel();
+
                     let handler = RtmpServerConnectionHandler::new(
                         connection_id.clone(),
                         outgoing_bytes,
                         request_sender,
+                        actor_sender,
                     );
-                    tokio::spawn(handler.run_async(response_receiver, incoming_bytes));
+
+                    tokio::spawn(handler.run_async(
+                        response_receiver,
+                        incoming_bytes,
+                        actor_receiver,
+                    ));
 
                     port_map.connections.insert(
                         connection_id.clone(),
@@ -1471,9 +1479,7 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
 }
 
 mod internal_futures {
-    use super::{
-        FutureResult, RtmpEndpointPublisherMessage, StreamKeyRegistration,
-    };
+    use super::{FutureResult, RtmpEndpointPublisherMessage, StreamKeyRegistration};
     use crate::rtmp_server::actor::connection_handler::ConnectionRequest;
     use crate::rtmp_server::{
         RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification, ValidationResponse,
