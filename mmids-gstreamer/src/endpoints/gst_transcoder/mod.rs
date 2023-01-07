@@ -6,10 +6,8 @@ use crate::endpoints::gst_transcoder::transcoding_manager::{
     start_transcode_manager, TranscodeManagerRequest, TranscoderParams,
 };
 use crate::GSTREAMER_INIT_RESULT;
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
 use gstreamer::{glib, Pipeline};
+use mmids_core::actor_utils::notify_on_unbounded_recv;
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::MediaNotificationContent;
 use std::collections::HashMap;
@@ -126,18 +124,22 @@ pub fn start_gst_transcoder(
     pts_offset_metadata_key: MetadataKey,
 ) -> Result<UnboundedSender<GstTranscoderRequest>, EndpointStartError> {
     let (sender, receiver) = unbounded_channel();
-    let actor = EndpointActor::new(receiver, encoder_factory, pts_offset_metadata_key)?;
-    tokio::spawn(actor.run());
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = EndpointActor::new(
+        receiver,
+        encoder_factory,
+        pts_offset_metadata_key,
+        actor_sender,
+    )?;
+
+    tokio::spawn(actor.run(actor_receiver));
 
     Ok(sender)
 }
 
 enum EndpointFuturesResult {
     AllConsumersGone,
-    RequestReceived(
-        GstTranscoderRequest,
-        UnboundedReceiver<GstTranscoderRequest>,
-    ),
+    RequestReceived(GstTranscoderRequest),
     TranscodeManagerGone(Uuid),
 }
 
@@ -147,7 +149,7 @@ struct ActiveTranscode {
 }
 
 struct EndpointActor {
-    futures: FuturesUnordered<BoxFuture<'static, EndpointFuturesResult>>,
+    internal_sender: UnboundedSender<EndpointFuturesResult>,
     active_transcodes: HashMap<Uuid, ActiveTranscode>,
     encoder_factory: Arc<EncoderFactory>,
     pts_offset_metadata_key: MetadataKey,
@@ -161,35 +163,37 @@ impl EndpointActor {
         receiver: UnboundedReceiver<GstTranscoderRequest>,
         encoder_factory: Arc<EncoderFactory>,
         pts_offset_metadata_key: MetadataKey,
+        actor_sender: UnboundedSender<EndpointFuturesResult>,
     ) -> Result<EndpointActor, EndpointStartError> {
         (*GSTREAMER_INIT_RESULT).as_ref()?;
 
-        let futures = FuturesUnordered::new();
-        futures.push(endpoint_futures::wait_for_request(receiver).boxed());
+        notify_on_unbounded_recv(
+            receiver,
+            actor_sender.clone(),
+            EndpointFuturesResult::RequestReceived,
+            || EndpointFuturesResult::AllConsumersGone,
+        );
 
         Ok(EndpointActor {
-            futures,
+            internal_sender: actor_sender,
             active_transcodes: HashMap::new(),
             encoder_factory,
             pts_offset_metadata_key,
         })
     }
 
-    #[instrument(name = "GstTranscodeEndpoint Execution", skip(self))]
-    async fn run(mut self) {
+    #[instrument(name = "GstTranscodeEndpoint Execution", skip_all)]
+    async fn run(mut self, mut actor_receiver: UnboundedReceiver<EndpointFuturesResult>) {
         info!("Starting endpoint");
 
-        while let Some(future) = self.futures.next().await {
+        while let Some(future) = actor_receiver.recv().await {
             match future {
                 EndpointFuturesResult::AllConsumersGone => {
                     info!("All consumers gone");
                     break;
                 }
 
-                EndpointFuturesResult::RequestReceived(request, receiver) => {
-                    self.futures
-                        .push(endpoint_futures::wait_for_request(receiver).boxed());
-
+                EndpointFuturesResult::RequestReceived(request) => {
                     self.handle_request(request);
                 }
 
@@ -343,8 +347,7 @@ impl EndpointActor {
                 output_media: outbound_media_receiver,
             });
 
-        self.futures
-            .push(notify_manager_gone(params.id, manager.clone()).boxed());
+        notify_manager_gone(params.id, manager.clone(), self.internal_sender.clone());
 
         self.active_transcodes.insert(
             params.id,
@@ -358,25 +361,23 @@ impl EndpointActor {
 
 mod endpoint_futures {
     use crate::endpoints::gst_transcoder::transcoding_manager::TranscodeManagerRequest;
-    use crate::endpoints::gst_transcoder::{EndpointFuturesResult, GstTranscoderRequest};
-    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+    use crate::endpoints::gst_transcoder::{EndpointFuturesResult};
+    use tokio::sync::mpsc::UnboundedSender;
     use uuid::Uuid;
 
-    pub(super) async fn wait_for_request(
-        mut receiver: UnboundedReceiver<GstTranscoderRequest>,
-    ) -> EndpointFuturesResult {
-        match receiver.recv().await {
-            Some(request) => EndpointFuturesResult::RequestReceived(request, receiver),
-            None => EndpointFuturesResult::AllConsumersGone,
-        }
-    }
-
-    pub(super) async fn notify_manager_gone(
+    pub(super) fn notify_manager_gone(
         id: Uuid,
         sender: UnboundedSender<TranscodeManagerRequest>,
-    ) -> EndpointFuturesResult {
-        sender.closed().await;
+        actor_sender: UnboundedSender<EndpointFuturesResult>,
+    ) {
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = sender.closed() => {
+                    let _ = actor_sender.send(EndpointFuturesResult::TranscodeManagerGone(id));
+                }
 
-        EndpointFuturesResult::TranscodeManagerGone(id)
+                _ = actor_sender.closed() => { }
+            }
+        });
     }
 }
