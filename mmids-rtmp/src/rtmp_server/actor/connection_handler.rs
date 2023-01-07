@@ -1037,7 +1037,7 @@ fn wrap_video_into_flv(
 ) -> Bytes {
     // Always assume h264
     let flv_tag = if is_keyframe { 0x17 } else { 0x27 };
-    let avc_type = if is_sequence_header { 0 } else { 1 };
+    let avc_type = u8::from(!is_sequence_header);
 
     let mut pts_value = Vec::new();
     pts_value
@@ -1079,7 +1079,7 @@ fn unwrap_audio_from_flv(mut data: Bytes) -> Result<UnwrappedAudio> {
 
 fn wrap_audio_into_flv(data: Bytes, is_sequence_header: bool) -> Bytes {
     let flv_tag = 0xaf; // Assume always aac
-    let packet_type = if is_sequence_header { 0 } else { 1 };
+    let packet_type = u8::from(!is_sequence_header);
     let mut wrapped = BytesMut::new();
     wrapped.put_u8(flv_tag);
     wrapped.put_u8(packet_type);
