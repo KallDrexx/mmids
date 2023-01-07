@@ -155,9 +155,6 @@ struct EndpointActor {
     pts_offset_metadata_key: MetadataKey,
 }
 
-unsafe impl Send for EndpointActor {}
-unsafe impl Sync for EndpointActor {}
-
 impl EndpointActor {
     fn new(
         receiver: UnboundedReceiver<GstTranscoderRequest>,

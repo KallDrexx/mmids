@@ -98,8 +98,8 @@ pub trait AudioEncoderGenerator {
 /// invoked and the resulting encoder (or error) is returned.
 #[derive(Default)]
 pub struct EncoderFactory {
-    video_encoders: HashMap<String, Box<dyn VideoEncoderGenerator>>,
-    audio_encoders: HashMap<String, Box<dyn AudioEncoderGenerator>>,
+    video_encoders: HashMap<String, Box<dyn VideoEncoderGenerator + Send + Sync>>,
+    audio_encoders: HashMap<String, Box<dyn AudioEncoderGenerator + Send + Sync>>,
 }
 
 impl EncoderFactory {
@@ -112,7 +112,7 @@ impl EncoderFactory {
     pub fn register_video_encoder(
         &mut self,
         name: &str,
-        encoder_generator: Box<dyn VideoEncoderGenerator>,
+        encoder_generator: Box<dyn VideoEncoderGenerator + Send + Sync>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
         if self.video_encoders.contains_key(name) {
             return Err(EncoderFactoryRegistrationError::DuplicateName(
@@ -129,7 +129,7 @@ impl EncoderFactory {
     pub fn register_audio_encoder(
         &mut self,
         name: &str,
-        encoder_generator: Box<dyn AudioEncoderGenerator>,
+        encoder_generator: Box<dyn AudioEncoderGenerator + Send + Sync>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
         if self.audio_encoders.contains_key(name) {
             return Err(EncoderFactoryRegistrationError::DuplicateName(
