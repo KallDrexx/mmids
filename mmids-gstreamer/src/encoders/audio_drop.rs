@@ -17,7 +17,7 @@ impl AudioEncoderGenerator for AudioDropEncoderGenerator {
         _pipeline: &Pipeline,
         _parameters: &HashMap<String, Option<String>>,
         _media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> Result<Box<dyn AudioEncoder>> {
+    ) -> Result<Box<dyn AudioEncoder + Send>> {
         Ok(Box::new(AudioDropEncoder {}))
     }
 }

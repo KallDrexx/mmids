@@ -80,7 +80,7 @@ pub trait VideoEncoderGenerator {
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> anyhow::Result<Box<dyn VideoEncoder>>;
+    ) -> anyhow::Result<Box<dyn VideoEncoder + Send>>;
 }
 
 /// A type that can generate a new instance for a specific audio encoder.
@@ -90,7 +90,7 @@ pub trait AudioEncoderGenerator {
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> anyhow::Result<Box<dyn AudioEncoder>>;
+    ) -> anyhow::Result<Box<dyn AudioEncoder + Send>>;
 }
 
 /// Allows encoder generators to be registered and be referred to via a name that given at
@@ -98,8 +98,8 @@ pub trait AudioEncoderGenerator {
 /// invoked and the resulting encoder (or error) is returned.
 #[derive(Default)]
 pub struct EncoderFactory {
-    video_encoders: HashMap<String, Box<dyn VideoEncoderGenerator>>,
-    audio_encoders: HashMap<String, Box<dyn AudioEncoderGenerator>>,
+    video_encoders: HashMap<String, Box<dyn VideoEncoderGenerator + Send + Sync>>,
+    audio_encoders: HashMap<String, Box<dyn AudioEncoderGenerator + Send + Sync>>,
 }
 
 impl EncoderFactory {
@@ -112,7 +112,7 @@ impl EncoderFactory {
     pub fn register_video_encoder(
         &mut self,
         name: &str,
-        encoder_generator: Box<dyn VideoEncoderGenerator>,
+        encoder_generator: Box<dyn VideoEncoderGenerator + Send + Sync>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
         if self.video_encoders.contains_key(name) {
             return Err(EncoderFactoryRegistrationError::DuplicateName(
@@ -129,7 +129,7 @@ impl EncoderFactory {
     pub fn register_audio_encoder(
         &mut self,
         name: &str,
-        encoder_generator: Box<dyn AudioEncoderGenerator>,
+        encoder_generator: Box<dyn AudioEncoderGenerator + Send + Sync>,
     ) -> Result<(), EncoderFactoryRegistrationError> {
         if self.audio_encoders.contains_key(name) {
             return Err(EncoderFactoryRegistrationError::DuplicateName(
@@ -150,7 +150,7 @@ impl EncoderFactory {
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> Result<Box<dyn VideoEncoder>, EncoderFactoryCreationError> {
+    ) -> Result<Box<dyn VideoEncoder + Send>, EncoderFactoryCreationError> {
         let generator = match self.video_encoders.get(name.as_str()) {
             Some(generator) => generator,
             None => return Err(EncoderFactoryCreationError::NoEncoderWithName(name)),
@@ -169,7 +169,7 @@ impl EncoderFactory {
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> Result<Box<dyn AudioEncoder>, EncoderFactoryCreationError> {
+    ) -> Result<Box<dyn AudioEncoder + Send>, EncoderFactoryCreationError> {
         let generator = match self.audio_encoders.get(name.as_str()) {
             Some(generator) => generator,
             None => return Err(EncoderFactoryCreationError::NoEncoderWithName(name)),

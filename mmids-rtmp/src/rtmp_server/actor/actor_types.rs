@@ -5,8 +5,6 @@ use crate::rtmp_server::{
     RtmpEndpointWatcherNotification, ValidationResponse,
 };
 use bytes::Bytes;
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
 use mmids_core::net::tcp::TcpSocketResponse;
 use mmids_core::net::ConnectionId;
 use mmids_core::StreamId;
@@ -16,15 +14,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub enum FutureResult {
-    EndpointRequestReceived {
-        request: RtmpEndpointRequest,
-        receiver: UnboundedReceiver<RtmpEndpointRequest>,
-    },
+    EndpointRequestReceived(RtmpEndpointRequest),
 
     SocketResponseReceived {
         port: u16,
         response: TcpSocketResponse,
-        receiver: UnboundedReceiver<TcpSocketResponse>,
     },
 
     PublishingRegistrantGone {
@@ -37,7 +31,6 @@ pub enum FutureResult {
         port: u16,
         connection_id: ConnectionId,
         request: ConnectionRequest,
-        receiver: UnboundedReceiver<ConnectionRequest>,
     },
 
     ConnectionHandlerGone {
@@ -56,8 +49,6 @@ pub enum FutureResult {
         port: u16,
         app: Arc<String>,
         stream_key: Arc<String>,
-        stream_key_registration: StreamKeyRegistration,
-        receiver: UnboundedReceiver<RtmpEndpointMediaMessage>,
     },
 
     PortGone {
@@ -116,7 +107,7 @@ pub enum PortStatus {
 }
 
 pub struct RtmpServerEndpointActor {
-    pub futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
+    pub internal_actor: UnboundedSender<FutureResult>,
     pub ports: HashMap<u16, PortMapping>,
 }
 

@@ -13,7 +13,7 @@ gstreamer = "0.18.3"
 gstreamer-app = "0.18.0"
 gstreamer-audio = "0.18.0"
 lazy_static = "1.4.0"
-thiserror = "1.0.30"
+thiserror = "1.0"
 tokio = "1.15"
 tracing = { version = "0.1", features = ["log"] }
 uuid = { version = "0.8.2", features = ["v4"]}

@@ -2,14 +2,12 @@
 //! used to start new workflows, change the steps of a managed workflow, get status the of managed
 //! workflows, and stop a managed workflow.
 
+use crate::actor_utils::notify_on_unbounded_recv;
 use crate::event_hub::{PublishEventRequest, WorkflowManagerEvent, WorkflowStartedOrStoppedEvent};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::runner::{WorkflowRequestOperation, WorkflowState};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::{start_workflow, WorkflowRequest};
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -57,8 +55,9 @@ pub fn start_workflow_manager(
     event_hub_publisher: UnboundedSender<PublishEventRequest>,
 ) -> UnboundedSender<WorkflowManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = Actor::new(step_factory, event_hub_publisher);
-    tokio::spawn(actor.run(receiver, sender.clone()));
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = Actor::new(step_factory, event_hub_publisher, receiver, actor_sender);
+    tokio::spawn(actor.run(sender.clone(), actor_receiver));
 
     sender
 }
@@ -66,15 +65,12 @@ pub fn start_workflow_manager(
 enum FutureResult {
     AllConsumersGone,
     EventHubGone,
-    WorkflowManagerRequestReceived(
-        WorkflowManagerRequest,
-        UnboundedReceiver<WorkflowManagerRequest>,
-    ),
+    WorkflowManagerRequestReceived(WorkflowManagerRequest),
     WorkflowGone(Arc<String>),
 }
 
 struct Actor {
-    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
+    internal_sender: UnboundedSender<FutureResult>,
     workflows: HashMap<Arc<String>, UnboundedSender<WorkflowRequest>>,
     step_factory: Arc<WorkflowStepFactory>,
     event_hub_publisher: UnboundedSender<PublishEventRequest>,
@@ -84,29 +80,34 @@ impl Actor {
     fn new(
         step_factory: Arc<WorkflowStepFactory>,
         event_hub_publisher: UnboundedSender<PublishEventRequest>,
+        request_receiver: UnboundedReceiver<WorkflowManagerRequest>,
+        actor_sender: UnboundedSender<FutureResult>,
     ) -> Self {
+        notify_on_unbounded_recv(
+            request_receiver,
+            actor_sender.clone(),
+            FutureResult::WorkflowManagerRequestReceived,
+            || FutureResult::AllConsumersGone,
+        );
+
         Actor {
-            futures: FuturesUnordered::new(),
+            internal_sender: actor_sender,
             workflows: HashMap::new(),
             step_factory,
             event_hub_publisher,
         }
     }
 
-    #[instrument(
-        name = "Workflow Manager Execution",
-        skip(self, request_receiver, request_sender)
-    )]
+    #[instrument(name = "Workflow Manager Execution", skip_all)]
     async fn run(
         mut self,
-        request_receiver: UnboundedReceiver<WorkflowManagerRequest>,
         request_sender: UnboundedSender<WorkflowManagerRequest>,
+        mut actor_receiver: UnboundedReceiver<FutureResult>,
     ) {
-        self.futures
-            .push(wait_for_request(request_receiver).boxed());
-
-        self.futures
-            .push(notify_when_event_hub_is_gone(self.event_hub_publisher.clone()).boxed());
+        notify_when_event_hub_is_gone(
+            self.event_hub_publisher.clone(),
+            self.internal_sender.clone(),
+        );
 
         info!("Starting workflow manager");
         let _ = self
@@ -117,7 +118,7 @@ impl Actor {
                 },
             ));
 
-        while let Some(result) = self.futures.next().await {
+        while let Some(result) = actor_receiver.recv().await {
             match result {
                 FutureResult::AllConsumersGone => {
                     info!("All consumers gone");
@@ -129,8 +130,7 @@ impl Actor {
                     break;
                 }
 
-                FutureResult::WorkflowManagerRequestReceived(request, receiver) => {
-                    self.futures.push(wait_for_request(receiver).boxed());
+                FutureResult::WorkflowManagerRequestReceived(request) => {
                     self.handle_request(request);
                 }
 
@@ -178,8 +178,11 @@ impl Actor {
 
                     let name = definition.name.clone();
                     let sender = start_workflow(definition, self.step_factory.clone());
-                    self.futures
-                        .push(wait_for_workflow_gone(sender.clone(), name.clone()).boxed());
+                    notify_on_workflow_gone(
+                        sender.clone(),
+                        name.clone(),
+                        self.internal_sender.clone(),
+                    );
 
                     self.workflows.insert(name.clone(), sender.clone());
 
@@ -245,26 +248,35 @@ impl Actor {
     }
 }
 
-async fn wait_for_request(mut receiver: UnboundedReceiver<WorkflowManagerRequest>) -> FutureResult {
-    match receiver.recv().await {
-        Some(request) => FutureResult::WorkflowManagerRequestReceived(request, receiver),
-        None => FutureResult::AllConsumersGone,
-    }
-}
-
-async fn notify_when_event_hub_is_gone(
+fn notify_when_event_hub_is_gone(
     sender: UnboundedSender<PublishEventRequest>,
-) -> FutureResult {
-    sender.closed().await;
-    FutureResult::EventHubGone
+    actor_sender: UnboundedSender<FutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = sender.closed() => {
+                let _ = actor_sender.send(FutureResult::EventHubGone);
+            }
+
+            _ = actor_sender.closed() => { }
+        }
+    });
 }
 
-async fn wait_for_workflow_gone(
+fn notify_on_workflow_gone(
     sender: UnboundedSender<WorkflowRequest>,
     name: Arc<String>,
-) -> FutureResult {
-    sender.closed().await;
-    FutureResult::WorkflowGone(name)
+    actor_sender: UnboundedSender<FutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = sender.closed() => {
+                let _ = actor_sender.send(FutureResult::WorkflowGone(name));
+            }
+
+            _ = actor_sender.closed() => { }
+        }
+    });
 }
 
 #[cfg(test)]

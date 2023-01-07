@@ -30,7 +30,7 @@ impl AudioEncoderGenerator for AvencAacEncoderGenerator {
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> Result<Box<dyn AudioEncoder>> {
+    ) -> Result<Box<dyn AudioEncoder + Send>> {
         Ok(Box::new(AvencAacEncoder::new(
             media_sender,
             parameters,

@@ -1,11 +1,9 @@
 //! The event hub is a central actor that receives events from all type of mmids subsystems and
 //! allows them to be published to interested subscribers.
 
+use crate::actor_utils::notify_on_unbounded_recv;
 use crate::workflows::manager::WorkflowManagerRequest;
 use crate::workflows::WorkflowRequest;
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::Arc;
@@ -58,8 +56,9 @@ pub fn start_event_hub() -> (
 ) {
     let (publish_sender, publish_receiver) = unbounded_channel();
     let (sub_sender, sub_receiver) = unbounded_channel();
-    let actor = Actor::new(publish_receiver, sub_receiver);
-    tokio::spawn(actor.run());
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = Actor::new(publish_receiver, sub_receiver, actor_sender);
+    tokio::spawn(actor.run(actor_receiver));
 
     (publish_sender, sub_sender)
 }
@@ -67,14 +66,14 @@ pub fn start_event_hub() -> (
 enum FutureResult {
     AllPublishConsumersGone,
     AllSubscriptionRequestConsumersGone,
-    NewPublishRequest(PublishEventRequest, UnboundedReceiver<PublishEventRequest>),
-    NewSubscriptionRequest(SubscriptionRequest, UnboundedReceiver<SubscriptionRequest>),
+    NewPublishRequest(PublishEventRequest),
+    NewSubscriptionRequest(SubscriptionRequest),
     WorkflowStartStopSubscriberGone(usize),
     WorkflowManagerSubscriberGone(usize),
 }
 
 struct Actor {
-    futures: FuturesUnordered<BoxFuture<'static, FutureResult>>,
+    internal_sender: UnboundedSender<FutureResult>,
     next_subscriber_id: Wrapping<usize>,
     active_subscriber_ids: HashSet<usize>,
     workflow_start_stop_subscribers: HashMap<usize, UnboundedSender<WorkflowStartedOrStoppedEvent>>,
@@ -88,13 +87,24 @@ impl Actor {
     fn new(
         publish_receiver: UnboundedReceiver<PublishEventRequest>,
         subscribe_receiver: UnboundedReceiver<SubscriptionRequest>,
+        actor_sender: UnboundedSender<FutureResult>,
     ) -> Self {
-        let futures = FuturesUnordered::new();
-        futures.push(wait_for_publish_request(publish_receiver).boxed());
-        futures.push(wait_for_subscription_request(subscribe_receiver).boxed());
+        notify_on_unbounded_recv(
+            publish_receiver,
+            actor_sender.clone(),
+            FutureResult::NewPublishRequest,
+            || FutureResult::AllPublishConsumersGone,
+        );
+
+        notify_on_unbounded_recv(
+            subscribe_receiver,
+            actor_sender.clone(),
+            FutureResult::NewSubscriptionRequest,
+            || FutureResult::AllSubscriptionRequestConsumersGone,
+        );
 
         Actor {
-            futures,
+            internal_sender: actor_sender,
             next_subscriber_id: Wrapping(0),
             active_subscriber_ids: HashSet::new(),
             workflow_start_stop_subscribers: HashMap::new(),
@@ -106,10 +116,10 @@ impl Actor {
     }
 
     #[instrument(name = "Event Hub Execution", skip(self))]
-    async fn run(mut self) {
+    async fn run(mut self, mut receiver: UnboundedReceiver<FutureResult>) {
         info!("Starting event hub");
 
-        while let Some(result) = self.futures.next().await {
+        while let Some(result) = receiver.recv().await {
             match result {
                 FutureResult::AllPublishConsumersGone => {
                     info!("All publish request consumers are gone.  No new events can come in");
@@ -135,15 +145,11 @@ impl Actor {
                     self.workflow_manager_subscribers.remove(&id);
                 }
 
-                FutureResult::NewPublishRequest(request, receiver) => {
-                    self.futures
-                        .push(wait_for_publish_request(receiver).boxed());
+                FutureResult::NewPublishRequest(request) => {
                     self.handle_publish_request(request);
                 }
 
-                FutureResult::NewSubscriptionRequest(request, receiver) => {
-                    self.futures
-                        .push(wait_for_subscription_request(receiver).boxed());
+                FutureResult::NewSubscriptionRequest(request) => {
                     self.handle_subscription_request(request);
                 }
             }
@@ -216,8 +222,12 @@ impl Actor {
 
                 self.workflow_start_stop_subscribers
                     .insert(id.0, channel.clone());
-                self.futures
-                    .push(notify_workflow_start_stop_subscriber_gone(id.0, channel).boxed());
+
+                notify_workflow_start_stop_subscriber_gone(
+                    id.0,
+                    channel,
+                    self.internal_sender.clone(),
+                );
             }
 
             SubscriptionRequest::WorkflowManagerEvents { channel } => {
@@ -229,8 +239,12 @@ impl Actor {
 
                 self.workflow_manager_subscribers
                     .insert(id.0, channel.clone());
-                self.futures
-                    .push(notify_workflow_manager_subscriber_gone(id.0, channel).boxed());
+
+                notify_workflow_manager_subscriber_gone(
+                    id.0,
+                    channel,
+                    self.internal_sender.clone(),
+                );
             }
         }
     }
@@ -240,38 +254,40 @@ impl Actor {
     }
 }
 
-async fn wait_for_publish_request(
-    mut receiver: UnboundedReceiver<PublishEventRequest>,
-) -> FutureResult {
-    match receiver.recv().await {
-        Some(request) => FutureResult::NewPublishRequest(request, receiver),
-        None => FutureResult::AllPublishConsumersGone,
-    }
-}
-
-async fn wait_for_subscription_request(
-    mut receiver: UnboundedReceiver<SubscriptionRequest>,
-) -> FutureResult {
-    match receiver.recv().await {
-        Some(request) => FutureResult::NewSubscriptionRequest(request, receiver),
-        None => FutureResult::AllSubscriptionRequestConsumersGone,
-    }
-}
-
-async fn notify_workflow_start_stop_subscriber_gone(
+fn notify_workflow_start_stop_subscriber_gone(
     id: usize,
-    sender: UnboundedSender<WorkflowStartedOrStoppedEvent>,
-) -> FutureResult {
-    sender.closed().await;
-    FutureResult::WorkflowStartStopSubscriberGone(id)
+    workflow_sender: UnboundedSender<WorkflowStartedOrStoppedEvent>,
+    actor_sender: UnboundedSender<FutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = workflow_sender.closed() => {
+                let _ = actor_sender.send(FutureResult::WorkflowStartStopSubscriberGone(id));
+            }
+
+            _ = actor_sender.closed() => {
+                // just exit, no message ot send
+            }
+        }
+    });
 }
 
-async fn notify_workflow_manager_subscriber_gone(
+fn notify_workflow_manager_subscriber_gone(
     id: usize,
-    sender: UnboundedSender<WorkflowManagerEvent>,
-) -> FutureResult {
-    sender.closed().await;
-    FutureResult::WorkflowManagerSubscriberGone(id)
+    workflow_sender: UnboundedSender<WorkflowManagerEvent>,
+    actor_sender: UnboundedSender<FutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = workflow_sender.closed() => {
+                let _ = actor_sender.send(FutureResult::WorkflowManagerSubscriberGone(id));
+            }
+
+            _ = actor_sender.closed() => {
+                // Just exit, no message to send
+            }
+        }
+    });
 }
 
 #[cfg(test)]

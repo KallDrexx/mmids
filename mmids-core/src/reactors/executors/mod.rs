@@ -27,12 +27,12 @@ pub trait ReactorExecutorGenerator {
     fn generate(
         &self,
         parameters: &HashMap<String, Option<String>>,
-    ) -> Result<Box<dyn ReactorExecutor>, Box<dyn std::error::Error + Sync + Send>>;
+    ) -> Result<Box<dyn ReactorExecutor + Send>, Box<dyn std::error::Error + Sync + Send>>;
 }
 
 #[derive(Default)]
 pub struct ReactorExecutorFactory {
-    generators: HashMap<String, Box<dyn ReactorExecutorGenerator>>,
+    generators: HashMap<String, Box<dyn ReactorExecutorGenerator + Send>>,
 }
 
 #[derive(Error, Debug)]
@@ -71,7 +71,7 @@ impl ReactorExecutorFactory {
     pub fn register(
         &mut self,
         name: String,
-        generator: Box<dyn ReactorExecutorGenerator>,
+        generator: Box<dyn ReactorExecutorGenerator + Send>,
     ) -> Result<(), RegistrationError> {
         if self.generators.contains_key(&name) {
             return Err(RegistrationError::DuplicateName(name));
