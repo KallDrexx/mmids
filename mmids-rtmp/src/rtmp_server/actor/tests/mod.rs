@@ -1228,7 +1228,6 @@ async fn stream_becomes_inactive_when_only_watcher_stops_playback() {
 }
 
 #[tokio::test]
-#[ignore = "Need to figure out why this dead locks"]
 async fn stream_becomes_inactive_when_only_watcher_disconnects() {
     let mut context = TestContextBuilder::new().into_watcher().await;
     context.set_as_active_watcher().await;
