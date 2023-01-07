@@ -280,7 +280,9 @@ fn notify_on_inbound_media(
                     }
                 }
 
-                _ = actor_sender.closed() => { }
+                _ = actor_sender.closed() => {
+                    break;
+                }
             }
         }
     });

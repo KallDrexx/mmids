@@ -1513,7 +1513,9 @@ mod internal_futures {
                         }
                     }
 
-                    _ = actor_sender.closed() => { }
+                    _ = actor_sender.closed() => {
+                        break;
+                    }
                 }
             }
         });
@@ -1572,7 +1574,9 @@ mod internal_futures {
                         }
                     }
 
-                    _ = actor_sender.closed() => { }
+                    _ = actor_sender.closed() => {
+                        break;
+                    }
                 }
             }
         });
@@ -1634,7 +1638,9 @@ mod internal_futures {
                         }
                     }
 
-                    _ = actor_sender.closed() => { }
+                    _ = actor_sender.closed() => {
+                        break;
+                    }
                 }
             }
         });
