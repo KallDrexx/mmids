@@ -361,7 +361,7 @@ impl EndpointActor {
 
 mod endpoint_futures {
     use crate::endpoints::gst_transcoder::transcoding_manager::TranscodeManagerRequest;
-    use crate::endpoints::gst_transcoder::{EndpointFuturesResult};
+    use crate::endpoints::gst_transcoder::EndpointFuturesResult;
     use tokio::sync::mpsc::UnboundedSender;
     use uuid::Uuid;
 

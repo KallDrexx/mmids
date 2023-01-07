@@ -16,7 +16,7 @@ impl VideoEncoderGenerator for VideoDropEncoderGenerator {
         _pipeline: &Pipeline,
         _parameters: &HashMap<String, Option<String>>,
         _media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> anyhow::Result<Box<dyn VideoEncoder>> {
+    ) -> anyhow::Result<Box<dyn VideoEncoder + Send>> {
         Ok(Box::new(VideoDropEncoder {}))
     }
 }

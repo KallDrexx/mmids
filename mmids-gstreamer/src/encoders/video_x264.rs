@@ -39,7 +39,7 @@ impl VideoEncoderGenerator for X264EncoderGenerator {
         pipeline: &Pipeline,
         parameters: &HashMap<String, Option<String>>,
         media_sender: UnboundedSender<MediaNotificationContent>,
-    ) -> Result<Box<dyn VideoEncoder>> {
+    ) -> Result<Box<dyn VideoEncoder + Send>> {
         Ok(Box::new(X264Encoder::new(
             media_sender,
             parameters,

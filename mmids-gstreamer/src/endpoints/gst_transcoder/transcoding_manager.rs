@@ -1,10 +1,9 @@
 use crate::encoders::{AudioEncoder, VideoEncoder};
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use gstreamer::bus::BusStream;
 use gstreamer::prelude::*;
 use gstreamer::{MessageView, Pipeline, State};
+use mmids_core::actor_utils::notify_on_unbounded_recv;
 use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
@@ -19,8 +18,8 @@ pub enum TranscodeManagerRequest {
 
 pub struct TranscoderParams {
     pub process_id: Uuid,
-    pub video_encoder: Box<dyn VideoEncoder>,
-    pub audio_encoder: Box<dyn AudioEncoder>,
+    pub video_encoder: Box<dyn VideoEncoder + Send>,
+    pub audio_encoder: Box<dyn AudioEncoder + Send>,
     pub inbound_media: UnboundedReceiver<MediaNotificationContent>,
     pub outbound_media: UnboundedSender<MediaNotificationContent>,
     pub pipeline: Pipeline,
@@ -30,14 +29,8 @@ enum TranscoderFutureResult {
     EndpointGone,
     InboundMediaSendersGone,
     OutboundMediaReceiverGone,
-    RequestReceived(
-        TranscodeManagerRequest,
-        UnboundedReceiver<TranscodeManagerRequest>,
-    ),
-    MediaReceived(
-        MediaNotificationContent,
-        UnboundedReceiver<MediaNotificationContent>,
-    ),
+    RequestReceived(TranscodeManagerRequest),
+    MediaReceived(MediaNotificationContent),
     GstBusClosed,
     GstEosReceived,
     GstErrorReceived(GstError),
@@ -54,40 +47,45 @@ pub fn start_transcode_manager(
     pts_offset_metadata_key: MetadataKey,
 ) -> UnboundedSender<TranscodeManagerRequest> {
     let (sender, receiver) = unbounded_channel();
-    let actor = TranscodeManager::new(parameters, receiver, pts_offset_metadata_key);
-    tokio::spawn(actor.run());
+    let (actor_sender, actor_receiver) = unbounded_channel();
+    let actor = TranscodeManager::new(parameters, receiver, pts_offset_metadata_key, actor_sender);
+
+    tokio::spawn(actor.run(actor_receiver));
 
     sender
 }
 
 struct TranscodeManager {
+    internal_sender: UnboundedSender<TranscoderFutureResult>,
     termination_requested: bool,
     id: Uuid,
-    futures: FuturesUnordered<BoxFuture<'static, TranscoderFutureResult>>,
-    video_encoder: Box<dyn VideoEncoder>,
-    audio_encoder: Box<dyn AudioEncoder>,
+    video_encoder: Box<dyn VideoEncoder + Send>,
+    audio_encoder: Box<dyn AudioEncoder + Send>,
     pipeline: Pipeline,
     pts_offset_metadata_key: MetadataKey,
 }
-
-unsafe impl Send for TranscodeManager {}
-unsafe impl Sync for TranscodeManager {}
 
 impl TranscodeManager {
     fn new(
         parameters: TranscoderParams,
         receiver: UnboundedReceiver<TranscodeManagerRequest>,
         pts_offset_metadata_key: MetadataKey,
+        actor_sender: UnboundedSender<TranscoderFutureResult>,
     ) -> TranscodeManager {
-        let futures = FuturesUnordered::new();
-        futures.push(wait_for_request(receiver).boxed());
-        futures.push(notify_on_outbound_media_closed(parameters.outbound_media).boxed());
-        futures.push(notify_on_inbound_media(parameters.inbound_media).boxed());
+        notify_on_unbounded_recv(
+            receiver,
+            actor_sender.clone(),
+            TranscoderFutureResult::RequestReceived,
+            || TranscoderFutureResult::EndpointGone,
+        );
+
+        notify_on_outbound_media_closed(parameters.outbound_media, actor_sender.clone());
+        notify_on_inbound_media(parameters.inbound_media, actor_sender.clone());
 
         TranscodeManager {
+            internal_sender: actor_sender,
             termination_requested: false,
             id: parameters.process_id,
-            futures,
             video_encoder: parameters.video_encoder,
             audio_encoder: parameters.audio_encoder,
             pipeline: parameters.pipeline,
@@ -95,8 +93,12 @@ impl TranscodeManager {
         }
     }
 
-    #[instrument(name = "Transcode Manager Execution", skip(self), fields(transcoding_process_id = %self.id))]
-    async fn run(mut self) {
+    #[instrument(
+        name = "Transcode Manager Execution",
+        skip_all,
+        fields(transcoding_process_id = %self.id),
+    )]
+    async fn run(mut self, mut actor_receiver: UnboundedReceiver<TranscoderFutureResult>) {
         info!("Starting transcoding process");
 
         match self.pipeline.set_state(State::Playing) {
@@ -115,9 +117,9 @@ impl TranscodeManager {
             }
         };
 
-        self.futures.push(notify_bus_message(bus.stream()).boxed());
+        notify_bus_message(bus.stream(), self.internal_sender.clone());
 
-        while let Some(result) = self.futures.next().await {
+        while let Some(result) = actor_receiver.recv().await {
             match result {
                 TranscoderFutureResult::EndpointGone => {
                     info!("Endpoint gone");
@@ -134,15 +136,11 @@ impl TranscodeManager {
                     break;
                 }
 
-                TranscoderFutureResult::MediaReceived(media, receiver) => {
-                    self.futures.push(notify_on_inbound_media(receiver).boxed());
-
+                TranscoderFutureResult::MediaReceived(media) => {
                     self.handle_media(media);
                 }
 
-                TranscoderFutureResult::RequestReceived(request, receiver) => {
-                    self.futures.push(wait_for_request(receiver).boxed());
-
+                TranscoderFutureResult::RequestReceived(request) => {
                     self.handle_request(request);
                 }
 
@@ -247,52 +245,88 @@ impl TranscodeManager {
     }
 }
 
-async fn wait_for_request(
-    mut receiver: UnboundedReceiver<TranscodeManagerRequest>,
-) -> TranscoderFutureResult {
-    match receiver.recv().await {
-        Some(request) => TranscoderFutureResult::RequestReceived(request, receiver),
-        None => TranscoderFutureResult::EndpointGone,
-    }
-}
-
-async fn notify_on_outbound_media_closed(
+fn notify_on_outbound_media_closed(
     sender: UnboundedSender<MediaNotificationContent>,
-) -> TranscoderFutureResult {
-    sender.closed().await;
-
-    TranscoderFutureResult::OutboundMediaReceiverGone
-}
-
-async fn notify_on_inbound_media(
-    mut receiver: UnboundedReceiver<MediaNotificationContent>,
-) -> TranscoderFutureResult {
-    match receiver.recv().await {
-        Some(media) => TranscoderFutureResult::MediaReceived(media, receiver),
-        None => TranscoderFutureResult::InboundMediaSendersGone,
-    }
-}
-
-async fn notify_bus_message(mut bus: BusStream) -> TranscoderFutureResult {
-    while let Some(message) = bus.next().await {
-        match message.view() {
-            MessageView::Eos(..) => return TranscoderFutureResult::GstEosReceived,
-
-            MessageView::Error(error) => {
-                return TranscoderFutureResult::GstErrorReceived(GstError {
-                    source_name: error
-                        .src()
-                        .map(|s| s.path_string().to_string())
-                        .unwrap_or_else(|| "<none>".to_string()),
-
-                    error_description: error.error().to_string(),
-                    debug_info: error.debug(),
-                })
+    actor_sender: UnboundedSender<TranscoderFutureResult>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = sender.closed() => {
+                let _ = actor_sender.send(TranscoderFutureResult::OutboundMediaReceiverGone);
             }
 
-            _ => (),
+            _ = actor_sender.closed() => { }
         }
-    }
+    });
+}
 
-    TranscoderFutureResult::GstBusClosed
+fn notify_on_inbound_media(
+    mut receiver: UnboundedReceiver<MediaNotificationContent>,
+    actor_sender: UnboundedSender<TranscoderFutureResult>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = receiver.recv() => {
+                    match result {
+                        Some(media) => {
+                            let _ = actor_sender.send(TranscoderFutureResult::MediaReceived(media));
+                        }
+
+                        None => {
+                            let _ = actor_sender.send(TranscoderFutureResult::InboundMediaSendersGone);
+                            break;
+                        }
+                    }
+                }
+
+                _ = actor_sender.closed() => { }
+            }
+        }
+    });
+}
+
+fn notify_bus_message(mut bus: BusStream, actor_sender: UnboundedSender<TranscoderFutureResult>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = bus.next() => {
+                    match result {
+                        Some(message) => {
+                            match message.view() {
+                                MessageView::Eos(..) => {
+                                    let _ = actor_sender.send(TranscoderFutureResult::GstEosReceived);
+                                },
+
+                                MessageView::Error(error) => {
+                                    let result = TranscoderFutureResult::GstErrorReceived(GstError {
+                                        source_name: error
+                                            .src()
+                                            .map(|s| s.path_string().to_string())
+                                            .unwrap_or_else(|| "<none>".to_string()),
+
+                                        error_description: error.error().to_string(),
+                                        debug_info: error.debug(),
+                                    });
+
+                                    let _ = actor_sender.send(result);
+                                }
+
+                                _ => (),
+                            }
+                        }
+
+                        None => {
+                            let _ = actor_sender.send(TranscoderFutureResult::GstBusClosed);
+                            break;
+                        }
+                    }
+                }
+
+                _ = actor_sender.closed() => {
+                    break;
+                }
+            }
+        }
+    });
 }
