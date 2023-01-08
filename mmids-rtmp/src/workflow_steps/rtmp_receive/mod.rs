@@ -443,10 +443,6 @@ impl RtmpReceiverStep {
     }
 }
 
-unsafe impl Send for RtmpReceiverStep {}
-
-unsafe impl Sync for RtmpReceiverStep {}
-
 impl WorkflowStep for RtmpReceiverStep {
     fn get_status(&self) -> &StepStatus {
         &self.status
