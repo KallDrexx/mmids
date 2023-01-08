@@ -3,7 +3,7 @@ use futures::StreamExt;
 use gstreamer::bus::BusStream;
 use gstreamer::prelude::*;
 use gstreamer::{MessageView, Pipeline, State};
-use mmids_core::actor_utils::notify_on_unbounded_recv;
+use mmids_core::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 use mmids_core::workflows::{MediaNotificationContent, MediaType};
 use mmids_core::VideoTimestamp;
@@ -79,7 +79,9 @@ impl TranscodeManager {
             || TranscoderFutureResult::EndpointGone,
         );
 
-        notify_on_outbound_media_closed(parameters.outbound_media, actor_sender.clone());
+        notify_on_unbounded_closed(parameters.outbound_media, actor_sender.clone(), || {
+            TranscoderFutureResult::OutboundMediaReceiverGone
+        });
 
         notify_on_unbounded_recv(
             parameters.inbound_media,
@@ -249,21 +251,6 @@ impl TranscodeManager {
             }
         }
     }
-}
-
-fn notify_on_outbound_media_closed(
-    sender: UnboundedSender<MediaNotificationContent>,
-    actor_sender: UnboundedSender<TranscoderFutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sender.closed() => {
-                let _ = actor_sender.send(TranscoderFutureResult::OutboundMediaReceiverGone);
-            }
-
-            _ = actor_sender.closed() => { }
-        }
-    });
 }
 
 fn notify_bus_message(mut bus: BusStream, actor_sender: UnboundedSender<TranscoderFutureResult>) {

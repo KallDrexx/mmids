@@ -1,13 +1,12 @@
 mod transcoding_manager;
 
 use crate::encoders::EncoderFactory;
-use crate::endpoints::gst_transcoder::endpoint_futures::notify_manager_gone;
 use crate::endpoints::gst_transcoder::transcoding_manager::{
     start_transcode_manager, TranscodeManagerRequest, TranscoderParams,
 };
 use crate::GSTREAMER_INIT_RESULT;
 use gstreamer::{glib, Pipeline};
-use mmids_core::actor_utils::notify_on_unbounded_recv;
+use mmids_core::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::MediaNotificationContent;
 use std::collections::HashMap;
@@ -344,7 +343,9 @@ impl EndpointActor {
                 output_media: outbound_media_receiver,
             });
 
-        notify_manager_gone(params.id, manager.clone(), self.internal_sender.clone());
+        notify_on_unbounded_closed(manager.clone(), self.internal_sender.clone(), move || {
+            EndpointFuturesResult::TranscodeManagerGone(params.id)
+        });
 
         self.active_transcodes.insert(
             params.id,
@@ -353,28 +354,5 @@ impl EndpointActor {
                 notification_channel: params.notification_channel,
             },
         );
-    }
-}
-
-mod endpoint_futures {
-    use crate::endpoints::gst_transcoder::transcoding_manager::TranscodeManagerRequest;
-    use crate::endpoints::gst_transcoder::EndpointFuturesResult;
-    use tokio::sync::mpsc::UnboundedSender;
-    use uuid::Uuid;
-
-    pub(super) fn notify_manager_gone(
-        id: Uuid,
-        sender: UnboundedSender<TranscodeManagerRequest>,
-        actor_sender: UnboundedSender<EndpointFuturesResult>,
-    ) {
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = sender.closed() => {
-                    let _ = actor_sender.send(EndpointFuturesResult::TranscodeManagerGone(id));
-                }
-
-                _ = actor_sender.closed() => { }
-            }
-        });
     }
 }

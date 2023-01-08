@@ -14,7 +14,7 @@ use crate::rtmp_server::{
 };
 use actor_types::*;
 use connection_handler::{ConnectionRequest, RtmpServerConnectionHandler};
-use mmids_core::actor_utils::notify_on_unbounded_recv;
+use mmids_core::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use mmids_core::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
@@ -47,9 +47,10 @@ impl RtmpServerEndpointActor {
     ) {
         info!("Starting RTMP server endpoint");
 
-        internal_futures::notify_on_socket_manager_gone(
+        notify_on_unbounded_closed(
             socket_request_sender.clone(),
             self.internal_actor.clone(),
+            || FutureResult::SocketManagerClosed,
         );
 
         while let Some(result) = actor_receiver.recv().await {
@@ -1504,7 +1505,6 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
 mod internal_futures {
     use super::{FutureResult, RtmpEndpointPublisherMessage, StreamKeyRegistration};
     use crate::rtmp_server::{RtmpEndpointWatcherNotification, ValidationResponse};
-    use mmids_core::net::tcp::TcpSocketRequest;
     use mmids_core::net::ConnectionId;
     use std::sync::Arc;
     use tokio::sync::mpsc::UnboundedSender;
@@ -1582,21 +1582,6 @@ mod internal_futures {
                             ));
                         }
                     }
-                }
-
-                _ = actor_sender.closed() => { }
-            }
-        });
-    }
-
-    pub(super) fn notify_on_socket_manager_gone(
-        sender: UnboundedSender<TcpSocketRequest>,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = sender.closed() => {
-                    let _ = actor_sender.send(FutureResult::SocketManagerClosed);
                 }
 
                 _ = actor_sender.closed() => { }

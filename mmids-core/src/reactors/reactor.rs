@@ -1,4 +1,4 @@
-use crate::actor_utils::notify_on_unbounded_recv;
+use crate::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use crate::event_hub::{SubscriptionRequest, WorkflowManagerEvent};
 use crate::reactors::executors::{ReactorExecutionResult, ReactorExecutor};
 use crate::workflows::definitions::WorkflowDefinition;
@@ -226,10 +226,10 @@ impl Actor {
                     );
                 }
 
-                notify_when_response_channel_closed(
+                notify_on_unbounded_closed(
                     response_channel,
-                    stream_name,
                     self.internal_sender.clone(),
+                    move || FutureResult::ClientResponseChannelClosed { stream_name },
                 );
             }
         }
@@ -352,7 +352,10 @@ impl Actor {
         match event {
             WorkflowManagerEvent::WorkflowManagerRegistered { channel } => {
                 info!("Reactor received a workflow manager channel");
-                notify_workflow_manager_gone(channel.clone(), self.internal_sender.clone());
+
+                notify_on_unbounded_closed(channel.clone(), self.internal_sender.clone(), || {
+                    FutureResult::WorkflowManagerGone
+                });
 
                 // Upsert all cached workflows
                 for cached_workflow in self.cached_workflows_for_stream_name.values() {
@@ -429,37 +432,6 @@ fn notify_on_executor_response(
             }
 
             _ = actor_sender.closed() => {}
-        }
-    });
-}
-
-fn notify_workflow_manager_gone(
-    sender: UnboundedSender<WorkflowManagerRequest>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sender.closed() => {
-                let _ = actor_sender.send(FutureResult::WorkflowManagerGone);
-            }
-
-            _ = actor_sender.closed() => {}
-        }
-    });
-}
-
-fn notify_when_response_channel_closed(
-    channel: UnboundedSender<ReactorWorkflowUpdate>,
-    stream_name: Arc<String>,
-    actor_channel: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = channel.closed() => {
-                let _ = actor_channel.send(FutureResult::ClientResponseChannelClosed {stream_name});
-            }
-
-            _ = actor_channel.closed() => { }
         }
     });
 }
