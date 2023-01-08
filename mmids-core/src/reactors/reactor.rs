@@ -1,9 +1,10 @@
-use crate::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
+use crate::actor_utils::{
+    notify_on_future_completion, notify_on_unbounded_closed, notify_on_unbounded_recv,
+};
 use crate::event_hub::{SubscriptionRequest, WorkflowManagerEvent};
 use crate::reactors::executors::{ReactorExecutionResult, ReactorExecutor};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
-use futures::future::BoxFuture;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -172,10 +173,13 @@ impl Actor {
                         .contains_key(&stream_name)
                     {
                         let future = self.executor.get_workflow(stream_name.clone());
-                        notify_on_executor_response(
-                            stream_name,
+                        notify_on_future_completion(
                             future,
                             self.internal_sender.clone(),
+                            move |result| FutureResult::ExecutorResponseReceived {
+                                stream_name,
+                                result,
+                            },
                         );
                     }
                 }
@@ -219,10 +223,14 @@ impl Actor {
                     });
                 } else {
                     let future = self.executor.get_workflow(stream_name.clone());
-                    notify_on_executor_response(
-                        stream_name.clone(),
+                    let stream_name = stream_name.clone();
+                    notify_on_future_completion(
                         future,
                         self.internal_sender.clone(),
+                        move |result| FutureResult::ExecutorResponseReceived {
+                            stream_name,
+                            result,
+                        },
                     );
                 }
 
@@ -417,25 +425,6 @@ impl Actor {
     }
 }
 
-fn notify_on_executor_response(
-    stream_name: Arc<String>,
-    future: BoxFuture<'static, ReactorExecutionResult>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            result = future => {
-                let _ = actor_sender.send(FutureResult::ExecutorResponseReceived {
-                    stream_name,
-                    result
-                });
-            }
-
-            _ = actor_sender.closed() => {}
-        }
-    });
-}
-
 fn notify_after_update_interval(
     stream_name: Arc<String>,
     wait_time: Duration,
@@ -457,6 +446,7 @@ mod tests {
     use super::*;
     use crate::test_utils;
     use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
+    use futures::future::BoxFuture;
     use futures::FutureExt;
     use tokio::time::timeout;
 

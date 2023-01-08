@@ -14,7 +14,9 @@ use crate::rtmp_server::{
 };
 use actor_types::*;
 use connection_handler::{ConnectionRequest, RtmpServerConnectionHandler};
-use mmids_core::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
+use mmids_core::actor_utils::{
+    notify_on_future_completion, notify_on_unbounded_closed, notify_on_unbounded_recv,
+};
 use mmids_core::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
@@ -546,14 +548,23 @@ impl RtmpServerEndpointActor {
                     },
                 );
 
-                internal_futures::notify_on_publisher_channel_closed(
-                    channel.clone(),
-                    params.port,
-                    params.rtmp_app,
-                    params.stream_key,
-                    cancel_sender,
-                    self.internal_actor.clone(),
-                );
+                {
+                    let channel = channel.clone();
+                    notify_on_future_completion(
+                        async move {
+                            tokio::select! {
+                                _ = channel.closed() => (),
+                                _ = cancel_sender.closed() => (),
+                            }
+                        },
+                        self.internal_actor.clone(),
+                        move |_| FutureResult::PublishingRegistrantGone {
+                            port: params.port,
+                            app: params.rtmp_app,
+                            stream_key: params.stream_key,
+                        }
+                    )
+                }
 
                 // If the port isn't in a listening mode, we don't want to claim that
                 // registration was successful yet
@@ -621,14 +632,25 @@ impl RtmpServerEndpointActor {
                     },
                 );
 
-                internal_futures::wait_for_watcher_notification_channel_closed(
-                    notification_channel.clone(),
-                    params.port,
-                    params.rtmp_app.clone(),
-                    params.stream_key.clone(),
-                    cancel_sender,
-                    self.internal_actor.clone(),
-                );
+                {
+                    let notification_channel = notification_channel.clone();
+                    let app = params.rtmp_app.clone();
+                    let stream_key = params.stream_key.clone();
+                    notify_on_future_completion(
+                        async move {
+                            tokio::select! {
+                                _ = notification_channel.closed() => (),
+                                _ = cancel_sender.closed() => (),
+                            }
+                        },
+                        self.internal_actor.clone(),
+                        move |_| FutureResult::WatcherRegistrantGone {
+                            port: params.port,
+                            app,
+                            stream_key,
+                        },
+                    );
+                }
 
                 let success_app_name = params.rtmp_app.clone();
                 let closed_app_name = params.rtmp_app;
@@ -1503,58 +1525,12 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
 }
 
 mod internal_futures {
-    use super::{FutureResult, RtmpEndpointPublisherMessage, StreamKeyRegistration};
-    use crate::rtmp_server::{RtmpEndpointWatcherNotification, ValidationResponse};
+    use super::FutureResult;
+    use crate::rtmp_server::ValidationResponse;
+    use mmids_core::actor_utils::notify_on_future_completion;
     use mmids_core::net::ConnectionId;
-    use std::sync::Arc;
     use tokio::sync::mpsc::UnboundedSender;
     use tokio::sync::oneshot::Receiver;
-
-    pub(super) fn notify_on_publisher_channel_closed(
-        sender: UnboundedSender<RtmpEndpointPublisherMessage>,
-        port: u16,
-        app_name: Arc<String>,
-        stream_key: StreamKeyRegistration,
-        cancellation_receiver: UnboundedSender<()>,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = sender.closed() => (),
-                _ = cancellation_receiver.closed() => (),
-                _ = actor_sender.closed() => (),
-            }
-
-            let _ = actor_sender.send(FutureResult::PublishingRegistrantGone {
-                port,
-                app: app_name,
-                stream_key,
-            });
-        });
-    }
-
-    pub(super) fn wait_for_watcher_notification_channel_closed(
-        sender: UnboundedSender<RtmpEndpointWatcherNotification>,
-        port: u16,
-        app_name: Arc<String>,
-        stream_key: StreamKeyRegistration,
-        cancellation_token: UnboundedSender<()>,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = sender.closed() => (),
-                _ = cancellation_token.closed() => (),
-                _ = actor_sender.closed() => (),
-            }
-
-            let _ = actor_sender.send(FutureResult::WatcherRegistrantGone {
-                port,
-                app: app_name,
-                stream_key,
-            });
-        });
-    }
 
     pub(super) fn notify_on_validation(
         port: u16,
@@ -1562,30 +1538,16 @@ mod internal_futures {
         receiver: Receiver<ValidationResponse>,
         actor_sender: UnboundedSender<FutureResult>,
     ) {
-        tokio::spawn(async move {
-            tokio::select! {
-                result = receiver => {
-                    match result {
-                        Ok(response) => {
-                            let _ = actor_sender.send(FutureResult::ValidationApprovalResponseReceived(
-                                port,
-                                connection_id,
-                                response,
-                            ));
-                        }
-
-                        Err(_) => {
-                            let _ = actor_sender.send(FutureResult::ValidationApprovalResponseReceived(
-                                port,
-                                connection_id,
-                                ValidationResponse::Reject,
-                            ));
-                        }
-                    }
-                }
-
-                _ = actor_sender.closed() => { }
+        notify_on_future_completion(receiver, actor_sender, move |result| match result {
+            Ok(response) => {
+                FutureResult::ValidationApprovalResponseReceived(port, connection_id, response)
             }
+
+            Err(_) => FutureResult::ValidationApprovalResponseReceived(
+                port,
+                connection_id,
+                ValidationResponse::Reject,
+            ),
         });
     }
 }
