@@ -112,7 +112,12 @@ impl Actor {
             channel: manager_sender,
         });
 
-        notify_on_workflow_manager_event(manager_receiver, actor_sender.clone());
+        notify_on_unbounded_recv(
+            manager_receiver,
+            actor_sender.clone(),
+            FutureResult::WorkflowManagerEventReceived,
+            || FutureResult::EventHubGone,
+        );
 
         Actor {
             internal_sender: actor_sender,
@@ -424,35 +429,6 @@ fn notify_on_executor_response(
             }
 
             _ = actor_sender.closed() => {}
-        }
-    });
-}
-
-fn notify_on_workflow_manager_event(
-    mut receiver: UnboundedReceiver<WorkflowManagerEvent>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                event = receiver.recv() => {
-                    match event {
-                        Some(event) => {
-                            let _ = actor_sender.send(
-                                FutureResult::WorkflowManagerEventReceived(event));
-                        }
-
-                        None => {
-                            let _ = actor_sender.send(FutureResult::EventHubGone);
-                            break;
-                        }
-                    }
-                }
-
-                _ = actor_sender.closed() => {
-                    break;
-                }
-            }
         }
     });
 }

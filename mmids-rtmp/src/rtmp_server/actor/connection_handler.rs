@@ -803,7 +803,12 @@ impl RtmpServerConnectionHandler {
         &mut self,
         media_channel: UnboundedReceiver<RtmpEndpointMediaData>,
     ) {
-        internal_futures::notify_on_media_data(media_channel, self.internal_sender.clone());
+        notify_on_unbounded_recv(
+            media_channel,
+            self.internal_sender.clone(),
+            FutureResult::WatchedMediaReceived,
+            || FutureResult::RtmpServerEndpointGone,
+        );
 
         match &self.state {
             ConnectionState::RequestedWatch {
@@ -1090,9 +1095,8 @@ fn wrap_audio_into_flv(data: Bytes, is_sequence_header: bool) -> Bytes {
 
 mod internal_futures {
     use super::FutureResult;
-    use crate::rtmp_server::RtmpEndpointMediaData;
     use mmids_core::net::tcp::OutboundPacket;
-    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+    use tokio::sync::mpsc::UnboundedSender;
 
     pub(super) fn notify_on_outbound_bytes_closed(
         sender: UnboundedSender<OutboundPacket>,
@@ -1105,34 +1109,6 @@ mod internal_futures {
                 }
 
                 _ = actor_sender.closed() => { }
-            }
-        });
-    }
-
-    pub(super) fn notify_on_media_data(
-        mut receiver: UnboundedReceiver<RtmpEndpointMediaData>,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    result = receiver.recv() => {
-                        match result {
-                            Some(data) => {
-                                let _ = actor_sender.send(FutureResult::WatchedMediaReceived(data));
-                            }
-
-                            None => {
-                                let _ = actor_sender.send(FutureResult::RtmpServerEndpointGone);
-                                break;
-                            }
-                        }
-                    }
-
-                    _ = actor_sender.closed() => {
-                        break;
-                    }
-                }
             }
         });
     }

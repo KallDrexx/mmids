@@ -14,6 +14,7 @@ use crate::rtmp_server::{
 };
 use actor_types::*;
 use connection_handler::{ConnectionRequest, RtmpServerConnectionHandler};
+use mmids_core::actor_utils::notify_on_unbounded_recv;
 use mmids_core::net::tcp::{TcpSocketRequest, TcpSocketResponse};
 use mmids_core::net::ConnectionId;
 use mmids_core::reactors::ReactorWorkflowUpdate;
@@ -464,10 +465,14 @@ impl RtmpServerEndpointActor {
             };
 
             let _ = params.socket_sender.send(request);
-            internal_futures::notify_on_socket_response(
+            notify_on_unbounded_recv(
                 receiver,
-                params.port,
                 self.internal_actor.clone(),
+                move |response| FutureResult::SocketResponseReceived {
+                    port: params.port,
+                    response,
+                },
+                move || FutureResult::PortGone { port: params.port },
             );
         }
 
@@ -624,12 +629,22 @@ impl RtmpServerEndpointActor {
                     self.internal_actor.clone(),
                 );
 
-                internal_futures::notify_on_watcher_media(
+                let success_app_name = params.rtmp_app.clone();
+                let closed_app_name = params.rtmp_app;
+                notify_on_unbounded_recv(
                     media_channel,
-                    params.port,
-                    params.rtmp_app,
-                    params.stream_key,
                     self.internal_actor.clone(),
+                    move |msg| FutureResult::WatcherMediaDataReceived {
+                        port: params.port,
+                        app: success_app_name.clone(),
+                        stream_key: msg.stream_key,
+                        data: msg.data,
+                    },
+                    move || FutureResult::WatcherRegistrantGone {
+                        port: params.port,
+                        app: closed_app_name,
+                        stream_key: params.stream_key,
+                    },
                 );
 
                 // If the port isn't open yet, we don't want to claim registration was successful yet
@@ -737,11 +752,19 @@ impl RtmpServerEndpointActor {
                         },
                     );
 
-                    internal_futures::notify_on_connection_request(
-                        port,
-                        connection_id,
+                    let success_conn_id = connection_id.clone();
+                    notify_on_unbounded_recv(
                         request_receiver,
                         self.internal_actor.clone(),
+                        move |request| FutureResult::ConnectionHandlerRequestReceived {
+                            request,
+                            port,
+                            connection_id: success_conn_id.clone(),
+                        },
+                        move || FutureResult::ConnectionHandlerGone {
+                            port,
+                            connection_id,
+                        },
                     );
                 }
 
@@ -1480,46 +1503,12 @@ fn clean_disconnected_connection(connection_id: ConnectionId, port_map: &mut Por
 
 mod internal_futures {
     use super::{FutureResult, RtmpEndpointPublisherMessage, StreamKeyRegistration};
-    use crate::rtmp_server::actor::connection_handler::ConnectionRequest;
-    use crate::rtmp_server::{
-        RtmpEndpointMediaMessage, RtmpEndpointWatcherNotification, ValidationResponse,
-    };
-    use mmids_core::net::tcp::{TcpSocketRequest, TcpSocketResponse};
+    use crate::rtmp_server::{RtmpEndpointWatcherNotification, ValidationResponse};
+    use mmids_core::net::tcp::TcpSocketRequest;
     use mmids_core::net::ConnectionId;
     use std::sync::Arc;
-    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+    use tokio::sync::mpsc::UnboundedSender;
     use tokio::sync::oneshot::Receiver;
-
-    pub(super) fn notify_on_socket_response(
-        mut socket_receiver: UnboundedReceiver<TcpSocketResponse>,
-        port: u16,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    result = socket_receiver.recv() => {
-                        match result {
-                            None => {
-                                let _ = actor_sender.send(FutureResult::PortGone {port});
-                            }
-
-                            Some(response) => {
-                                let _ = actor_sender.send(FutureResult::SocketResponseReceived {
-                                    port,
-                                    response
-                                });
-                            }
-                        }
-                    }
-
-                    _ = actor_sender.closed() => {
-                        break;
-                    }
-                }
-            }
-        });
-    }
 
     pub(super) fn notify_on_publisher_channel_closed(
         sender: UnboundedSender<RtmpEndpointPublisherMessage>,
@@ -1544,44 +1533,6 @@ mod internal_futures {
         });
     }
 
-    pub(super) fn notify_on_connection_request(
-        port: u16,
-        connection_id: ConnectionId,
-        mut receiver: UnboundedReceiver<ConnectionRequest>,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    result = receiver.recv() => {
-                        match result {
-                            Some(request) => {
-                                let _ = actor_sender.send(FutureResult::ConnectionHandlerRequestReceived {
-                                    port,
-                                    connection_id: connection_id.clone(),
-                                    request,
-                                });
-                            }
-
-                            None => {
-                                let _ = actor_sender.send(FutureResult::ConnectionHandlerGone {
-                                    port,
-                                    connection_id,
-                                });
-
-                                break;
-                            }
-                        }
-                    }
-
-                    _ = actor_sender.closed() => {
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
     pub(super) fn wait_for_watcher_notification_channel_closed(
         sender: UnboundedSender<RtmpEndpointWatcherNotification>,
         port: u16,
@@ -1602,47 +1553,6 @@ mod internal_futures {
                 app: app_name,
                 stream_key,
             });
-        });
-    }
-
-    pub(super) fn notify_on_watcher_media(
-        mut receiver: UnboundedReceiver<RtmpEndpointMediaMessage>,
-        port: u16,
-        app_name: Arc<String>,
-        stream_key_registration: StreamKeyRegistration,
-        actor_sender: UnboundedSender<FutureResult>,
-    ) {
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    result = receiver.recv() => {
-                        match result {
-                            Some(message) => {
-                                let _ = actor_sender.send(FutureResult::WatcherMediaDataReceived {
-                                    port,
-                                    app: app_name.clone(),
-                                    stream_key: message.stream_key,
-                                    data: message.data,
-                                });
-                            }
-
-                            None => {
-                                let _ = actor_sender.send(FutureResult::WatcherRegistrantGone {
-                                    port,
-                                    app: app_name,
-                                    stream_key: stream_key_registration,
-                                });
-
-                                break;
-                            }
-                        }
-                    }
-
-                    _ = actor_sender.closed() => {
-                        break;
-                    }
-                }
-            }
         });
     }
 

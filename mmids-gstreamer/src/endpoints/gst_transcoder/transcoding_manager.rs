@@ -80,7 +80,13 @@ impl TranscodeManager {
         );
 
         notify_on_outbound_media_closed(parameters.outbound_media, actor_sender.clone());
-        notify_on_inbound_media(parameters.inbound_media, actor_sender.clone());
+
+        notify_on_unbounded_recv(
+            parameters.inbound_media,
+            actor_sender.clone(),
+            TranscoderFutureResult::MediaReceived,
+            || TranscoderFutureResult::InboundMediaSendersGone,
+        );
 
         TranscodeManager {
             internal_sender: actor_sender,
@@ -256,34 +262,6 @@ fn notify_on_outbound_media_closed(
             }
 
             _ = actor_sender.closed() => { }
-        }
-    });
-}
-
-fn notify_on_inbound_media(
-    mut receiver: UnboundedReceiver<MediaNotificationContent>,
-    actor_sender: UnboundedSender<TranscoderFutureResult>,
-) {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                result = receiver.recv() => {
-                    match result {
-                        Some(media) => {
-                            let _ = actor_sender.send(TranscoderFutureResult::MediaReceived(media));
-                        }
-
-                        None => {
-                            let _ = actor_sender.send(TranscoderFutureResult::InboundMediaSendersGone);
-                            break;
-                        }
-                    }
-                }
-
-                _ = actor_sender.closed() => {
-                    break;
-                }
-            }
         }
     });
 }
