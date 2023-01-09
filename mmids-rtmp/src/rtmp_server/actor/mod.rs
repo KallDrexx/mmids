@@ -562,7 +562,7 @@ impl RtmpServerEndpointActor {
                             port: params.port,
                             app: params.rtmp_app,
                             stream_key: params.stream_key,
-                        }
+                        },
                     )
                 }
 
