@@ -1,6 +1,6 @@
 use super::listener::{start as start_listener, ListenerParams};
 use super::{TcpSocketRequest, TcpSocketResponse};
-use crate::actor_utils::notify_on_unbounded_recv;
+use crate::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use crate::net::tcp::{RequestFailureReason, TlsOptions};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -124,10 +124,10 @@ impl SocketManager {
                         tls_options,
                     });
 
-                    notify_on_listener_shutdown(
-                        port,
+                    notify_on_unbounded_closed(
                         listener_shutdown,
                         self.internal_sender.clone(),
+                        move || SocketManagerFutureResult::ListenerShutdown { port },
                     );
 
                     let _ = response_channel.send(TcpSocketResponse::RequestAccepted {});
@@ -142,20 +142,4 @@ impl SocketManager {
             }
         }
     }
-}
-
-fn notify_on_listener_shutdown(
-    port: u16,
-    signal: UnboundedSender<()>,
-    actor_sender: UnboundedSender<SocketManagerFutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = signal.closed() => {
-                let _ = actor_sender.send(SocketManagerFutureResult::ListenerShutdown { port });
-            }
-
-            _ = actor_sender.closed() => {}
-        }
-    });
 }

@@ -2,7 +2,7 @@
 //! with specific parameters, and the endpoint will run it.  If the ffmpeg process stops before
 //! being requested to stop, then the endpoint will ensure it gets re-run.
 
-use mmids_core::actor_utils::notify_on_unbounded_recv;
+use mmids_core::actor_utils::{notify_on_future_completion, notify_on_unbounded_recv};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -374,10 +374,10 @@ impl Actor {
                     },
                 );
 
-                notify_on_notification_channel_gone(
-                    id,
-                    notification_channel,
+                notify_on_future_completion(
+                    async move { notification_channel.closed().await },
                     self.internal_sender.clone(),
+                    move |_| FutureResult::NotificationChannelGone(id),
                 );
             }
         }
@@ -503,29 +503,7 @@ fn stop_process(id: Uuid, mut process: FfmpegProcess) {
 }
 
 fn notify_on_next_check(id: Uuid, actor_sender: UnboundedSender<FutureResult>) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sleep(Duration::from_secs(5)) => {
-                let _ = actor_sender.send(FutureResult::CheckProcess(id));
-            }
-
-            _ = actor_sender.closed() => { }
-        }
-    });
-}
-
-fn notify_on_notification_channel_gone(
-    id: Uuid,
-    channel: UnboundedSender<FfmpegEndpointNotification>,
-    actor_channel: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = channel.closed() => {
-                let _ = actor_channel.send(FutureResult::NotificationChannelGone(id));
-            }
-
-            _ = actor_channel.closed() => { }
-        }
+    notify_on_future_completion(sleep(Duration::from_secs(5)), actor_sender, move |_| {
+        FutureResult::CheckProcess(id)
     });
 }

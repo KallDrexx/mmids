@@ -1,7 +1,7 @@
 //! The event hub is a central actor that receives events from all type of mmids subsystems and
 //! allows them to be published to interested subscribers.
 
-use crate::actor_utils::notify_on_unbounded_recv;
+use crate::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use crate::workflows::manager::WorkflowManagerRequest;
 use crate::workflows::WorkflowRequest;
 use std::collections::{HashMap, HashSet};
@@ -223,11 +223,9 @@ impl Actor {
                 self.workflow_start_stop_subscribers
                     .insert(id.0, channel.clone());
 
-                notify_workflow_start_stop_subscriber_gone(
-                    id.0,
-                    channel,
-                    self.internal_sender.clone(),
-                );
+                notify_on_unbounded_closed(channel, self.internal_sender.clone(), move || {
+                    FutureResult::WorkflowStartStopSubscriberGone(id.0)
+                });
             }
 
             SubscriptionRequest::WorkflowManagerEvents { channel } => {
@@ -240,11 +238,9 @@ impl Actor {
                 self.workflow_manager_subscribers
                     .insert(id.0, channel.clone());
 
-                notify_workflow_manager_subscriber_gone(
-                    id.0,
-                    channel,
-                    self.internal_sender.clone(),
-                );
+                notify_on_unbounded_closed(channel, self.internal_sender.clone(), move || {
+                    FutureResult::WorkflowManagerSubscriberGone(id.0)
+                });
             }
         }
     }
@@ -252,42 +248,6 @@ impl Actor {
     fn total_subscriber_count(&self) -> usize {
         self.workflow_start_stop_subscribers.len()
     }
-}
-
-fn notify_workflow_start_stop_subscriber_gone(
-    id: usize,
-    workflow_sender: UnboundedSender<WorkflowStartedOrStoppedEvent>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = workflow_sender.closed() => {
-                let _ = actor_sender.send(FutureResult::WorkflowStartStopSubscriberGone(id));
-            }
-
-            _ = actor_sender.closed() => {
-                // just exit, no message ot send
-            }
-        }
-    });
-}
-
-fn notify_workflow_manager_subscriber_gone(
-    id: usize,
-    workflow_sender: UnboundedSender<WorkflowManagerEvent>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = workflow_sender.closed() => {
-                let _ = actor_sender.send(FutureResult::WorkflowManagerSubscriberGone(id));
-            }
-
-            _ = actor_sender.closed() => {
-                // Just exit, no message to send
-            }
-        }
-    });
 }
 
 #[cfg(test)]

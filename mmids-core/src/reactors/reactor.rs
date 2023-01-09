@@ -1,9 +1,10 @@
-use crate::actor_utils::notify_on_unbounded_recv;
+use crate::actor_utils::{
+    notify_on_future_completion, notify_on_unbounded_closed, notify_on_unbounded_recv,
+};
 use crate::event_hub::{SubscriptionRequest, WorkflowManagerEvent};
 use crate::reactors::executors::{ReactorExecutionResult, ReactorExecutor};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
-use futures::future::BoxFuture;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,7 +113,12 @@ impl Actor {
             channel: manager_sender,
         });
 
-        notify_on_workflow_manager_event(manager_receiver, actor_sender.clone());
+        notify_on_unbounded_recv(
+            manager_receiver,
+            actor_sender.clone(),
+            FutureResult::WorkflowManagerEventReceived,
+            || FutureResult::EventHubGone,
+        );
 
         Actor {
             internal_sender: actor_sender,
@@ -167,10 +173,13 @@ impl Actor {
                         .contains_key(&stream_name)
                     {
                         let future = self.executor.get_workflow(stream_name.clone());
-                        notify_on_executor_response(
-                            stream_name,
+                        notify_on_future_completion(
                             future,
                             self.internal_sender.clone(),
+                            move |result| FutureResult::ExecutorResponseReceived {
+                                stream_name,
+                                result,
+                            },
                         );
                     }
                 }
@@ -214,17 +223,21 @@ impl Actor {
                     });
                 } else {
                     let future = self.executor.get_workflow(stream_name.clone());
-                    notify_on_executor_response(
-                        stream_name.clone(),
+                    let stream_name = stream_name.clone();
+                    notify_on_future_completion(
                         future,
                         self.internal_sender.clone(),
+                        move |result| FutureResult::ExecutorResponseReceived {
+                            stream_name,
+                            result,
+                        },
                     );
                 }
 
-                notify_when_response_channel_closed(
+                notify_on_unbounded_closed(
                     response_channel,
-                    stream_name,
                     self.internal_sender.clone(),
+                    move || FutureResult::ClientResponseChannelClosed { stream_name },
                 );
             }
         }
@@ -347,7 +360,10 @@ impl Actor {
         match event {
             WorkflowManagerEvent::WorkflowManagerRegistered { channel } => {
                 info!("Reactor received a workflow manager channel");
-                notify_workflow_manager_gone(channel.clone(), self.internal_sender.clone());
+
+                notify_on_unbounded_closed(channel.clone(), self.internal_sender.clone(), || {
+                    FutureResult::WorkflowManagerGone
+                });
 
                 // Upsert all cached workflows
                 for cached_workflow in self.cached_workflows_for_stream_name.values() {
@@ -409,85 +425,6 @@ impl Actor {
     }
 }
 
-fn notify_on_executor_response(
-    stream_name: Arc<String>,
-    future: BoxFuture<'static, ReactorExecutionResult>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            result = future => {
-                let _ = actor_sender.send(FutureResult::ExecutorResponseReceived {
-                    stream_name,
-                    result
-                });
-            }
-
-            _ = actor_sender.closed() => {}
-        }
-    });
-}
-
-fn notify_on_workflow_manager_event(
-    mut receiver: UnboundedReceiver<WorkflowManagerEvent>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                event = receiver.recv() => {
-                    match event {
-                        Some(event) => {
-                            let _ = actor_sender.send(
-                                FutureResult::WorkflowManagerEventReceived(event));
-                        }
-
-                        None => {
-                            let _ = actor_sender.send(FutureResult::EventHubGone);
-                            break;
-                        }
-                    }
-                }
-
-                _ = actor_sender.closed() => {
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn notify_workflow_manager_gone(
-    sender: UnboundedSender<WorkflowManagerRequest>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sender.closed() => {
-                let _ = actor_sender.send(FutureResult::WorkflowManagerGone);
-            }
-
-            _ = actor_sender.closed() => {}
-        }
-    });
-}
-
-fn notify_when_response_channel_closed(
-    channel: UnboundedSender<ReactorWorkflowUpdate>,
-    stream_name: Arc<String>,
-    actor_channel: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = channel.closed() => {
-                let _ = actor_channel.send(FutureResult::ClientResponseChannelClosed {stream_name});
-            }
-
-            _ = actor_channel.closed() => { }
-        }
-    });
-}
-
 fn notify_after_update_interval(
     stream_name: Arc<String>,
     wait_time: Duration,
@@ -509,6 +446,7 @@ mod tests {
     use super::*;
     use crate::test_utils;
     use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
+    use futures::future::BoxFuture;
     use futures::FutureExt;
     use tokio::time::timeout;
 

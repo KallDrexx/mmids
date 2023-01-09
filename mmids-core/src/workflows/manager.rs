@@ -2,7 +2,7 @@
 //! used to start new workflows, change the steps of a managed workflow, get status the of managed
 //! workflows, and stop a managed workflow.
 
-use crate::actor_utils::notify_on_unbounded_recv;
+use crate::actor_utils::{notify_on_unbounded_closed, notify_on_unbounded_recv};
 use crate::event_hub::{PublishEventRequest, WorkflowManagerEvent, WorkflowStartedOrStoppedEvent};
 use crate::workflows::definitions::WorkflowDefinition;
 use crate::workflows::runner::{WorkflowRequestOperation, WorkflowState};
@@ -104,9 +104,10 @@ impl Actor {
         request_sender: UnboundedSender<WorkflowManagerRequest>,
         mut actor_receiver: UnboundedReceiver<FutureResult>,
     ) {
-        notify_when_event_hub_is_gone(
+        notify_on_unbounded_closed(
             self.event_hub_publisher.clone(),
             self.internal_sender.clone(),
+            || FutureResult::EventHubGone,
         );
 
         info!("Starting workflow manager");
@@ -178,10 +179,12 @@ impl Actor {
 
                     let name = definition.name.clone();
                     let sender = start_workflow(definition, self.step_factory.clone());
-                    notify_on_workflow_gone(
+
+                    let on_closed_name = name.clone();
+                    notify_on_unbounded_closed(
                         sender.clone(),
-                        name.clone(),
                         self.internal_sender.clone(),
+                        || FutureResult::WorkflowGone(on_closed_name),
                     );
 
                     self.workflows.insert(name.clone(), sender.clone());
@@ -246,37 +249,6 @@ impl Actor {
             },
         }
     }
-}
-
-fn notify_when_event_hub_is_gone(
-    sender: UnboundedSender<PublishEventRequest>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sender.closed() => {
-                let _ = actor_sender.send(FutureResult::EventHubGone);
-            }
-
-            _ = actor_sender.closed() => { }
-        }
-    });
-}
-
-fn notify_on_workflow_gone(
-    sender: UnboundedSender<WorkflowRequest>,
-    name: Arc<String>,
-    actor_sender: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sender.closed() => {
-                let _ = actor_sender.send(FutureResult::WorkflowGone(name));
-            }
-
-            _ = actor_sender.closed() => { }
-        }
-    });
 }
 
 #[cfg(test)]
