@@ -6,7 +6,7 @@ mod test_steps;
 mod tests;
 
 use crate::actor_utils::notify_on_unbounded_recv;
-use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition};
+use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepId};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
@@ -59,7 +59,7 @@ pub struct WorkflowState {
 
 #[derive(Debug)]
 pub struct WorkflowStepState {
-    pub step_id: u64,
+    pub step_id: WorkflowStepId,
     pub definition: WorkflowStepDefinition,
     pub status: StepStatus,
 }
@@ -91,7 +91,7 @@ enum FutureResult {
     WorkflowRequestReceived(WorkflowRequest),
 
     StepFutureResolved {
-        step_id: u64,
+        step_id: WorkflowStepId,
         result: Box<dyn StepFutureResult>,
     },
 }
@@ -99,22 +99,22 @@ enum FutureResult {
 struct StreamDetails {
     /// The step that first sent a new stream media notification.  We know that if this step is
     /// removed, the stream no longer has a source of video and should be considered disconnected
-    originating_step_id: u64,
+    originating_step_id: WorkflowStepId,
 }
 
 struct Actor {
     internal_sender: UnboundedSender<FutureResult>,
     name: Arc<String>,
-    steps_by_definition_id: HashMap<u64, Box<dyn WorkflowStep + Send>>,
-    active_steps: Vec<u64>,
-    pending_steps: Vec<u64>,
+    steps_by_definition_id: HashMap<WorkflowStepId, Box<dyn WorkflowStep + Send>>,
+    active_steps: Vec<WorkflowStepId>,
+    pending_steps: Vec<WorkflowStepId>,
     step_inputs: StepInputs,
     step_outputs: StepOutputs,
-    cached_step_media: HashMap<u64, HashMap<StreamId, Vec<MediaNotification>>>,
+    cached_step_media: HashMap<WorkflowStepId, HashMap<StreamId, Vec<MediaNotification>>>,
     cached_inbound_media: HashMap<StreamId, Vec<MediaNotification>>,
     active_streams: HashMap<StreamId, StreamDetails>,
     step_factory: Arc<WorkflowStepFactory>,
-    step_definitions: HashMap<u64, WorkflowStepDefinition>,
+    step_definitions: HashMap<WorkflowStepId, WorkflowStepDefinition>,
     status: WorkflowStatus,
 }
 
@@ -218,7 +218,7 @@ impl Actor {
                             });
                         }
                     } else {
-                        error!(step_id = %id, "No definition was found for step id {}", id);
+                        error!(step_id = %id, "No definition was found for step id {}", id.0);
                     }
                 }
 
@@ -240,7 +240,7 @@ impl Actor {
                             });
                         }
                     } else {
-                        error!(step_id = %id, "No definition was found for step id {}", id);
+                        error!(step_id = %id, "No definition was found for step id {}", id.0);
                     }
                 }
 
@@ -319,7 +319,7 @@ impl Actor {
             self.pending_steps.push(id);
 
             if let Entry::Vacant(entry) = self.steps_by_definition_id.entry(id) {
-                let span = span!(Level::INFO, "Step Creation", step_id = id);
+                let span = span!(Level::INFO, "Step Creation", step_id = %id);
                 let _enter = span.enter();
 
                 let mut details = format!("{}: ", step_definition.step_type.0);
@@ -369,7 +369,7 @@ impl Actor {
 
     fn execute_steps(
         &mut self,
-        initial_step_id: u64,
+        initial_step_id: WorkflowStepId,
         future_result: Option<Box<dyn StepFutureResult>>,
         preserve_current_step_inputs: bool,
         perform_pending_check: bool,
@@ -412,12 +412,12 @@ impl Actor {
         }
     }
 
-    fn execute_step(&mut self, step_id: u64) {
+    fn execute_step(&mut self, step_id: WorkflowStepId) {
         if self.status != WorkflowStatus::Running {
             return;
         }
 
-        let span = span!(Level::INFO, "Step Execution", step_id = step_id);
+        let span = span!(Level::INFO, "Step Execution", step_id = %step_id);
         let _enter = span.enter();
 
         let step = match self.steps_by_definition_id.get_mut(&step_id) {
@@ -426,7 +426,7 @@ impl Actor {
                 let is_active = self.active_steps.contains(&step_id);
                 error!(
                     "Attempted to execute step id {} but we it has no definition (is active: {})",
-                    step_id, is_active
+                    step_id.0, is_active
                 );
 
                 return;
@@ -464,8 +464,8 @@ impl Actor {
                 Some(x) => Some(x),
                 None => {
                     error!(
-                        step_id = id,
-                        "Workflow had step id {} pending but this step was not defined", id
+                        step_id = %id,
+                        "Workflow had step id {} pending but this step was not defined", id.0
                     );
 
                     let id = *id;
@@ -520,7 +520,7 @@ impl Actor {
                     // raise disconnection notices for any streams originating from this step, so
                     // that latter steps that will survive will know not to expect more media
                     // from these streams.
-                    info!(step_id = step_id, "Removing now unused step id {}", step_id);
+                    info!(step_id = %step_id, "Removing now unused step id {}", step_id.0);
                     self.step_definitions.remove(&step_id);
                     if let Some(mut step) = self.steps_by_definition_id.remove(&step_id) {
                         let span = span!(Level::INFO, "Step Shutdown", step_id = %step_id);
@@ -597,7 +597,7 @@ impl Actor {
         }
     }
 
-    fn update_stream_details(&mut self, current_step_id: u64) {
+    fn update_stream_details(&mut self, current_step_id: WorkflowStepId) {
         for media in &self.step_outputs.media {
             match &media.content {
                 MediaNotificationContent::Metadata { .. } => (),
@@ -652,7 +652,7 @@ impl Actor {
         }
     }
 
-    fn update_media_cache_from_outputs(&mut self, step_id: u64) {
+    fn update_media_cache_from_outputs(&mut self, step_id: WorkflowStepId) {
         let step_cache = self.cached_step_media.entry(step_id).or_default();
 
         for media in &self.step_outputs.media {
@@ -702,13 +702,13 @@ impl Actor {
         }
     }
 
-    fn set_status_to_error(&mut self, step_id: u64, message: String) {
+    fn set_status_to_error(&mut self, step_id: WorkflowStepId, message: String) {
         error!(
             "Workflow set to error state due to step id {}: {}",
-            step_id, message
+            step_id.0, message
         );
         self.status = WorkflowStatus::Error {
-            failed_step_id: step_id,
+            failed_step_id: step_id.0,
             message,
         };
 
@@ -727,7 +727,7 @@ impl Actor {
 }
 
 fn notify_on_step_future_resolve(
-    step_id: u64,
+    step_id: WorkflowStepId,
     future: BoxFuture<'static, Box<dyn StepFutureResult>>,
     actor_channel: UnboundedSender<FutureResult>,
 ) {

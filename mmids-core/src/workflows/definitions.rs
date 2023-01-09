@@ -1,12 +1,18 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::fmt::Formatter;
+use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 /// Identifier representing the type of the workflow step being defined
 #[derive(Clone, Hash, Debug, Eq, PartialEq)]
 pub struct WorkflowStepType(pub String);
+
+/// Identifies a specific workflow step. Two steps with the same set of parameters and values will
+/// always produce the same id within a single run of the the application, but the identifiers are
+/// not guaranteed to be consistent across application runs.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WorkflowStepId(pub u64);
 
 /// The definition of a workflow step and any parameters it may be using
 #[derive(Clone, Debug)]
@@ -30,14 +36,11 @@ impl std::fmt::Display for WorkflowStepType {
 }
 
 impl WorkflowStepDefinition {
-    /// Gets an identifier for the workflow step that's based on the step's parameters.  Two
-    /// steps with the same set of parameters and values will always produce the same id within
-    /// a single run of the the application, but the identifiers are not guaranteed to be consistent
-    /// across application runs.
-    pub fn get_id(&self) -> u64 {
+    /// Gets an identifier for the workflow step that's based on the step's parameters.
+    pub fn get_id(&self) -> WorkflowStepId {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
-        hasher.finish()
+        WorkflowStepId(hasher.finish())
     }
 }
 
@@ -51,6 +54,12 @@ impl Hash for WorkflowStepDefinition {
             key.hash(state);
             self.parameters.get(key).hash(state);
         }
+    }
+}
+
+impl Display for WorkflowStepId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

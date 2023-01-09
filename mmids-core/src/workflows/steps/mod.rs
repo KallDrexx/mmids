@@ -1,6 +1,7 @@
 //! Workflow steps are individual actions that can be taken on media as part of a media pipeline.
 
 pub mod factory;
+pub mod futures_channel;
 pub mod workflow_forwarder;
 
 use super::MediaNotification;
