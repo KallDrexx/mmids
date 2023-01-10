@@ -66,19 +66,11 @@ impl StepInputs {
 pub struct StepOutputs {
     /// Media notifications that the workflow step intends to pass to the next workflow step
     pub media: Vec<MediaNotification>,
-
-    /// Any futures the workflow should track for this step
-    pub futures: Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
 }
 
 impl StepOutputs {
     pub fn new() -> Self {
         Default::default()
-    }
-
-    pub fn clear(&mut self) {
-        self.futures.clear();
-        self.media.clear();
     }
 }
 
@@ -96,7 +88,12 @@ pub trait WorkflowStep {
     ///
     /// It is expected that `execute()` will not be called if the step is in an Error or Torn Down
     /// state.
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs);
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
+    );
 
     /// Notifies the step that it is no longer needed and that all streams its managing should be
     /// closed.  All endpoints the step has interacted with should be proactively notified that it
@@ -119,12 +116,16 @@ use futures::StreamExt;
 use std::iter::FromIterator;
 #[cfg(feature = "test-utils")]
 use std::time::Duration;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::time::timeout;
+use crate::workflows::steps::futures_channel::{create_channel, FuturesChannelResult, WorkflowStepFuturesChannel};
 
 #[cfg(feature = "test-utils")]
 pub struct StepTestContext {
     pub step: Box<dyn WorkflowStep>,
-    pub futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     pub media_outputs: Vec<MediaNotification>,
+    pub futures_channel_sender: WorkflowStepFuturesChannel,
+    futures_channel_receiver: UnboundedReceiver<FuturesChannelResult>,
 }
 
 #[cfg(feature = "test-utils")]
@@ -137,10 +138,12 @@ impl StepTestContext {
             .generate(definition)
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 
+        let (sender, receiver) = create_channel(step.get_definition().get_id());
         Ok(StepTestContext {
             step,
-            futures: FuturesUnordered::from_iter(futures),
             media_outputs: Vec::new(),
+            futures_channel_sender: sender,
+            futures_channel_receiver: receiver,
         })
     }
 
@@ -149,9 +152,8 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.media.push(media);
 
-        self.step.execute(&mut inputs, &mut outputs);
+        self.step.execute(&mut inputs, &mut outputs, &self.futures_channel_sender);
 
-        self.futures.extend(outputs.futures.drain(..));
         self.media_outputs = outputs.media;
     }
 
@@ -160,9 +162,7 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.notifications.push(notification);
 
-        self.step.execute(&mut inputs, &mut outputs);
-
-        self.futures.extend(outputs.futures.drain(..));
+        self.step.execute(&mut inputs, &mut outputs, &self.futures_channel_sender);
         self.media_outputs = outputs.media;
 
         self.execute_pending_notifications().await;
@@ -170,19 +170,23 @@ impl StepTestContext {
 
     pub async fn execute_pending_notifications(&mut self) {
         loop {
-            let notification =
-                match tokio::time::timeout(Duration::from_millis(10), self.futures.next()).await {
-                    Ok(Some(notification)) => notification,
-                    _ => break,
-                };
+            let duration = Duration::from_millis(10);
+            let future = self.futures_channel_receiver.recv();
+
+            // We explicitly want to do a timeout instead of `try_recv` to ensure that any futures
+            // that are triggered get a chance to execute and complete. This is important since it's
+            // single threaded. A `yield()` may work but this is probably more reliable to give us
+            // enough time.
+            let notification = match timeout(duration, future).await {
+                Ok(Some(notification)) => notification,
+                _ => break,
+            };
 
             let mut outputs = StepOutputs::new();
             let mut inputs = StepInputs::new();
-            inputs.notifications.push(notification);
+            inputs.notifications.push(notification.result);
 
-            self.step.execute(&mut inputs, &mut outputs);
-
-            self.futures.extend(outputs.futures.drain(..));
+            self.step.execute(&mut inputs, &mut outputs, &self.futures_channel_sender);
             self.media_outputs = outputs.media;
         }
     }
