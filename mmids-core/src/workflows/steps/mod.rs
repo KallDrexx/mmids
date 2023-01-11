@@ -72,6 +72,10 @@ impl StepOutputs {
     pub fn new() -> Self {
         Default::default()
     }
+
+    pub fn clear(&mut self) {
+        self.media.clear();
+    }
 }
 
 /// Represents a workflow step that can be executed
@@ -92,7 +96,7 @@ pub trait WorkflowStep {
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
-        futures_channel: &WorkflowStepFuturesChannel,
+        futures_channel: WorkflowStepFuturesChannel,
     );
 
     /// Notifies the step that it is no longer needed and that all streams its managing should be
@@ -109,16 +113,10 @@ use crate::workflows::steps::factory::StepGenerator;
 #[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
 #[cfg(feature = "test-utils")]
-use futures::stream::FuturesUnordered;
-#[cfg(feature = "test-utils")]
-use futures::StreamExt;
-#[cfg(feature = "test-utils")]
-use std::iter::FromIterator;
-#[cfg(feature = "test-utils")]
 use std::time::Duration;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::time::timeout;
-use crate::workflows::steps::futures_channel::{create_channel, FuturesChannelResult, WorkflowStepFuturesChannel};
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 
 #[cfg(feature = "test-utils")]
 pub struct StepTestContext {
@@ -138,11 +136,16 @@ impl StepTestContext {
             .generate(definition)
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 
-        let (sender, receiver) = create_channel(step.get_definition().get_id());
+        let (sender, receiver) = unbounded_channel();
+        let channel = WorkflowStepFuturesChannel::new(
+            step.get_definition().get_id(),
+            &sender
+        );
+
         Ok(StepTestContext {
             step,
             media_outputs: Vec::new(),
-            futures_channel_sender: sender,
+            futures_channel_sender: channel,
             futures_channel_receiver: receiver,
         })
     }
@@ -152,7 +155,7 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.media.push(media);
 
-        self.step.execute(&mut inputs, &mut outputs, &self.futures_channel_sender);
+        self.step.execute(&mut inputs, &mut outputs, self.futures_channel_sender.clone());
 
         self.media_outputs = outputs.media;
     }
@@ -162,7 +165,7 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.notifications.push(notification);
 
-        self.step.execute(&mut inputs, &mut outputs, &self.futures_channel_sender);
+        self.step.execute(&mut inputs, &mut outputs, self.futures_channel_sender.clone());
         self.media_outputs = outputs.media;
 
         self.execute_pending_notifications().await;
@@ -186,7 +189,7 @@ impl StepTestContext {
             let mut inputs = StepInputs::new();
             inputs.notifications.push(notification.result);
 
-            self.step.execute(&mut inputs, &mut outputs, &self.futures_channel_sender);
+            self.step.execute(&mut inputs, &mut outputs, self.futures_channel_sender.clone());
             self.media_outputs = outputs.media;
         }
     }

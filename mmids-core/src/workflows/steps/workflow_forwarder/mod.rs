@@ -23,6 +23,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, span, Level};
+use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const TARGET_WORKFLOW: &str = "target_workflow";
 pub const REACTOR_NAME: &str = "reactor";
@@ -319,7 +320,7 @@ impl WorkflowForwarderStep {
         update: ReactorWorkflowUpdate,
         reactor_channel: UnboundedReceiver<ReactorWorkflowUpdate>,
         cancellation_channel: UnboundedReceiver<()>,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             if update.is_valid {
@@ -422,8 +423,12 @@ impl WorkflowForwarderStep {
 
             // Keep polling for updates even if no workflows were returned, as one may come in after
             // the fact.
-            let future = wait_for_reactor_update(stream_id, reactor_channel, cancellation_channel);
-            outputs.futures.push(future.boxed());
+            notify_on_reactor_update(
+                stream_id,
+                reactor_channel,
+                cancellation_channel,
+                futures_channel.clone(),
+            );
         }
     }
 }
@@ -437,7 +442,12 @@ impl WorkflowStep for WorkflowForwarderStep {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) {
         for notification in inputs.notifications.drain(..) {
             let notification: Box<dyn StepFutureResult> = notification;
             let future_result = match notification.downcast::<FutureResult>() {
@@ -645,31 +655,34 @@ async fn wait_for_reactor_response(
     })
 }
 
-async fn wait_for_reactor_update(
+fn notify_on_reactor_update(
     stream_id: StreamId,
     mut update_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
     mut cancellation_receiver: UnboundedReceiver<()>,
-) -> Box<dyn StepFutureResult> {
-    let result = tokio::select! {
-        update = update_receiver.recv() => {
-            match update {
-                Some(update) => FutureResult::ReactorUpdateReceived{
-                    stream_id,
-                    update,
-                    reactor_update_channel: update_receiver,
-                    cancellation_channel: cancellation_receiver,
-                },
+    futures_channel: WorkflowStepFuturesChannel,
+) {
+    tokio::spawn(async move {
+        let result = tokio::select! {
+            update = update_receiver.recv() => {
+                match update {
+                    Some(update) => FutureResult::ReactorUpdateReceived{
+                        stream_id,
+                        update,
+                        reactor_update_channel: update_receiver,
+                        cancellation_channel: cancellation_receiver,
+                    },
 
-                None => FutureResult::ReactorGone,
+                    None => FutureResult::ReactorGone,
+                }
             }
-        }
 
-        _ = cancellation_receiver.recv() => FutureResult::ReactorCancellationReceived {
-            stream_id,
-        }
-    };
+            _ = cancellation_receiver.recv() => FutureResult::ReactorCancellationReceived {
+                stream_id,
+            }
+        };
 
-    Box::new(result)
+        let _ = futures_channel.send(result);
+    });
 }
 
 async fn notify_reactor_manager_gone(

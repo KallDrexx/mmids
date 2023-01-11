@@ -3,8 +3,8 @@
 //! with minimal allocations.
 
 use crate::workflows::definitions::WorkflowStepId;
-use crate::workflows::steps::{StepFutureResult, WorkflowStep};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use crate::workflows::steps::StepFutureResult;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// An channel which can be used by workflow steps to send future completion results to the
 /// workflow runner.
@@ -20,20 +20,17 @@ pub(crate) struct FuturesChannelResult {
     pub result: Box<dyn StepFutureResult>,
 }
 
-/// Creates a new workflow step futures channel sender and receiver
-pub(crate) fn create_channel(
-    step_id: WorkflowStepId,
-) -> (
-    WorkflowStepFuturesChannel,
-    UnboundedReceiver<FuturesChannelResult>,
-) {
-    let (sender, receiver) = unbounded_channel();
-
-    let sender = WorkflowStepFuturesChannel { step_id, sender };
-    (sender, receiver)
-}
-
 impl WorkflowStepFuturesChannel {
+    pub(crate) fn new(
+        step_id: WorkflowStepId,
+        sender: &UnboundedSender<FuturesChannelResult>,
+    ) -> Self {
+        WorkflowStepFuturesChannel {
+            step_id,
+            sender: sender.clone()
+        }
+    }
+
     /// Sends the workflow step's future result over the channel. Returns an error if the channel
     /// is closed.
     pub fn send(&self, message: impl StepFutureResult) -> Result<(), Box<dyn StepFutureResult>> {

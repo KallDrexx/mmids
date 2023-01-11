@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, span, warn, Level};
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 
 /// A request to the workflow to perform an action
 #[derive(Debug)]
@@ -89,6 +90,7 @@ pub fn start_workflow(
 enum FutureResult {
     AllConsumersGone,
     WorkflowRequestReceived(WorkflowRequest),
+    StepFutureSendersGone,
 
     StepFutureResolved {
         step_id: WorkflowStepId,
@@ -116,6 +118,7 @@ struct Actor {
     step_factory: Arc<WorkflowStepFactory>,
     step_definitions: HashMap<WorkflowStepId, WorkflowStepDefinition>,
     status: WorkflowStatus,
+    step_futures_sender: UnboundedSender<FuturesChannelResult>,
 }
 
 impl Actor {
@@ -133,6 +136,17 @@ impl Actor {
             || FutureResult::AllConsumersGone,
         );
 
+        let (futures_sender, futures_receiver) = unbounded_channel();
+        notify_on_unbounded_recv(
+            futures_receiver,
+            actor_sender.clone(),
+            |result: FuturesChannelResult| FutureResult::StepFutureResolved {
+                step_id: result.step_id,
+                result: result.result,
+            },
+            || FutureResult::StepFutureSendersGone,
+        );
+
         Actor {
             internal_sender: actor_sender,
             name: definition.name.clone(),
@@ -147,6 +161,7 @@ impl Actor {
             step_factory,
             step_definitions: HashMap::new(),
             status: WorkflowStatus::Running,
+            step_futures_sender: futures_sender,
         }
     }
 
@@ -165,6 +180,13 @@ impl Actor {
                 FutureResult::AllConsumersGone => {
                     warn!("All channel owners gone");
                     break;
+                }
+
+                FutureResult::StepFutureSendersGone => {
+                    panic!(
+                        "All workflow runner future senders are gone, but should be impossible \
+                         since the actor holds a sender."
+                    );
                 }
 
                 FutureResult::WorkflowRequestReceived(request) => {
@@ -433,20 +455,13 @@ impl Actor {
             }
         };
 
-        step.execute(&mut self.step_inputs, &mut self.step_outputs);
+        let channel = WorkflowStepFuturesChannel::new(step_id, &self.step_futures_sender);
+        step.execute(&mut self.step_inputs, &mut self.step_outputs, channel);
         if let StepStatus::Error { message } = step.get_status() {
             let message = message.clone();
             self.set_status_to_error(step_id, message);
 
             return;
-        }
-
-        for future in self.step_outputs.futures.drain(..) {
-            notify_on_step_future_resolve(
-                step.get_definition().get_id(),
-                future,
-                self.internal_sender.clone(),
-            );
         }
 
         self.update_stream_details(step_id);
