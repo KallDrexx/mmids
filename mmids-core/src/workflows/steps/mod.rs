@@ -19,6 +19,7 @@ pub type StepCreationResult = Result<
     (Box<dyn WorkflowStep + Sync + Send>, FutureList),
     Box<dyn std::error::Error + Sync + Send>,
 >;
+
 pub type CreateFactoryFnResult =
     Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>;
 
@@ -110,13 +111,13 @@ pub trait WorkflowStep {
 
 #[cfg(feature = "test-utils")]
 use crate::workflows::steps::factory::StepGenerator;
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 #[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
 #[cfg(feature = "test-utils")]
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::time::timeout;
-use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 
 #[cfg(feature = "test-utils")]
 pub struct StepTestContext {
@@ -137,10 +138,7 @@ impl StepTestContext {
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 
         let (sender, receiver) = unbounded_channel();
-        let channel = WorkflowStepFuturesChannel::new(
-            step.get_definition().get_id(),
-            &sender
-        );
+        let channel = WorkflowStepFuturesChannel::new(step.get_definition().get_id(), &sender);
 
         Ok(StepTestContext {
             step,
@@ -155,7 +153,11 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.media.push(media);
 
-        self.step.execute(&mut inputs, &mut outputs, self.futures_channel_sender.clone());
+        self.step.execute(
+            &mut inputs,
+            &mut outputs,
+            self.futures_channel_sender.clone(),
+        );
 
         self.media_outputs = outputs.media;
     }
@@ -165,7 +167,11 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.notifications.push(notification);
 
-        self.step.execute(&mut inputs, &mut outputs, self.futures_channel_sender.clone());
+        self.step.execute(
+            &mut inputs,
+            &mut outputs,
+            self.futures_channel_sender.clone(),
+        );
         self.media_outputs = outputs.media;
 
         self.execute_pending_notifications().await;
@@ -189,7 +195,11 @@ impl StepTestContext {
             let mut inputs = StepInputs::new();
             inputs.notifications.push(notification.result);
 
-            self.step.execute(&mut inputs, &mut outputs, self.futures_channel_sender.clone());
+            self.step.execute(
+                &mut inputs,
+                &mut outputs,
+                self.futures_channel_sender.clone(),
+            );
             self.media_outputs = outputs.media;
         }
     }

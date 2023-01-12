@@ -10,6 +10,7 @@ use crate::reactors::manager::ReactorManagerRequest;
 use crate::reactors::ReactorWorkflowUpdate;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::factory::StepGenerator;
+use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use crate::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -17,14 +18,12 @@ use crate::workflows::{
     MediaNotification, MediaNotificationContent, WorkflowRequest, WorkflowRequestOperation,
 };
 use crate::StreamId;
-use futures::FutureExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, span, Level};
-use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const TARGET_WORKFLOW: &str = "target_workflow";
 pub const REACTOR_NAME: &str = "reactor";
@@ -113,7 +112,11 @@ impl WorkflowForwarderStepGenerator {
 }
 
 impl StepGenerator for WorkflowForwarderStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let target_workflow_name = match definition.parameters.get(TARGET_WORKFLOW) {
             Some(Some(name)) => Some(Arc::new(name.clone())),
             _ => None,
@@ -152,12 +155,10 @@ impl StepGenerator for WorkflowForwarderStepGenerator {
             known_workflows: HashMap::new(),
         };
 
-        let futures = vec![
-            notify_on_workflow_event(event_receiver).boxed(),
-            notify_reactor_manager_gone(self.reactor_manager.clone()).boxed(),
-        ];
+        notify_on_workflow_event(event_receiver, &futures_channel);
+        notify_reactor_manager_gone(self.reactor_manager.clone(), &futures_channel);
 
-        Ok((Box::new(step), futures))
+        Ok((Box::new(step), Vec::new()))
     }
 }
 
@@ -176,12 +177,12 @@ impl WorkflowForwarderStep {
                 {
                     let channel = channel.clone();
                     let name = name.clone();
-                    futures_channel.send_on_future_completion(
-                        async move {
-                            channel.closed().await;
-                            FutureResult::WorkflowGone { workflow_name: name }
+                    futures_channel.send_on_future_completion(async move {
+                        channel.closed().await;
+                        FutureResult::WorkflowGone {
+                            workflow_name: name,
                         }
-                    )
+                    })
                 }
 
                 if let Some(stream_ids) = self.stream_for_workflow_name.get(&name) {
@@ -258,24 +259,22 @@ impl WorkflowForwarderStep {
 
                         let stream_id = media.stream_id.clone();
                         let stream_name = stream_name.clone();
-                        futures_channel.send_on_future_completion(
-                            async move {
-                                let result = match receiver.recv().await {
-                                    Some(response) => response,
-                                    None => ReactorWorkflowUpdate {
-                                        is_valid: false,
-                                        routable_workflow_names: HashSet::new(),
-                                    }
-                                };
+                        futures_channel.send_on_future_completion(async move {
+                            let result = match receiver.recv().await {
+                                Some(response) => response,
+                                None => ReactorWorkflowUpdate {
+                                    is_valid: false,
+                                    routable_workflow_names: HashSet::new(),
+                                },
+                            };
 
-                                FutureResult::ReactorResponseReceived {
-                                    stream_id,
-                                    stream_name,
-                                    update: result,
-                                    reactor_update_channel: receiver,
-                                }
+                            FutureResult::ReactorResponseReceived {
+                                stream_id,
+                                stream_name,
+                                update: result,
+                                reactor_update_channel: receiver,
                             }
-                        );
+                        });
                     }
 
                     self.active_streams
@@ -338,11 +337,7 @@ impl WorkflowForwarderStep {
         outputs.media.push(media);
     }
 
-    fn handle_reactor_update(
-        &mut self,
-        stream_id: StreamId,
-        update: ReactorWorkflowUpdate,
-    ) {
+    fn handle_reactor_update(&mut self, stream_id: StreamId, update: ReactorWorkflowUpdate) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             if update.is_valid {
                 let new_workflows = update
@@ -527,7 +522,7 @@ impl WorkflowStep for WorkflowForwarderStep {
                     }
                 }
 
-                FutureResult::ReactorUpdateReceived { stream_id, update} => {
+                FutureResult::ReactorUpdateReceived { stream_id, update } => {
                     self.handle_reactor_update(stream_id, update);
                 }
 
@@ -610,44 +605,13 @@ fn notify_on_workflow_event(
     mut receiver: UnboundedReceiver<WorkflowStartedOrStoppedEvent>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_future_completion(
-        async move {
-            match receiver.recv().await {
-                Some(event) => FutureResult::WorkflowStartedOrStopped(
-                    event,
-                    receiver,
-                ),
+    futures_channel.send_on_future_completion(async move {
+        match receiver.recv().await {
+            Some(event) => FutureResult::WorkflowStartedOrStopped(event, receiver),
 
-                None => FutureResult::EventHubGone,
-            }
+            None => FutureResult::EventHubGone,
         }
-    );
-}
-
-fn notify_on_reactor_response(
-    stream_id: StreamId,
-    stream_name: Arc<String>,
-    mut receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
-    futures_channel: &WorkflowStepFuturesChannel,
-) {
-    futures_channel.send_on_future_completion(
-        async move {
-            let result = match receiver.recv().await {
-                Some(response) => response,
-                None => ReactorWorkflowUpdate {
-                    is_valid: false,
-                    routable_workflow_names: HashSet::new(),
-                },
-            };
-
-            FutureResult::ReactorResponseReceived {
-                stream_id,
-                stream_name,
-                update: result,
-                reactor_update_channel: receiver,
-            }
-        }
-    );
+    });
 }
 
 fn notify_on_reactor_update(
@@ -668,13 +632,16 @@ fn notify_on_reactor_update(
         || FutureResult::ReactorGone,
         move || FutureResult::ReactorCancellationReceived {
             stream_id: cancelled_stream_id,
-        }
+        },
     );
 }
 
-async fn notify_reactor_manager_gone(
+fn notify_reactor_manager_gone(
     sender: UnboundedSender<ReactorManagerRequest>,
-) -> Box<dyn StepFutureResult> {
-    sender.closed().await;
-    Box::new(FutureResult::ReactorManagerGone)
+    futures_channel: &WorkflowStepFuturesChannel,
+) {
+    futures_channel.send_on_future_completion(async move {
+        sender.closed().await;
+        FutureResult::ReactorManagerGone
+    });
 }

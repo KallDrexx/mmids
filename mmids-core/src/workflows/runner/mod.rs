@@ -8,6 +8,7 @@ mod tests;
 use crate::actor_utils::notify_on_unbounded_recv;
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepId};
 use crate::workflows::steps::factory::WorkflowStepFactory;
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -20,7 +21,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tracing::{error, info, instrument, span, warn, Level};
-use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 
 /// A request to the workflow to perform an action
 #[derive(Debug)]
@@ -354,7 +354,11 @@ impl Actor {
 
                 info!("Creating step {}", details);
 
-                let step_result = match self.step_factory.create_step(step_definition) {
+                let step_result = self
+                    .step_factory
+                    .create_step(step_definition, &self.step_futures_sender);
+
+                let step_result = match step_result {
                     Ok(step_result) => step_result,
                     Err(error) => {
                         error!("Step factory failed to generate step instance: {:?}", error);

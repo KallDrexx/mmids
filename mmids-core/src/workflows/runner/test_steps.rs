@@ -7,6 +7,7 @@ use crate::workflows::MediaNotification;
 use futures::FutureExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch::Receiver;
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 
 pub struct TestInputStepGenerator {
     pub media_receiver: Receiver<MediaNotification>,
@@ -30,6 +31,7 @@ struct TestOutputStep {
 }
 
 impl StepFutureResult for InputFutureResult {}
+
 enum InputFutureResult {
     StatusChannelClosed,
     MediaChannelClosed,
@@ -38,13 +40,18 @@ enum InputFutureResult {
 }
 
 impl StepFutureResult for OutputFutureResult {}
+
 enum OutputFutureResult {
     StatusChannelClosed,
-    StatusReceived(Receiver<StepStatus>),
+    StatusReceived,
 }
 
 impl StepGenerator for TestInputStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        _futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let step = TestInputStep {
             status: StepStatus::Created,
             definition,
@@ -60,16 +67,20 @@ impl StepGenerator for TestInputStepGenerator {
 }
 
 impl StepGenerator for TestOutputStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let step = TestOutputStep {
             status: StepStatus::Created,
             definition,
             media: self.media_sender.clone(),
         };
 
-        let futures = vec![output_status_received(self.status_change.clone()).boxed()];
+        output_status_received(self.status_change.clone(), &futures_channel);
 
-        Ok((Box::new(step), futures))
+        Ok((Box::new(step), Vec::new()))
     }
 }
 
@@ -82,7 +93,12 @@ impl WorkflowStep for TestInputStep {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         for notification in inputs.notifications.drain(..) {
             let future_result = match notification.downcast::<InputFutureResult>() {
                 Ok(result) => result,
@@ -108,7 +124,7 @@ impl WorkflowStep for TestInputStep {
                     outputs.media.push(media);
                 }
 
-                InputFutureResult::StatusReceived(receiver) => {
+                InputFutureResult::StatusReceived => {
                     let status = (*receiver.borrow()).clone();
                     outputs
                         .futures
@@ -190,11 +206,13 @@ async fn input_status_received(mut receiver: Receiver<StepStatus>) -> Box<dyn St
     Box::new(result)
 }
 
-async fn output_status_received(mut receiver: Receiver<StepStatus>) -> Box<dyn StepFutureResult> {
-    let result = match receiver.changed().await {
-        Ok(()) => OutputFutureResult::StatusReceived(receiver),
-        Err(_) => OutputFutureResult::StatusChannelClosed,
-    };
-
-    Box::new(result)
+fn output_status_received(
+    mut receiver: Receiver<StepStatus>,
+    futures_channel: &WorkflowStepFuturesChannel,
+) {
+    futures_channel.send_on_watch_recv(
+        receiver,
+        || OutputFutureResult::StatusReceived,
+        || OutputFutureResult::StatusChannelClosed,
+    );
 }

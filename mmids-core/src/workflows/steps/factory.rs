@@ -1,12 +1,18 @@
 use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 use crate::workflows::steps::StepCreationResult;
 use std::collections::HashMap;
 use thiserror::Error;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Represents a type that can generate an instance of a workflow step
 pub trait StepGenerator {
     /// Creates a brand new instance of a workflow step based on the supplied definition
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult;
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult;
 }
 
 /// The workflow step factory allows consumers to register different workflow step generation
@@ -54,15 +60,19 @@ impl WorkflowStepFactory {
     }
 
     /// Attempts to create a new instance of a workflow step based on a specified definition
-    pub fn create_step(
+    pub(crate) fn create_step(
         &self,
         definition: WorkflowStepDefinition,
+        futures_channel: &UnboundedSender<FuturesChannelResult>,
     ) -> Result<StepCreationResult, FactoryCreateError> {
         let generator = match self.generators.get(&definition.step_type) {
             Some(generator) => generator,
             None => return Err(FactoryCreateError::NoRegisteredStep(definition.step_type)),
         };
 
-        Ok(generator.generate(definition))
+        let futures_channel =
+            WorkflowStepFuturesChannel::new(definition.get_id(), futures_channel.clone());
+
+        Ok(generator.generate(definition, futures_channel))
     }
 }
