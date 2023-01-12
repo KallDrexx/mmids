@@ -2,9 +2,11 @@
 //! to execute a future and send the results of those futures back to the correct workflow runner
 //! with minimal allocations.
 
+use std::future::Future;
 use crate::workflows::definitions::WorkflowStepId;
 use crate::workflows::steps::StepFutureResult;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio_util::sync::CancellationToken;
 
 /// An channel which can be used by workflow steps to send future completion results to the
 /// workflow runner.
@@ -47,5 +49,109 @@ impl WorkflowStepFuturesChannel {
     /// Completes when the channel is closed due to there being no receiver
     pub async fn closed(&self) {
         self.sender.closed().await
+    }
+
+    /// Helper function for workflow steps to watch a receiver for messages, and send them back
+    /// to the workflow step for processing.
+    pub fn send_on_unbounded_recv<ReceiverMessage, FutureResult>(
+        &self,
+        mut receiver: UnboundedReceiver<ReceiverMessage>,
+        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send,
+        on_closed: impl FnOnce() -> FutureResult + Send,
+    ) where
+        ReceiverMessage: Send,
+        FutureResult: StepFutureResult + Send,
+    {
+        let channel = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    message = receiver.recv() => {
+                        match message {
+                            Some(message) => {
+                                let future_result = on_recv(message);
+                                let _ = channel.send(future_result);
+                            }
+
+                            None => {
+                                let future_result = on_closed();
+                                let _ = channel.send(future_result);
+                                break;
+                            }
+                        }
+                    }
+
+                    _ = channel.closed() => {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Helper function for workflow steps to watch a receiver for messages, and send them back
+    /// to the workflow step for processing. Cancellable via a token.
+    pub fn send_on_unbounded_recv_cancellable<ReceiverMessage, FutureResult>(
+        &self,
+        mut receiver: UnboundedReceiver<ReceiverMessage>,
+        cancellation_token: CancellationToken,
+        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send,
+        on_closed: impl FnOnce() -> FutureResult + Send,
+        on_cancelled: impl FnOnce() -> FutureResult + Send,
+    ) where
+        ReceiverMessage: Send,
+        FutureResult: StepFutureResult + Send,
+    {
+        let channel = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    message = receiver.recv() => {
+                        match message {
+                            Some(message) => {
+                                let future_result = on_recv(message);
+                                let _ = channel.send(future_result);
+                            }
+
+                            None => {
+                                let future_result = on_closed();
+                                let _ = channel.send(future_result);
+                                break;
+                            }
+                        }
+                    }
+
+                    _ = cancellation_token.cancelled() => {
+                        let future_result = on_cancelled();
+                        let _ = channel.send(future_result);
+                        break;
+                    }
+
+                    _ = channel.closed() => {
+                        // Nothing ot send since the channel is closed
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Helper function for workflow steps to easily send a message upon future completion
+    pub fn send_on_future_completion(
+        &self,
+        future: impl Future<Output = impl StepFutureResult + Send> + Send,
+    ) {
+        let channel = self.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                result = future => {
+                    let _ = channel.send(result);
+                }
+
+                _ = channel.closed() => {
+                    // No where to send the result, so cancel the future by exiting
+                }
+            }
+        });
     }
 }
