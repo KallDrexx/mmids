@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub struct FfmpegHandler {
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
@@ -114,7 +115,7 @@ impl FfmpegHandler {
 }
 
 impl ExternalStreamHandler for FfmpegHandler {
-    fn prepare_stream(&mut self, stream_name: &str, outputs: &mut StepOutputs) {
+    fn prepare_stream(&mut self, stream_name: &str, futures_channel: &WorkflowStepFuturesChannel) {
         if let FfmpegHandlerStatus::Inactive = &self.status {
             let parameters = self
                 .param_generator
@@ -182,7 +183,7 @@ impl ExternalStreamHandler for FfmpegHandler {
 async fn wait_for_ffmpeg_notification(
     stream_id: StreamId,
     mut receiver: UnboundedReceiver<FfmpegEndpointNotification>,
-) -> Box<dyn StepFutureResult> {
+) {
     let result = match receiver.recv().await {
         Some(msg) => FutureResult::NotificationReceived(msg, receiver),
 

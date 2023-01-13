@@ -94,7 +94,7 @@ impl ExternalStreamReader {
     pub fn handle_resolved_future(
         &mut self,
         notification: Box<dyn StepFutureResult>,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         let notification = match notification.downcast::<StreamHandlerFutureWrapper>() {
             Err(e) => e,
@@ -109,7 +109,7 @@ impl ExternalStreamReader {
 
                 match result {
                     ResolvedFutureStatus::Success => {
-                        self.prepare_stream(wrapper.stream_id, outputs)
+                        self.prepare_stream(wrapper.stream_id, futures_channel)
                     }
                     ResolvedFutureStatus::StreamShouldBeStopped => {
                         self.stop_stream(&wrapper.stream_id);
@@ -140,22 +140,23 @@ impl ExternalStreamReader {
                 }
             }
 
-            FutureResult::WatchNotificationReceived(stream_id, notification, receiver) => {
+            FutureResult::WatchNotificationReceived(stream_id, notification) => {
                 if !self.active_streams.contains_key(&stream_id) {
                     // late notification after stopping a stream
                     return;
                 }
-
-                outputs
-                    .futures
-                    .push(wait_for_watch_notification(stream_id.clone(), receiver).boxed());
 
                 self.handle_rtmp_watch_notification(stream_id, notification, outputs);
             }
         }
     }
 
-    pub fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
+    pub fn handle_media(
+        &mut self,
+        media: MediaNotification,
+        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         match &media.content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(stream) = self.active_streams.get(&media.stream_id) {
@@ -188,7 +189,7 @@ impl ExternalStreamReader {
                 };
 
                 self.active_streams.insert(media.stream_id.clone(), stream);
-                self.prepare_stream(media.stream_id.clone(), outputs);
+                self.prepare_stream(media.stream_id.clone(), futures_channel);
             }
 
             MediaNotificationContent::StreamDisconnected => {
@@ -295,7 +296,7 @@ impl ExternalStreamReader {
 
                 stream
                     .external_stream_handler
-                    .prepare_stream(&stream.stream_name, outputs);
+                    .prepare_stream(&stream.stream_name, futures_channel);
             }
         }
     }
@@ -330,7 +331,7 @@ impl ExternalStreamReader {
         &mut self,
         stream_id: StreamId,
         notification: RtmpEndpointWatcherNotification,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             match notification {
@@ -386,7 +387,7 @@ impl ExternalStreamReader {
             }
         }
 
-        self.prepare_stream(stream_id, outputs);
+        self.prepare_stream(stream_id, futures_channel);
     }
 }
 
@@ -396,18 +397,6 @@ async fn notify_when_rtmp_endpoint_is_gone(
     endpoint.closed().await;
 
     Box::new(FutureResult::RtmpEndpointGone)
-}
-
-async fn wait_for_watch_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<RtmpEndpointWatcherNotification>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::WatchNotificationReceived(stream_id, msg, receiver),
-        None => FutureResult::WatchChannelGone(stream_id),
-    };
-
-    Box::new(result)
 }
 
 #[cfg(test)]
@@ -436,7 +425,6 @@ mod tests {
     struct TestContext {
         external_stream_reader: ExternalStreamReader,
         rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
-        futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
         prepare_stream_receiver: UnboundedReceiver<String>,
         stop_stream_receiver: UnboundedReceiver<()>,
     }
@@ -447,7 +435,7 @@ mod tests {
     }
 
     impl ExternalStreamHandler for Handler {
-        fn prepare_stream(&mut self, stream_name: &str, _outputs: &mut StepOutputs) {
+        fn prepare_stream(&mut self, stream_name: &str, _futures_channel: &WorkflowStepFuturesChannel) {
             let _ = self.prepare_stream_sender.send(stream_name.to_string());
         }
 
@@ -492,20 +480,17 @@ mod tests {
             let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
             let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
 
-            let (reader, future_list) = ExternalStreamReader::new(
+            let reader = ExternalStreamReader::new(
                 Arc::new("app".to_string()),
                 rtmp_sender,
                 generator,
                 is_keyframe_metadata_key,
                 pts_offset_metadata_key,
             );
-            let mut futures = FuturesUnordered::new();
-            futures.extend(future_list);
 
             TestContext {
                 rtmp_endpoint: rtmp_receiver,
                 external_stream_reader: reader,
-                futures,
                 prepare_stream_receiver: prepare_receiver,
                 stop_stream_receiver: stop_receiver,
             }
