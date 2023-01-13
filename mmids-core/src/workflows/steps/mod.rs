@@ -7,18 +7,14 @@ pub mod workflow_forwarder;
 use super::MediaNotification;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
-use futures::future::BoxFuture;
 
 /// Represents the result of a future for a workflow step.  It is expected that the workflow step
 /// will downcast this result into a struct that it owns.
 pub trait StepFutureResult: Downcast + Send {}
 impl_downcast!(StepFutureResult);
 
-pub type FutureList = Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>;
-pub type StepCreationResult = Result<
-    (Box<dyn WorkflowStep + Sync + Send>, FutureList),
-    Box<dyn std::error::Error + Sync + Send>,
->;
+pub type StepCreationResult =
+    Result<Box<dyn WorkflowStep + Sync + Send>, Box<dyn std::error::Error + Sync + Send>>;
 
 pub type CreateFactoryFnResult =
     Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>;
@@ -133,12 +129,12 @@ impl StepTestContext {
         generator: Box<dyn StepGenerator>,
         definition: WorkflowStepDefinition,
     ) -> Result<Self> {
-        let (step, futures) = generator
-            .generate(definition)
-            .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
-
         let (sender, receiver) = unbounded_channel();
-        let channel = WorkflowStepFuturesChannel::new(step.get_definition().get_id(), &sender);
+        let channel = WorkflowStepFuturesChannel::new(definition.get_id(), sender);
+
+        let step = generator
+            .generate(definition, channel.clone())
+            .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 
         Ok(StepTestContext {
             step,
@@ -219,5 +215,15 @@ impl StepTestContext {
         self.execute_with_media(media);
 
         assert!(self.media_outputs.is_empty(), "Expected no media outputs");
+    }
+
+    /// Gets the first future that was resolved on the workflow step futures channel. If no future
+    /// is resolved, then a panic will ensue.
+    pub async fn expect_future_resolved(&mut self) -> Box<dyn StepFutureResult> {
+        let future = self.futures_channel_receiver.recv();
+        match timeout(Duration::from_millis(10), future).await {
+            Ok(Some(response)) => response.result,
+            _ => panic!("No future resolved within timeout period"),
+        }
     }
 }

@@ -51,11 +51,11 @@ impl WorkflowStepFuturesChannel {
     pub fn send_on_unbounded_recv<ReceiverMessage, FutureResult>(
         &self,
         mut receiver: UnboundedReceiver<ReceiverMessage>,
-        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send,
-        on_closed: impl FnOnce() -> FutureResult + Send,
+        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send + 'static,
+        on_closed: impl FnOnce() -> FutureResult + Send + 'static,
     ) where
-        ReceiverMessage: Send,
-        FutureResult: StepFutureResult + Send,
+        ReceiverMessage: Send + 'static,
+        FutureResult: StepFutureResult + Send + 'static,
     {
         let channel = self.clone();
         tokio::spawn(async move {
@@ -90,12 +90,12 @@ impl WorkflowStepFuturesChannel {
         &self,
         mut receiver: UnboundedReceiver<ReceiverMessage>,
         cancellation_token: CancellationToken,
-        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send,
-        on_closed: impl FnOnce() -> FutureResult + Send,
-        on_cancelled: impl FnOnce() -> FutureResult + Send,
+        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send + 'static,
+        on_closed: impl FnOnce() -> FutureResult + Send + 'static,
+        on_cancelled: impl FnOnce() -> FutureResult + Send + 'static,
     ) where
-        ReceiverMessage: Send,
-        FutureResult: StepFutureResult + Send,
+        ReceiverMessage: Send + 'static,
+        FutureResult: StepFutureResult + Send + 'static,
     {
         let channel = self.clone();
         tokio::spawn(async move {
@@ -136,24 +136,25 @@ impl WorkflowStepFuturesChannel {
     pub fn send_on_watch_recv<ReceiverMessage, FutureResult>(
         &self,
         mut receiver: tokio::sync::watch::Receiver<ReceiverMessage>,
-        on_recv: impl Fn(ReceiverMessage) -> FutureResult + Send,
-        on_closed: impl FnOnce() -> FutureResult + Send,
+        on_recv: impl Fn(&ReceiverMessage) -> FutureResult + Send + 'static,
+        on_closed: impl FnOnce() -> FutureResult + Send + 'static,
     ) where
-        ReceiverMessage: Send,
-        FutureResult: StepFutureResult + Send,
+        ReceiverMessage: Send + Sync + 'static,
+        FutureResult: StepFutureResult + Send + 'static,
     {
         let channel = self.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    message = receiver.recv() => {
+                    message = receiver.changed() => {
                         match message {
-                            Some(message) => {
-                                let future_result = on_recv(message);
+                            Ok(_) => {
+                                let value = receiver.borrow();
+                                let future_result = on_recv(&value);
                                 let _ = channel.send(future_result);
                             }
 
-                            None => {
+                            Err(_) => {
                                 let future_result = on_closed();
                                 let _ = channel.send(future_result);
                                 break;
@@ -172,7 +173,7 @@ impl WorkflowStepFuturesChannel {
     /// Helper function for workflow steps to easily send a message upon future completion
     pub fn send_on_future_completion(
         &self,
-        future: impl Future<Output = impl StepFutureResult + Send> + Send,
+        future: impl Future<Output = impl StepFutureResult + Send> + Send + 'static,
     ) {
         let channel = self.clone();
         tokio::spawn(async move {

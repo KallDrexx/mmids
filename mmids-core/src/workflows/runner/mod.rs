@@ -14,7 +14,6 @@ use crate::workflows::steps::{
 };
 use crate::workflows::{MediaNotification, MediaNotificationContent};
 use crate::StreamId;
-use futures::future::BoxFuture;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -105,7 +104,6 @@ struct StreamDetails {
 }
 
 struct Actor {
-    internal_sender: UnboundedSender<FutureResult>,
     name: Arc<String>,
     steps_by_definition_id: HashMap<WorkflowStepId, Box<dyn WorkflowStep + Send>>,
     active_steps: Vec<WorkflowStepId>,
@@ -139,7 +137,7 @@ impl Actor {
         let (futures_sender, futures_receiver) = unbounded_channel();
         notify_on_unbounded_recv(
             futures_receiver,
-            actor_sender.clone(),
+            actor_sender,
             |result: FuturesChannelResult| FutureResult::StepFutureResolved {
                 step_id: result.step_id,
                 result: result.result,
@@ -148,7 +146,6 @@ impl Actor {
         );
 
         Actor {
-            internal_sender: actor_sender,
             name: definition.name.clone(),
             steps_by_definition_id: HashMap::new(),
             active_steps: Vec::new(),
@@ -371,8 +368,8 @@ impl Actor {
                     }
                 };
 
-                let (step, futures) = match step_result {
-                    Ok((step, futures)) => (step, futures),
+                let step = match step_result {
+                    Ok(step) => step,
                     Err(error) => {
                         error!("Step could not be generated: {}", error);
                         self.set_status_to_error(id, format!("Failed to generate step: {}", error));
@@ -380,10 +377,6 @@ impl Actor {
                         return;
                     }
                 };
-
-                for future in futures {
-                    notify_on_step_future_resolve(id, future, self.internal_sender.clone());
-                }
 
                 entry.insert(step);
                 info!("Step type '{}' created", step_type);
@@ -459,7 +452,7 @@ impl Actor {
             }
         };
 
-        let channel = WorkflowStepFuturesChannel::new(step_id, &self.step_futures_sender);
+        let channel = WorkflowStepFuturesChannel::new(step_id, self.step_futures_sender.clone());
         step.execute(&mut self.step_inputs, &mut self.step_outputs, channel);
         if let StepStatus::Error { message } = step.get_status() {
             let message = message.clone();
@@ -743,20 +736,4 @@ impl Actor {
             }
         }
     }
-}
-
-fn notify_on_step_future_resolve(
-    step_id: WorkflowStepId,
-    future: BoxFuture<'static, Box<dyn StepFutureResult>>,
-    actor_channel: UnboundedSender<FutureResult>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            result = future => {
-                let _ = actor_channel.send(FutureResult::StepFutureResolved {step_id, result});
-            }
-
-            _ = actor_channel.closed() => { }
-        }
-    });
 }

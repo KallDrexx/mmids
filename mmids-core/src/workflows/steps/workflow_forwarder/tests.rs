@@ -90,7 +90,7 @@ impl TestContext {
             })
             .expect("Failed to send workflow started event");
 
-        let result = test_utils::expect_future_resolved(&mut self.step_context.futures).await;
+        let result = self.step_context.expect_future_resolved().await;
         self.step_context.execute_notification(result).await;
     }
 
@@ -101,7 +101,7 @@ impl TestContext {
             })
             .expect("Failed to send workflow ended event");
 
-        let result = test_utils::expect_future_resolved(&mut self.step_context.futures).await;
+        let result = self.step_context.expect_future_resolved().await;
         self.step_context.execute_notification(result).await;
     }
 }
