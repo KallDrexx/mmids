@@ -8,13 +8,14 @@ use crate::workflow_steps::external_stream_handler::{
 };
 use futures::FutureExt;
 use mmids_core::workflows::metadata::MetadataKey;
-use mmids_core::workflows::steps::{FutureList, StepFutureResult, StepOutputs, StepStatus};
+use mmids_core::workflows::steps::{StepFutureResult, StepOutputs, StepStatus};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 /// Represents logic for a basic workflow step that exposes streams to an RTMP endpoint
 /// so that an external system can read the video stream.  This exposes a read-only interface for
@@ -56,11 +57,7 @@ struct ActiveStream {
 enum FutureResult {
     RtmpEndpointGone,
     WatchChannelGone(StreamId),
-    WatchNotificationReceived(
-        StreamId,
-        RtmpEndpointWatcherNotification,
-        UnboundedReceiver<RtmpEndpointWatcherNotification>,
-    ),
+    WatchNotificationReceived(StreamId, RtmpEndpointWatcherNotification),
 }
 
 impl StepFutureResult for FutureResult {}
@@ -72,7 +69,8 @@ impl ExternalStreamReader {
         external_handler_generator: Box<dyn ExternalStreamHandlerGenerator + Sync + Send>,
         is_keyframe_metadata_key: MetadataKey,
         pts_offset_metadata_key: MetadataKey,
-    ) -> (Self, FutureList) {
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) -> Self {
         let step = ExternalStreamReader {
             status: StepStatus::Active,
             watcher_app_name: watcher_rtmp_app_name,
@@ -83,9 +81,14 @@ impl ExternalStreamReader {
             pts_offset_metadata_key,
         };
 
-        let futures = vec![notify_when_rtmp_endpoint_is_gone(rtmp_server).boxed()];
+        futures_channel.send_on_future_completion(
+            async move {
+                rtmp_server.closed().await;
+                FutureResult::RtmpEndpointGone
+            }
+        );
 
-        (step, futures)
+        step
     }
 
     pub fn handle_resolved_future(
@@ -227,7 +230,11 @@ impl ExternalStreamReader {
         outputs.media.push(media);
     }
 
-    pub fn prepare_stream(&mut self, stream_id: StreamId, outputs: &mut StepOutputs) {
+    pub fn prepare_stream(
+        &mut self,
+        stream_id: StreamId,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             let (output_is_active, output_media_channel) = match &stream.rtmp_output_status {
                 WatchRegistrationStatus::Inactive => {
@@ -246,9 +253,14 @@ impl ExternalStreamReader {
                                 requires_registrant_approval: false,
                             });
 
-                    outputs.futures.push(
-                        wait_for_watch_notification(stream.id.clone(), watch_receiver).boxed(),
+                    let stream_id = stream.id.clone();
+                    let closed_stream_id = stream_id.clone();
+                    futures_channel.send_on_unbounded_recv(
+                        watch_receiver,
+                        move |event| FutureResult::WatchNotificationReceived(stream_id, event),
+                        move || FutureResult::WatchChannelGone(closed_stream_id),
                     );
+
                     stream.rtmp_output_status = WatchRegistrationStatus::Pending {
                         media_channel: media_sender,
                     };
