@@ -17,13 +17,13 @@ pub struct WorkflowStepFuturesChannel {
 }
 
 /// The type of information that's returned to the workflow upon a future's completion
-pub(crate) struct FuturesChannelResult {
+pub struct FuturesChannelResult {
     pub step_id: WorkflowStepId,
     pub result: Box<dyn StepFutureResult>,
 }
 
 impl WorkflowStepFuturesChannel {
-    pub(crate) fn new(
+    pub fn new(
         step_id: WorkflowStepId,
         sender: UnboundedSender<FuturesChannelResult>,
     ) -> Self {

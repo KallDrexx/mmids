@@ -1,5 +1,5 @@
 use downcast_rs::{impl_downcast, Downcast};
-use mmids_core::workflows::steps::{StepFutureResult, StepOutputs};
+use mmids_core::workflows::steps::StepFutureResult;
 use mmids_core::StreamId;
 use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
@@ -12,7 +12,6 @@ pub trait ExternalStreamHandler {
     fn handle_resolved_future(
         &mut self,
         future: Box<dyn StreamHandlerFutureResult>,
-        outputs: &mut StepOutputs,
     ) -> ResolvedFutureStatus;
 }
 

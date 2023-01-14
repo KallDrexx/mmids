@@ -11,7 +11,6 @@ use crate::rtmp_server::{
     StreamKeyRegistration, ValidationResponse,
 };
 use bytes::BytesMut;
-use futures::FutureExt;
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::{ConnectionId, IpAddress, IpAddressParseError};
 use mmids_core::reactors::manager::ReactorManagerRequest;
@@ -33,7 +32,9 @@ use std::time::Duration;
 use thiserror::Error as ThisError;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -59,7 +60,7 @@ struct ConnectionDetails {
     // will inform the reactor that this step is no longer interested in whatever workflow it was
     // managing for it. Not using a one shot, as the channel needs to live across multiple futures
     // if updates come in.
-    _cancellation_channel: Option<UnboundedSender<()>>,
+    cancellation_channel: Option<CancellationToken>,
 }
 
 struct RtmpReceiverStep {
@@ -83,10 +84,7 @@ enum FutureResult {
     RtmpEndpointDroppedRegistration,
     ReactorManagerGone,
     ReactorGone,
-    RtmpEndpointResponseReceived(
-        RtmpEndpointPublisherMessage,
-        UnboundedReceiver<RtmpEndpointPublisherMessage>,
-    ),
+    RtmpEndpointResponseReceived(RtmpEndpointPublisherMessage),
 
     ReactorWorkflowReturned {
         is_valid: bool,
@@ -97,8 +95,6 @@ enum FutureResult {
     ReactorUpdateReceived {
         connection_id: ConnectionId,
         update: ReactorWorkflowUpdate,
-        reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
-        cancellation_channel: UnboundedReceiver<()>,
     },
 
     ReactorCancellationReceived,
@@ -151,7 +147,11 @@ impl RtmpReceiverStepGenerator {
 }
 
 impl StepGenerator for RtmpReceiverStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let use_rtmps = definition.parameters.get(RTMPS_FLAG).is_some();
         let port = match definition.parameters.get(PORT_PROPERTY_NAME) {
             Some(Some(value)) => match value.parse::<u16>() {
@@ -237,13 +237,21 @@ impl StepGenerator for RtmpReceiverStepGenerator {
                 requires_registrant_approval: step.reactor_name.is_some(),
             });
 
-        Ok((
-            Box::new(step),
-            vec![
-                wait_for_rtmp_endpoint_response(receiver).boxed(),
-                notify_reactor_manager_gone(self.reactor_manager.clone()).boxed(),
-            ],
-        ))
+        futures_channel.send_on_unbounded_recv(
+            receiver,
+            |response| FutureResult::RtmpEndpointResponseReceived(response),
+            || FutureResult::RtmpEndpointDroppedRegistration,
+        );
+
+        let reactor_manager = self.reactor_manager.clone();
+        futures_channel.send_on_future_completion(
+            async move {
+                reactor_manager.closed().await;
+                FutureResult::ReactorManagerGone
+            }
+        );
+
+        Ok(Box::new(step))
     }
 }
 
@@ -252,6 +260,7 @@ impl RtmpReceiverStep {
         &mut self,
         outputs: &mut StepOutputs,
         message: RtmpEndpointPublisherMessage,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         match message {
             RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
@@ -281,15 +290,20 @@ impl RtmpReceiverStep {
                 );
 
                 let cancellation_token = if let Some(update_channel) = reactor_update_channel {
-                    let (cancellation_sender, cancellation_receiver) = unbounded_channel();
-                    let future = wait_for_reactor_update(
-                        connection_id.clone(),
+                    let cancellation_token = CancellationToken::new();
+                    let connection_id = connection_id.clone();
+                    futures_channel.send_on_unbounded_recv_cancellable(
                         update_channel,
-                        cancellation_receiver,
+                        cancellation_token.child_token(),
+                        move |update| FutureResult::ReactorUpdateReceived {
+                            connection_id,
+                            update,
+                        },
+                        || FutureResult::ReactorGone,
+                        || FutureResult::ReactorCancellationReceived,
                     );
 
-                    outputs.futures.push(future.boxed());
-                    Some(cancellation_sender)
+                    Some(cancellation_token)
                 } else {
                     None
                 };
@@ -298,7 +312,7 @@ impl RtmpReceiverStep {
                     connection_id,
                     ConnectionDetails {
                         stream_id: stream_id.clone(),
-                        _cancellation_channel: cancellation_token,
+                        cancellation_channel: cancellation_token,
                     },
                 );
 
@@ -416,7 +430,7 @@ impl RtmpReceiverStep {
                 response_channel,
             } => {
                 if let Some(name) = &self.reactor_name {
-                    let (sender, receiver) = unbounded_channel();
+                    let (sender, mut receiver) = unbounded_channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: name.clone(),
@@ -425,9 +439,21 @@ impl RtmpReceiverStep {
                         },
                     );
 
-                    outputs
-                        .futures
-                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
+                    // Start a future waiting for reactor's response
+                    futures_channel.send_on_future_completion(
+                        async move {
+                            let is_valid = match receiver.recv().await {
+                                Some(response) => response.is_valid,
+                                None => false, // reactor closed, treat it the same as no workflow scenario
+                            };
+
+                            FutureResult::ReactorWorkflowReturned {
+                                is_valid,
+                                reactor_receiver: receiver,
+                                response_channel,
+                            }
+                        }
+                    );
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -452,7 +478,12 @@ impl WorkflowStep for RtmpReceiverStep {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) {
         for future_result in inputs.notifications.drain(..) {
             let future_result = match future_result.downcast::<FutureResult>() {
                 Ok(result) => *result,
@@ -502,12 +533,8 @@ impl WorkflowStep for RtmpReceiverStep {
                     return;
                 }
 
-                FutureResult::RtmpEndpointResponseReceived(message, receiver) => {
-                    outputs
-                        .futures
-                        .push(wait_for_rtmp_endpoint_response(receiver).boxed());
-
-                    self.handle_rtmp_publisher_message(outputs, message);
+                FutureResult::RtmpEndpointResponseReceived(message) => {
+                    self.handle_rtmp_publisher_message(outputs, message, &futures_channel);
                 }
 
                 FutureResult::ReactorWorkflowReturned {
@@ -527,19 +554,9 @@ impl WorkflowStep for RtmpReceiverStep {
                 FutureResult::ReactorUpdateReceived {
                     connection_id,
                     update,
-                    reactor_receiver,
-                    cancellation_channel,
                 } => {
-                    if update.is_valid {
-                        // No action needed as this is still a valid stream name
-                        let future = wait_for_reactor_update(
-                            connection_id,
-                            reactor_receiver,
-                            cancellation_channel,
-                        );
-
-                        outputs.futures.push(future.boxed());
-                    } else {
+                    // If the update is still valid, then do nothing and wait for the next update
+                    if !update.is_valid {
                         info!(
                             connection_id = %connection_id,
                             "Received update that stream {} is no longer tied to a workflow",
@@ -568,17 +585,6 @@ impl WorkflowStep for RtmpReceiverStep {
     }
 }
 
-async fn wait_for_rtmp_endpoint_response(
-    mut receiver: UnboundedReceiver<RtmpEndpointPublisherMessage>,
-) -> Box<dyn StepFutureResult> {
-    let notification = match receiver.recv().await {
-        None => FutureResult::RtmpEndpointDroppedRegistration,
-        Some(message) => FutureResult::RtmpEndpointResponseReceived(message, receiver),
-    };
-
-    Box::new(notification)
-}
-
 async fn wait_for_reactor_response(
     mut reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
     connection_response_channel: Sender<ValidationResponse>,
@@ -592,31 +598,6 @@ async fn wait_for_reactor_response(
         is_valid: result,
         reactor_receiver,
         response_channel: connection_response_channel,
-    };
-
-    Box::new(result)
-}
-
-async fn wait_for_reactor_update(
-    connection_id: ConnectionId,
-    mut reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
-    mut cancellation_receiver: UnboundedReceiver<()>,
-) -> Box<dyn StepFutureResult> {
-    let result = tokio::select! {
-        update = reactor_receiver.recv() => {
-            match update {
-                Some(update) => FutureResult::ReactorUpdateReceived{
-                    connection_id,
-                    update,
-                    reactor_receiver,
-                    cancellation_channel: cancellation_receiver,
-                },
-
-                None => FutureResult::ReactorGone,
-            }
-        }
-
-        _ = cancellation_receiver.recv() => FutureResult::ReactorCancellationReceived,
     };
 
     Box::new(result)

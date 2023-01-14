@@ -6,14 +6,13 @@ use crate::rtmp_server::{
 use crate::workflow_steps::external_stream_handler::{
     ExternalStreamHandlerGenerator, ResolvedFutureStatus,
 };
-use futures::FutureExt;
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::{StepFutureResult, StepOutputs, StepStatus};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, warn};
 use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
@@ -102,7 +101,7 @@ impl ExternalStreamReader {
                 let result = if let Some(stream) = self.active_streams.get_mut(&wrapper.stream_id) {
                     stream
                         .external_stream_handler
-                        .handle_resolved_future(wrapper.future, outputs)
+                        .handle_resolved_future(wrapper.future)
                 } else {
                     ResolvedFutureStatus::Success
                 };
@@ -146,7 +145,7 @@ impl ExternalStreamReader {
                     return;
                 }
 
-                self.handle_rtmp_watch_notification(stream_id, notification, outputs);
+                self.handle_rtmp_watch_notification(stream_id, notification, futures_channel);
             }
         }
     }
@@ -406,8 +405,6 @@ mod tests {
     use crate::utils::hash_map_to_stream_metadata;
     use crate::workflow_steps::external_stream_handler::StreamHandlerFutureResult;
     use bytes::{Bytes, BytesMut};
-    use futures::future::BoxFuture;
-    use futures::stream::FuturesUnordered;
     use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
     use mmids_core::workflows::metadata::common_metadata::{
         get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
@@ -421,12 +418,16 @@ mod tests {
     use std::iter;
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
 
     struct TestContext {
         external_stream_reader: ExternalStreamReader,
         rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
         prepare_stream_receiver: UnboundedReceiver<String>,
         stop_stream_receiver: UnboundedReceiver<()>,
+        futures_channel_receiver: UnboundedReceiver<FuturesChannelResult>,
+        futures_channel_sender: UnboundedSender<FuturesChannelResult>,
     }
 
     struct Handler {
@@ -446,7 +447,6 @@ mod tests {
         fn handle_resolved_future(
             &mut self,
             _future: Box<dyn StreamHandlerFutureResult>,
-            _outputs: &mut StepOutputs,
         ) -> ResolvedFutureStatus {
             ResolvedFutureStatus::Success
         }
