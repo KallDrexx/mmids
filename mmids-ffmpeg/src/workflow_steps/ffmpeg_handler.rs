@@ -124,15 +124,16 @@ impl ExternalStreamHandler for FfmpegHandler {
                     notification_channel: sender,
                 });
 
-            let stream_id = self.stream_id.clone();
+            let recv_stream_id = self.stream_id.clone();
+            let closed_stream_id = self.stream_id.clone();
             futures_channel.send_on_unbounded_recv(
                 receiver,
                 move |notification| StreamHandlerFutureWrapper {
-                    stream_id: stream_id.clone(),
+                    stream_id: recv_stream_id.clone(),
                     future: Box::new(FutureResult::NotificationReceived(notification)),
                 },
                 move || StreamHandlerFutureWrapper {
-                    stream_id,
+                    stream_id: closed_stream_id,
                     future: Box::new(FutureResult::FfmpegChannelGone),
                 },
             );
@@ -182,7 +183,8 @@ impl ExternalStreamHandler for FfmpegHandler {
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc::UnboundedReceiver;
-    use mmids_core::workflows::steps::StepOutputs;
+    use mmids_core::workflows::definitions::WorkflowStepId;
+    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
     use super::*;
     use crate::endpoint::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
 
@@ -206,30 +208,39 @@ mod tests {
     struct TestContext {
         ffmpeg: UnboundedReceiver<FfmpegEndpointRequest>,
         handler: Box<dyn ExternalStreamHandler>,
+        step_futures_channel: WorkflowStepFuturesChannel,
+        _step_futures_receiver: UnboundedReceiver<FuturesChannelResult>,
     }
 
     impl TestContext {
         fn new() -> Self {
-            let (sender, receiver) = unbounded_channel();
+            let (request_sender, request_receiver) = unbounded_channel();
             let generator = FfmpegHandlerGenerator {
-                ffmpeg_endpoint: sender,
+                ffmpeg_endpoint: request_sender,
                 param_generator: Arc::new(Box::new(TestParamGenerator)),
             };
+
+            let (futures_sender, futures_receiver) = unbounded_channel();
+            let futures_channel = WorkflowStepFuturesChannel::new(
+                WorkflowStepId(234),
+                futures_sender,
+            );
 
             let handler = generator.generate(StreamId(Arc::new("test".to_string())));
             TestContext {
                 handler,
-                ffmpeg: receiver,
+                ffmpeg: request_receiver,
+                step_futures_channel: futures_channel,
+                _step_futures_receiver: futures_receiver,
             }
         }
     }
 
-    #[test]
-    fn prepare_stream_sends_start_ffmpeg_request() {
+    #[tokio::test]
+    async fn prepare_stream_sends_start_ffmpeg_request() {
         let mut context = TestContext::new();
-        let mut outputs = StepOutputs::new();
 
-        context.handler.prepare_stream("name", &mut outputs);
+        context.handler.prepare_stream("name", &context.step_futures_channel);
 
         match context.ffmpeg.try_recv() {
             Ok(FfmpegEndpointRequest::StartFfmpeg {
@@ -244,12 +255,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stop_ffmpeg_sent_when_stop_stream_called() {
+    #[tokio::test]
+    async fn stop_ffmpeg_sent_when_stop_stream_called() {
         let mut context = TestContext::new();
-        let mut outputs = StepOutputs::new();
 
-        context.handler.prepare_stream("name", &mut outputs);
+        context.handler.prepare_stream("name", &context.step_futures_channel);
         let _ = context.ffmpeg.try_recv();
         context.handler.stop_stream();
 

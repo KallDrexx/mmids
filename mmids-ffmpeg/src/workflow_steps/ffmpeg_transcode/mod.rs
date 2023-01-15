@@ -19,7 +19,6 @@ use crate::endpoint::{
     H264Preset, TargetParams, VideoScale, VideoTranscodeParams,
 };
 use bytes::BytesMut;
-use futures::FutureExt;
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::{
@@ -42,9 +41,10 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, warn};
 use uuid::Uuid;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 const VIDEO_CODEC_NAME: &str = "vcodec";
 const AUDIO_CODEC_NAME: &str = "acodec";
@@ -113,23 +113,11 @@ struct ActiveStream {
 enum FutureResult {
     RtmpEndpointGone,
     FfmpegEndpointGone,
-    RtmpWatchNotificationReceived(
-        StreamId,
-        RtmpEndpointWatcherNotification,
-        UnboundedReceiver<RtmpEndpointWatcherNotification>,
-    ),
+    RtmpWatchNotificationReceived(StreamId, RtmpEndpointWatcherNotification),
     RtmpWatchChannelGone(StreamId),
-    RtmpPublishNotificationReceived(
-        StreamId,
-        RtmpEndpointPublisherMessage,
-        UnboundedReceiver<RtmpEndpointPublisherMessage>,
-    ),
+    RtmpPublishNotificationReceived(StreamId, RtmpEndpointPublisherMessage),
     RtmpPublishChannelGone(StreamId),
-    FfmpegNotificationReceived(
-        StreamId,
-        FfmpegEndpointNotification,
-        UnboundedReceiver<FfmpegEndpointNotification>,
-    ),
+    FfmpegNotificationReceived(StreamId, FfmpegEndpointNotification),
     FfmpegChannelGone(StreamId),
 }
 
@@ -173,7 +161,11 @@ impl FfmpegTranscoderStepGenerator {
 }
 
 impl StepGenerator for FfmpegTranscoderStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let vcodec = match definition.parameters.get(VIDEO_CODEC_NAME) {
             Some(Some(value)) => match value.to_lowercase().trim() {
                 "copy" => VideoTranscodeParams::Copy,
@@ -292,12 +284,23 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
             pts_offset_metadata_key: self.pts_offset_metadata_key,
         };
 
-        let futures = vec![
-            notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed(),
-            notify_when_rtmp_endpoint_is_gone(self.rtmp_server_endpoint.clone()).boxed(),
-        ];
+        let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
+        futures_channel.send_on_future_completion(
+            async move {
+                ffmpeg_endpoint.closed().await;
+                FutureResult::FfmpegEndpointGone
+            }
+        );
 
-        Ok((Box::new(step), futures))
+        let rtmp_endpoint = self.rtmp_server_endpoint.clone();
+        futures_channel.send_on_future_completion(
+            async move {
+                rtmp_endpoint.closed().await;
+                FutureResult::RtmpEndpointGone
+            }
+        );
+
+        Ok(Box::new(step))
     }
 }
 
@@ -314,6 +317,7 @@ impl FfmpegTranscoder {
         &mut self,
         notification: Box<dyn StepFutureResult>,
         outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         let notification = match notification.downcast::<FutureResult>() {
             Ok(x) => *x,
@@ -369,45 +373,54 @@ impl FfmpegTranscoder {
                 }
             }
 
-            FutureResult::RtmpWatchNotificationReceived(stream_id, notification, receiver) => {
+            FutureResult::RtmpWatchNotificationReceived(stream_id, notification) => {
                 if !self.active_streams.contains_key(&stream_id) {
                     // late notification after stopping a stream
                     return;
                 }
 
-                outputs
-                    .futures
-                    .push(wait_for_watch_notification(stream_id.clone(), receiver).boxed());
-                self.handle_rtmp_watch_notification(stream_id, notification, outputs);
+                self.handle_rtmp_watch_notification(
+                    stream_id,
+                    notification,
+                    futures_channel,
+                );
             }
 
-            FutureResult::RtmpPublishNotificationReceived(stream_id, notification, receiver) => {
+            FutureResult::RtmpPublishNotificationReceived(stream_id, notification) => {
                 if !self.active_streams.contains_key(&stream_id) {
                     // late notification after stopping a stream
                     return;
                 }
 
-                outputs
-                    .futures
-                    .push(wait_for_publish_notification(stream_id.clone(), receiver).boxed());
-                self.handle_rtmp_publish_notification(stream_id, notification, outputs);
+                self.handle_rtmp_publish_notification(
+                    stream_id,
+                    notification,
+                    outputs,
+                    futures_channel,
+                );
             }
 
-            FutureResult::FfmpegNotificationReceived(stream_id, notification, receiver) => {
+            FutureResult::FfmpegNotificationReceived(stream_id, notification) => {
                 if !self.active_streams.contains_key(&stream_id) {
                     // late notification after stopping a stream
                     return;
                 }
 
-                outputs
-                    .futures
-                    .push(wait_for_ffmpeg_notification(stream_id.clone(), receiver).boxed());
-                self.handle_ffmpeg_notification(stream_id, notification, outputs);
+                self.handle_ffmpeg_notification(
+                    stream_id,
+                    notification,
+                    futures_channel,
+                );
             }
         }
     }
 
-    fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
+    fn handle_media(
+        &mut self,
+        media: MediaNotification,
+        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         match &media.content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
                 if let Some(stream) = self.active_streams.get(&media.stream_id) {
@@ -440,7 +453,7 @@ impl FfmpegTranscoder {
                 };
 
                 self.active_streams.insert(media.stream_id.clone(), stream);
-                self.prepare_stream(media.stream_id.clone(), outputs);
+                self.prepare_stream(media.stream_id.clone(), futures_channel);
 
                 outputs.media.push(media.clone());
             }
@@ -481,7 +494,11 @@ impl FfmpegTranscoder {
         }
     }
 
-    fn prepare_stream(&mut self, stream_id: StreamId, outputs: &mut StepOutputs) {
+    fn prepare_stream(
+        &mut self,
+        stream_id: StreamId,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         let source_rtmp_app = Arc::new(self.get_source_rtmp_app());
         let result_rtmp_app = Arc::new(self.get_result_rtmp_app());
 
@@ -503,9 +520,17 @@ impl FfmpegTranscoder {
                                 requires_registrant_approval: false,
                             });
 
-                    outputs.futures.push(
-                        wait_for_watch_notification(stream.id.clone(), watch_receiver).boxed(),
+                    let recv_stream_id = stream.id.clone();
+                    let closed_stream_id = stream.id.clone();
+                    futures_channel.send_on_unbounded_recv(
+                        watch_receiver,
+                        move |message| FutureResult::RtmpWatchNotificationReceived(
+                            recv_stream_id.clone(),
+                            message,
+                        ),
+                        move || FutureResult::RtmpWatchChannelGone(closed_stream_id),
                     );
+
                     stream.rtmp_output_status = WatchRegistrationStatus::Pending {
                         media_channel: media_sender,
                     };
@@ -555,9 +580,17 @@ impl FfmpegTranscoder {
                                 requires_registrant_approval: false,
                             });
 
-                    outputs
-                        .futures
-                        .push(wait_for_publish_notification(stream.id.clone(), receiver).boxed());
+                    let recv_stream_id = stream.id.clone();
+                    let closed_stream_id = stream.id.clone();
+                    futures_channel.send_on_unbounded_recv(
+                        receiver,
+                        move |message| FutureResult::RtmpPublishNotificationReceived(
+                            recv_stream_id.clone(),
+                            message,
+                        ),
+                        move || FutureResult::RtmpPublishChannelGone(closed_stream_id),
+                    );
+
                     stream.rtmp_input_status = PublishRegistrationStatus::Pending;
 
                     false
@@ -591,9 +624,17 @@ impl FfmpegTranscoder {
                             notification_channel: sender,
                         });
 
-                    outputs
-                        .futures
-                        .push(wait_for_ffmpeg_notification(stream.id.clone(), receiver).boxed());
+                    let recv_stream_id = stream.id.clone();
+                    let closed_stream_id = stream.id.clone();
+                    futures_channel.send_on_unbounded_recv(
+                        receiver,
+                        move |message| FutureResult::FfmpegNotificationReceived(
+                            recv_stream_id.clone(),
+                            message,
+                        ),
+                        || FutureResult::FfmpegChannelGone(closed_stream_id),
+                    );
+
                     stream.ffmpeg_status = FfmpegStatus::Pending;
                 }
             }
@@ -650,7 +691,7 @@ impl FfmpegTranscoder {
         &mut self,
         stream_id: StreamId,
         notification: RtmpEndpointWatcherNotification,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             match notification {
@@ -708,7 +749,7 @@ impl FfmpegTranscoder {
             }
         }
 
-        self.prepare_stream(stream_id, outputs);
+        self.prepare_stream(stream_id, futures_channel);
     }
 
     fn handle_rtmp_publish_notification(
@@ -716,6 +757,7 @@ impl FfmpegTranscoder {
         stream_id: StreamId,
         notification: RtmpEndpointPublisherMessage,
         outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         let mut prepare_stream = false;
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
@@ -829,7 +871,7 @@ impl FfmpegTranscoder {
         }
 
         if prepare_stream {
-            self.prepare_stream(stream_id, outputs);
+            self.prepare_stream(stream_id, futures_channel);
         }
     }
 
@@ -837,7 +879,7 @@ impl FfmpegTranscoder {
         &mut self,
         stream_id: StreamId,
         notification: FfmpegEndpointNotification,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         if let Some(stream) = self.active_streams.get_mut(&stream_id) {
             match notification {
@@ -888,7 +930,7 @@ impl FfmpegTranscoder {
             }
         }
 
-        self.prepare_stream(stream_id, outputs);
+        self.prepare_stream(stream_id, futures_channel);
     }
 }
 
@@ -901,13 +943,18 @@ impl WorkflowStep for FfmpegTranscoder {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) {
         for notification in inputs.notifications.drain(..) {
-            self.handle_resolved_future(notification, outputs);
+            self.handle_resolved_future(notification, outputs, &futures_channel);
         }
 
         for media in inputs.media.drain(..) {
-            self.handle_media(media, outputs);
+            self.handle_media(media, outputs, &futures_channel);
         }
     }
 
@@ -919,56 +966,4 @@ impl WorkflowStep for FfmpegTranscoder {
 
         self.status = StepStatus::Shutdown;
     }
-}
-
-async fn notify_when_ffmpeg_endpoint_is_gone(
-    endpoint: UnboundedSender<FfmpegEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::FfmpegEndpointGone)
-}
-
-async fn notify_when_rtmp_endpoint_is_gone(
-    endpoint: UnboundedSender<RtmpEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::RtmpEndpointGone)
-}
-
-async fn wait_for_watch_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<RtmpEndpointWatcherNotification>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::RtmpWatchNotificationReceived(stream_id, msg, receiver),
-        None => FutureResult::RtmpWatchChannelGone(stream_id),
-    };
-
-    Box::new(result)
-}
-
-async fn wait_for_publish_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<RtmpEndpointPublisherMessage>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::RtmpPublishNotificationReceived(stream_id, msg, receiver),
-        None => FutureResult::RtmpPublishChannelGone(stream_id),
-    };
-
-    Box::new(result)
-}
-
-async fn wait_for_ffmpeg_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<FfmpegEndpointNotification>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::FfmpegNotificationReceived(stream_id, msg, receiver),
-        None => FutureResult::FfmpegChannelGone(stream_id),
-    };
-
-    Box::new(result)
 }

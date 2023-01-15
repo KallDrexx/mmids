@@ -7,7 +7,6 @@ use crate::endpoint::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,
 };
 use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
-use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
@@ -140,12 +139,13 @@ impl StepGenerator for FfmpegHlsStepGenerator {
         let handler_generator =
             FfmpegHandlerGenerator::new(self.ffmpeg_endpoint.clone(), Box::new(param_generator));
 
-        let (reader, mut futures) = ExternalStreamReader::new(
+        let reader = ExternalStreamReader::new(
             rtmp_app,
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
             self.is_keyframe_metadata_key,
             self.pts_offset_metadata_key,
+            &futures_channel,
         );
 
         let path = path.clone();
@@ -268,17 +268,4 @@ impl FfmpegParameterGenerator for ParamGenerator {
 
 fn get_rtmp_app(id: String) -> String {
     format!("ffmpeg-hls-{}", id)
-}
-
-async fn notify_when_ffmpeg_endpoint_is_gone(
-    endpoint: UnboundedSender<FfmpegEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::FfmpegEndpointGone)
-}
-
-async fn notify_when_path_created(path: String) -> Box<dyn StepFutureResult> {
-    let result = tokio::fs::create_dir_all(&path).await;
-    Box::new(FutureResult::HlsPathCreated(result))
 }
