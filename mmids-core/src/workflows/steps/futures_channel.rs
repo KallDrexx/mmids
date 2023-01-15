@@ -23,10 +23,7 @@ pub struct FuturesChannelResult {
 }
 
 impl WorkflowStepFuturesChannel {
-    pub fn new(
-        step_id: WorkflowStepId,
-        sender: UnboundedSender<FuturesChannelResult>,
-    ) -> Self {
+    pub fn new(step_id: WorkflowStepId, sender: UnboundedSender<FuturesChannelResult>) -> Self {
         WorkflowStepFuturesChannel { step_id, sender }
     }
 

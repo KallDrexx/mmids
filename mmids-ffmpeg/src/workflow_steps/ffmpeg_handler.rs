@@ -1,5 +1,6 @@
 use crate::endpoint::{FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams};
 use futures::FutureExt;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{StepFutureResult, StepOutputs};
 use mmids_core::StreamId;
 use mmids_rtmp::workflow_steps::external_stream_handler::{
@@ -10,7 +11,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub struct FfmpegHandler {
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,

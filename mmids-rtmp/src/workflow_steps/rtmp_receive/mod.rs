@@ -20,6 +20,7 @@ use mmids_core::workflows::metadata::{
     MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
 };
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -34,7 +35,6 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -60,7 +60,15 @@ struct ConnectionDetails {
     // will inform the reactor that this step is no longer interested in whatever workflow it was
     // managing for it. Not using a one shot, as the channel needs to live across multiple futures
     // if updates come in.
-    cancellation_channel: Option<CancellationToken>,
+    cancellation_token: Option<CancellationToken>,
+}
+
+impl Drop for ConnectionDetails {
+    fn drop(&mut self) {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+        }
+    }
 }
 
 struct RtmpReceiverStep {
@@ -244,12 +252,10 @@ impl StepGenerator for RtmpReceiverStepGenerator {
         );
 
         let reactor_manager = self.reactor_manager.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                reactor_manager.closed().await;
-                FutureResult::ReactorManagerGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            reactor_manager.closed().await;
+            FutureResult::ReactorManagerGone
+        });
 
         Ok(Box::new(step))
     }
@@ -296,7 +302,7 @@ impl RtmpReceiverStep {
                         update_channel,
                         cancellation_token.child_token(),
                         move |update| FutureResult::ReactorUpdateReceived {
-                            connection_id,
+                            connection_id: connection_id.clone(),
                             update,
                         },
                         || FutureResult::ReactorGone,
@@ -312,7 +318,7 @@ impl RtmpReceiverStep {
                     connection_id,
                     ConnectionDetails {
                         stream_id: stream_id.clone(),
-                        cancellation_channel: cancellation_token,
+                        cancellation_token: cancellation_token,
                     },
                 );
 
@@ -336,7 +342,7 @@ impl RtmpReceiverStep {
                         );
 
                         outputs.media.push(MediaNotification {
-                            stream_id: connection.stream_id,
+                            stream_id: connection.stream_id.clone(),
                             content: MediaNotificationContent::StreamDisconnected,
                         });
                     }
@@ -440,20 +446,18 @@ impl RtmpReceiverStep {
                     );
 
                     // Start a future waiting for reactor's response
-                    futures_channel.send_on_future_completion(
-                        async move {
-                            let is_valid = match receiver.recv().await {
-                                Some(response) => response.is_valid,
-                                None => false, // reactor closed, treat it the same as no workflow scenario
-                            };
+                    futures_channel.send_on_future_completion(async move {
+                        let is_valid = match receiver.recv().await {
+                            Some(response) => response.is_valid,
+                            None => false, // reactor closed, treat it the same as no workflow scenario
+                        };
 
-                            FutureResult::ReactorWorkflowReturned {
-                                is_valid,
-                                reactor_receiver: receiver,
-                                response_channel,
-                            }
+                        FutureResult::ReactorWorkflowReturned {
+                            is_valid,
+                            reactor_receiver: receiver,
+                            response_channel,
                         }
-                    );
+                    });
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -583,29 +587,4 @@ impl WorkflowStep for RtmpReceiverStep {
                 rtmp_stream_key: self.stream_key.clone(),
             });
     }
-}
-
-async fn wait_for_reactor_response(
-    mut reactor_receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
-    connection_response_channel: Sender<ValidationResponse>,
-) -> Box<dyn StepFutureResult> {
-    let result = match reactor_receiver.recv().await {
-        Some(response) => response.is_valid,
-        None => false, // reactor closed, treat it the same as no workflow scenario
-    };
-
-    let result = FutureResult::ReactorWorkflowReturned {
-        is_valid: result,
-        reactor_receiver,
-        response_channel: connection_response_channel,
-    };
-
-    Box::new(result)
-}
-
-async fn notify_reactor_manager_gone(
-    sender: UnboundedSender<ReactorManagerRequest>,
-) -> Box<dyn StepFutureResult> {
-    sender.closed().await;
-    Box::new(FutureResult::ReactorManagerGone)
 }

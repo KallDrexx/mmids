@@ -7,6 +7,7 @@ use crate::workflow_steps::external_stream_handler::{
     ExternalStreamHandlerGenerator, ResolvedFutureStatus,
 };
 use mmids_core::workflows::metadata::MetadataKey;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{StepFutureResult, StepOutputs, StepStatus};
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
@@ -14,7 +15,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, warn};
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 /// Represents logic for a basic workflow step that exposes streams to an RTMP endpoint
 /// so that an external system can read the video stream.  This exposes a read-only interface for
@@ -80,12 +80,10 @@ impl ExternalStreamReader {
             pts_offset_metadata_key,
         };
 
-        futures_channel.send_on_future_completion(
-            async move {
-                rtmp_server.closed().await;
-                FutureResult::RtmpEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            rtmp_server.closed().await;
+            FutureResult::RtmpEndpointGone
+        });
 
         step
     }
@@ -257,7 +255,9 @@ impl ExternalStreamReader {
                     let closed_stream_id = stream_id.clone();
                     futures_channel.send_on_unbounded_recv(
                         watch_receiver,
-                        move |event| FutureResult::WatchNotificationReceived(stream_id, event),
+                        move |event| {
+                            FutureResult::WatchNotificationReceived(stream_id.clone(), event)
+                        },
                         move || FutureResult::WatchChannelGone(closed_stream_id),
                     );
 
@@ -390,14 +390,6 @@ impl ExternalStreamReader {
     }
 }
 
-async fn notify_when_rtmp_endpoint_is_gone(
-    endpoint: UnboundedSender<RtmpEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::RtmpEndpointGone)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,12 +398,14 @@ mod tests {
     use crate::workflow_steps::external_stream_handler::StreamHandlerFutureResult;
     use bytes::{Bytes, BytesMut};
     use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
+    use mmids_core::workflows::definitions::WorkflowStepId;
     use mmids_core::workflows::metadata::common_metadata::{
         get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
     };
     use mmids_core::workflows::metadata::{
         MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue,
     };
+    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
@@ -419,7 +413,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::mpsc::UnboundedReceiver;
-    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
+    use tokio::time::timeout;
 
     struct TestContext {
         external_stream_reader: ExternalStreamReader,
@@ -427,7 +421,7 @@ mod tests {
         prepare_stream_receiver: UnboundedReceiver<String>,
         stop_stream_receiver: UnboundedReceiver<()>,
         futures_channel_receiver: UnboundedReceiver<FuturesChannelResult>,
-        futures_channel_sender: UnboundedSender<FuturesChannelResult>,
+        futures_channel: WorkflowStepFuturesChannel,
     }
 
     struct Handler {
@@ -436,7 +430,11 @@ mod tests {
     }
 
     impl ExternalStreamHandler for Handler {
-        fn prepare_stream(&mut self, stream_name: &str, _futures_channel: &WorkflowStepFuturesChannel) {
+        fn prepare_stream(
+            &mut self,
+            stream_name: &str,
+            _futures_channel: &WorkflowStepFuturesChannel,
+        ) {
             let _ = self.prepare_stream_sender.send(stream_name.to_string());
         }
 
@@ -480,12 +478,17 @@ mod tests {
             let is_keyframe_metadata_key = get_is_keyframe_metadata_key(&mut metadata_map);
             let pts_offset_metadata_key = get_pts_offset_metadata_key(&mut metadata_map);
 
+            let (futures_sender, futures_receiver) = unbounded_channel();
+            let futures_channel =
+                WorkflowStepFuturesChannel::new(WorkflowStepId(123), futures_sender);
+
             let reader = ExternalStreamReader::new(
                 Arc::new("app".to_string()),
                 rtmp_sender,
                 generator,
                 is_keyframe_metadata_key,
                 pts_offset_metadata_key,
+                &futures_channel,
             );
 
             TestContext {
@@ -493,6 +496,8 @@ mod tests {
                 external_stream_reader: reader,
                 prepare_stream_receiver: prepare_receiver,
                 stop_stream_receiver: stop_receiver,
+                futures_channel_receiver: futures_receiver,
+                futures_channel,
             }
         }
 
@@ -507,8 +512,7 @@ mod tests {
             };
 
             self.external_stream_reader
-                .handle_media(media, &mut outputs);
-            self.futures.extend(outputs.futures.drain(..));
+                .handle_media(media, &mut outputs, &self.futures_channel);
 
             let response = test_utils::expect_mpsc_response(&mut self.rtmp_endpoint).await;
             let (notification_channel, media_channel) = match response {
@@ -525,11 +529,22 @@ mod tests {
                 .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful)
                 .expect("Failed to send registration success response");
 
-            let result = test_utils::expect_future_resolved(&mut self.futures).await;
+            let result = self.expect_future_resolved().await;
+
             self.external_stream_reader
-                .handle_resolved_future(result, &mut outputs);
+                .handle_resolved_future(result, &self.futures_channel);
 
             media_channel
+        }
+
+        /// Gets the first future that was resolved on the workflow step futures channel. If no future
+        /// is resolved, then a panic will ensue.
+        pub async fn expect_future_resolved(&mut self) -> Box<dyn StepFutureResult> {
+            let future = self.futures_channel_receiver.recv();
+            match timeout(Duration::from_millis(10), future).await {
+                Ok(Some(response)) => response.result,
+                _ => panic!("No future resolved within timeout period"),
+            }
         }
     }
 
@@ -547,8 +562,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
-        context.futures.extend(outputs.futures);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
         match response {
@@ -594,7 +608,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -623,7 +637,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -654,7 +668,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -718,7 +732,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -750,9 +764,11 @@ mod tests {
             },
         };
 
-        context
-            .external_stream_reader
-            .handle_media(media.clone(), &mut outputs);
+        context.external_stream_reader.handle_media(
+            media.clone(),
+            &mut outputs,
+            &context.futures_channel,
+        );
 
         assert_eq!(outputs.media.len(), 1, "Expected single media output");
         assert_eq!(
@@ -781,8 +797,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
-        context.futures.extend(outputs.futures.drain(..));
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         let response = test_utils::expect_mpsc_response(&mut context.rtmp_endpoint).await;
         let channel = match response {
@@ -797,10 +812,11 @@ mod tests {
             .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful)
             .expect("Failed to send registration success response");
 
-        let result = test_utils::expect_future_resolved(&mut context.futures).await;
+        let result = context.expect_future_resolved().await;
         context
             .external_stream_reader
-            .handle_resolved_future(result, &mut outputs);
+            .handle_resolved_future(result, &context.futures_channel);
+
         let stream_name =
             test_utils::expect_mpsc_response(&mut context.prepare_stream_receiver).await;
 
@@ -820,8 +836,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
-        context.futures.extend(outputs.futures.drain(..));
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         test_utils::expect_mpsc_response(&mut context.stop_stream_receiver).await;
     }
@@ -838,8 +853,7 @@ mod tests {
 
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
-        context.futures.extend(outputs.futures.drain(..));
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         test_utils::expect_mpsc_timeout(&mut context.stop_stream_receiver).await;
     }
@@ -862,7 +876,7 @@ mod tests {
         let mut outputs = StepOutputs::new();
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
         assert_eq!(
@@ -926,7 +940,7 @@ mod tests {
         let mut outputs = StepOutputs::new();
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
         assert_eq!(
@@ -982,7 +996,7 @@ mod tests {
         let mut outputs = StepOutputs::new();
         context
             .external_stream_reader
-            .handle_media(media, &mut outputs);
+            .handle_media(media, &mut outputs, &context.futures_channel);
 
         let media = test_utils::expect_mpsc_response(&mut media_receiver).await;
         assert_eq!(

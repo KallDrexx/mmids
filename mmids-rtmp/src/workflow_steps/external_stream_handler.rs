@@ -1,7 +1,7 @@
 use downcast_rs::{impl_downcast, Downcast};
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::StepFutureResult;
 use mmids_core::StreamId;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 /// Trait used to handle different external resources for a single stream
 pub trait ExternalStreamHandler {

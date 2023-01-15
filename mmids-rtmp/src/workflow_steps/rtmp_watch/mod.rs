@@ -21,7 +21,6 @@ use crate::rtmp_server::{
     ValidationResponse,
 };
 use crate::utils::hash_map_to_stream_metadata;
-use futures::FutureExt;
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::net::{IpAddress, IpAddressParseError};
 use mmids_core::reactors::manager::ReactorManagerRequest;
@@ -29,6 +28,7 @@ use mmids_core::reactors::ReactorWorkflowUpdate;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::{MetadataKey, MetadataValue};
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -42,7 +42,6 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::Sender;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const PORT_PROPERTY_NAME: &str = "port";
 pub const APP_PROPERTY_NAME: &str = "rtmp_app";
@@ -65,6 +64,14 @@ struct StreamWatchers {
     // channel when a reactor update comes through. We can work around this by recreating the
     // cancellation token each time, but it's easier to just use an `UnboundedSender` instead.
     cancellation_token: Option<CancellationToken>,
+}
+
+impl Drop for StreamWatchers {
+    fn drop(&mut self) {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+        }
+    }
 }
 
 struct RtmpWatchStep {
@@ -256,12 +263,10 @@ impl StepGenerator for RtmpWatchStepGenerator {
         );
 
         let reactor_manager = self.reactor_manager.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                reactor_manager.closed().await;
-                RtmpWatchStepFutureResult::ReactorGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            reactor_manager.closed().await;
+            RtmpWatchStepFutureResult::ReactorManagerGone
+        });
 
         Ok(Box::new(step))
     }
@@ -271,7 +276,6 @@ impl RtmpWatchStep {
     fn handle_endpoint_notification(
         &mut self,
         notification: RtmpEndpointWatcherNotification,
-        outputs: &mut StepOutputs,
         futures_channel: &WorkflowStepFuturesChannel,
     ) {
         match notification {
@@ -299,17 +303,17 @@ impl RtmpWatchStep {
                 let cancellation_channel =
                     if let Some(reactor_update_channel) = reactor_update_channel {
                         let cancellation_token = CancellationToken::new();
-                        let stream_key = stream_key.clone();
+                        let recv_stream_key = stream_key.clone();
                         let cancelled_stream_key = stream_key.clone();
                         futures_channel.send_on_unbounded_recv_cancellable(
                             reactor_update_channel,
                             cancellation_token.child_token(),
                             move |update| RtmpWatchStepFutureResult::ReactorUpdateReceived {
-                                stream_name: stream_key,
+                                stream_name: recv_stream_key.clone(),
                                 update,
                             },
                             || RtmpWatchStepFutureResult::ReactorGone,
-                            || RtmpWatchStepFutureResult::ReactorReceiverCanceled {
+                            move || RtmpWatchStepFutureResult::ReactorReceiverCanceled {
                                 stream_name: cancelled_stream_key,
                             },
                         );
@@ -342,7 +346,7 @@ impl RtmpWatchStep {
                 response_channel,
             } => {
                 if let Some(reactor) = &self.reactor_name {
-                    let (sender, receiver) = unbounded_channel();
+                    let (sender, mut receiver) = unbounded_channel();
                     let _ = self.reactor_manager.send(
                         ReactorManagerRequest::CreateWorkflowForStreamName {
                             reactor_name: reactor.clone(),
@@ -351,11 +355,18 @@ impl RtmpWatchStep {
                         },
                     );
 
+                    futures_channel.send_on_future_completion(async move {
+                        let is_valid = match receiver.recv().await {
+                            Some(response) => response.is_valid,
+                            None => false, // Assume not valid if channel closed
+                        };
 
-
-                    outputs
-                        .futures
-                        .push(wait_for_reactor_response(receiver, response_channel).boxed());
+                        RtmpWatchStepFutureResult::ReactorWorkflowResponse {
+                            is_valid,
+                            validation_channel: response_channel,
+                            reactor_update_channel: receiver,
+                        }
+                    });
                 } else {
                     error!(
                         connection_id = %connection_id,
@@ -576,7 +587,7 @@ impl WorkflowStep for RtmpWatchStep {
                 }
 
                 RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(notification) => {
-                    self.handle_endpoint_notification(notification, outputs, &futures_channel);
+                    self.handle_endpoint_notification(notification, &futures_channel);
                 }
 
                 RtmpWatchStepFutureResult::ReactorWorkflowResponse {
@@ -637,29 +648,4 @@ impl WorkflowStep for RtmpWatchStep {
                 rtmp_stream_key: self.stream_key.clone(),
             });
     }
-}
-
-async fn wait_for_reactor_response(
-    mut receiver: UnboundedReceiver<ReactorWorkflowUpdate>,
-    response_channel: Sender<ValidationResponse>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(result) => result.is_valid,
-        None => false, // Treat the channel being closed as no workflow
-    };
-
-    let result = RtmpWatchStepFutureResult::ReactorWorkflowResponse {
-        is_valid: result,
-        validation_channel: response_channel,
-        reactor_update_channel: receiver,
-    };
-
-    Box::new(result)
-}
-
-async fn notify_on_reactor_manager_close(
-    sender: UnboundedSender<ReactorManagerRequest>,
-) -> Box<dyn StepFutureResult> {
-    sender.closed().await;
-    Box::new(RtmpWatchStepFutureResult::ReactorManagerGone)
 }

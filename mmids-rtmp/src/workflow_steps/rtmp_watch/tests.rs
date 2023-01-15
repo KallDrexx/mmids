@@ -270,8 +270,8 @@ fn error_if_no_stream_key_provided() {
     }
 }
 
-#[test]
-fn new_step_is_in_created_status() {
+#[tokio::test]
+async fn new_step_is_in_created_status() {
     let definition = DefinitionBuilder::new().build();
     let context = TestContext::new(definition).unwrap();
 

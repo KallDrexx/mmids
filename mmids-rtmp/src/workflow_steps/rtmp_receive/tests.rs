@@ -253,8 +253,8 @@ async fn error_if_no_key_specified() {
     }
 }
 
-#[test]
-fn step_starts_in_created_state() {
+#[tokio::test]
+async fn step_starts_in_created_state() {
     let definition = DefinitionBuilder::new().build();
     let context = TestContext::new(definition).unwrap();
 
@@ -583,8 +583,8 @@ async fn audio_notification_received_when_publisher_sends_audio() {
     assert_eq!(media.content, expected_content, "Unexpected media content");
 }
 
-#[test]
-fn stream_started_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn stream_started_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -598,8 +598,8 @@ fn stream_started_notification_passed_as_input_does_not_get_passed_as_output() {
         });
 }
 
-#[test]
-fn stream_disconnected_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn stream_disconnected_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -611,8 +611,8 @@ fn stream_disconnected_notification_passed_as_input_does_not_get_passed_as_outpu
         });
 }
 
-#[test]
-fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -626,8 +626,8 @@ fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
         });
 }
 
-#[test]
-fn video_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn video_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -646,8 +646,8 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
         });
 }
 
-#[test]
-fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
