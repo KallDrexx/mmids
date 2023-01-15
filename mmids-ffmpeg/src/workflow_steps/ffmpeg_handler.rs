@@ -1,14 +1,12 @@
 use crate::endpoint::{FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams};
-use futures::FutureExt;
 use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
-use mmids_core::workflows::steps::{StepFutureResult, StepOutputs};
 use mmids_core::StreamId;
 use mmids_rtmp::workflow_steps::external_stream_handler::{
     ExternalStreamHandler, ExternalStreamHandlerGenerator, ResolvedFutureStatus,
     StreamHandlerFutureResult, StreamHandlerFutureWrapper,
 };
 use std::sync::Arc;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
@@ -38,10 +36,7 @@ enum FfmpegHandlerStatus {
 
 enum FutureResult {
     FfmpegChannelGone,
-    NotificationReceived(
-        FfmpegEndpointNotification,
-        UnboundedReceiver<FfmpegEndpointNotification>,
-    ),
+    NotificationReceived(FfmpegEndpointNotification),
 }
 
 impl StreamHandlerFutureResult for FutureResult {}
@@ -129,9 +124,18 @@ impl ExternalStreamHandler for FfmpegHandler {
                     notification_channel: sender,
                 });
 
-            outputs
-                .futures
-                .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
+            let stream_id = self.stream_id.clone();
+            futures_channel.send_on_unbounded_recv(
+                receiver,
+                move |notification| StreamHandlerFutureWrapper {
+                    stream_id: stream_id.clone(),
+                    future: Box::new(FutureResult::NotificationReceived(notification)),
+                },
+                move || StreamHandlerFutureWrapper {
+                    stream_id,
+                    future: Box::new(FutureResult::FfmpegChannelGone),
+                },
+            );
 
             self.status = FfmpegHandlerStatus::Pending;
         }
@@ -158,7 +162,6 @@ impl ExternalStreamHandler for FfmpegHandler {
     fn handle_resolved_future(
         &mut self,
         future: Box<dyn StreamHandlerFutureResult>,
-        outputs: &mut StepOutputs,
     ) -> ResolvedFutureStatus {
         let future = match future.downcast::<FutureResult>() {
             Ok(x) => *x,
@@ -167,11 +170,7 @@ impl ExternalStreamHandler for FfmpegHandler {
 
         match future {
             FutureResult::FfmpegChannelGone => ResolvedFutureStatus::StreamShouldBeStopped,
-            FutureResult::NotificationReceived(notification, receiver) => {
-                outputs
-                    .futures
-                    .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
-
+            FutureResult::NotificationReceived(notification) => {
                 self.handle_ffmpeg_notification(notification);
 
                 ResolvedFutureStatus::Success
@@ -180,24 +179,10 @@ impl ExternalStreamHandler for FfmpegHandler {
     }
 }
 
-async fn wait_for_ffmpeg_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<FfmpegEndpointNotification>,
-) {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::NotificationReceived(msg, receiver),
-
-        None => FutureResult::FfmpegChannelGone,
-    };
-
-    Box::new(StreamHandlerFutureWrapper {
-        stream_id,
-        future: Box::new(result),
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use mmids_core::workflows::steps::StepOutputs;
     use super::*;
     use crate::endpoint::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
 
