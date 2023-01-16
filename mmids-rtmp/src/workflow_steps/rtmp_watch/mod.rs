@@ -258,7 +258,7 @@ impl StepGenerator for RtmpWatchStepGenerator {
 
         futures_channel.send_on_unbounded_recv(
             notification_receiver,
-            |message| RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(message),
+            RtmpWatchStepFutureResult::RtmpWatchNotificationReceived,
             || RtmpWatchStepFutureResult::RtmpEndpointGone,
         );
 

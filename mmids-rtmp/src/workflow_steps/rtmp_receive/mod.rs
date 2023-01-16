@@ -247,7 +247,7 @@ impl StepGenerator for RtmpReceiverStepGenerator {
 
         futures_channel.send_on_unbounded_recv(
             receiver,
-            |response| FutureResult::RtmpEndpointResponseReceived(response),
+            FutureResult::RtmpEndpointResponseReceived,
             || FutureResult::RtmpEndpointDroppedRegistration,
         );
 
@@ -318,7 +318,7 @@ impl RtmpReceiverStep {
                     connection_id,
                     ConnectionDetails {
                         stream_id: stream_id.clone(),
-                        cancellation_token: cancellation_token,
+                        cancellation_token,
                     },
                 );
 

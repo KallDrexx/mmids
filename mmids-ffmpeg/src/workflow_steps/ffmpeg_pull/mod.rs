@@ -16,6 +16,7 @@ use mmids_core::workflows::metadata::{
     MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
 };
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -32,7 +33,6 @@ use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info};
 use uuid::Uuid;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const LOCATION: &str = "location";
 pub const STREAM_NAME: &str = "stream_name";
@@ -139,18 +139,15 @@ impl StepGenerator for FfmpegPullStepGenerator {
                 requires_registrant_approval: false,
             });
 
-
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                ffmpeg_endpoint.closed().await;
-                FutureResult::FfmpegEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            ffmpeg_endpoint.closed().await;
+            FutureResult::FfmpegEndpointGone
+        });
 
         futures_channel.send_on_unbounded_recv(
             receiver,
-            |response| FutureResult::RtmpEndpointResponseReceived(response),
+            FutureResult::RtmpEndpointResponseReceived,
             || FutureResult::RtmpEndpointGone,
         );
 
@@ -183,7 +180,7 @@ impl FfmpegPullStep {
             }
 
             FutureResult::RtmpEndpointResponseReceived(response) => {
-                self.handle_rtmp_notification(outputs, response, &futures_channel);
+                self.handle_rtmp_notification(outputs, response, futures_channel);
             }
 
             FutureResult::FfmpegNotificationReceived(notification) => {
@@ -192,10 +189,7 @@ impl FfmpegPullStep {
         }
     }
 
-    fn handle_ffmpeg_notification(
-        &mut self,
-        message: FfmpegEndpointNotification,
-    ) {
+    fn handle_ffmpeg_notification(&mut self, message: FfmpegEndpointNotification) {
         match message {
             FfmpegEndpointNotification::FfmpegFailedToStart { cause } => {
                 error!("Ffmpeg failed to start: {:?}", cause);
@@ -416,7 +410,7 @@ impl FfmpegPullStep {
 
             futures_channel.send_on_unbounded_recv(
                 receiver,
-                |notification| FutureResult::FfmpegNotificationReceived(notification),
+                FutureResult::FfmpegNotificationReceived,
                 || FutureResult::FfmpegEndpointGone,
             );
         }

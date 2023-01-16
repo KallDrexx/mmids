@@ -25,6 +25,7 @@ use mmids_core::workflows::metadata::{
     MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
 };
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -44,7 +45,6 @@ use thiserror::Error;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 const VIDEO_CODEC_NAME: &str = "vcodec";
 const AUDIO_CODEC_NAME: &str = "acodec";
@@ -285,20 +285,16 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
         };
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                ffmpeg_endpoint.closed().await;
-                FutureResult::FfmpegEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            ffmpeg_endpoint.closed().await;
+            FutureResult::FfmpegEndpointGone
+        });
 
         let rtmp_endpoint = self.rtmp_server_endpoint.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                rtmp_endpoint.closed().await;
-                FutureResult::RtmpEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            rtmp_endpoint.closed().await;
+            FutureResult::RtmpEndpointGone
+        });
 
         Ok(Box::new(step))
     }
@@ -379,11 +375,7 @@ impl FfmpegTranscoder {
                     return;
                 }
 
-                self.handle_rtmp_watch_notification(
-                    stream_id,
-                    notification,
-                    futures_channel,
-                );
+                self.handle_rtmp_watch_notification(stream_id, notification, futures_channel);
             }
 
             FutureResult::RtmpPublishNotificationReceived(stream_id, notification) => {
@@ -406,11 +398,7 @@ impl FfmpegTranscoder {
                     return;
                 }
 
-                self.handle_ffmpeg_notification(
-                    stream_id,
-                    notification,
-                    futures_channel,
-                );
+                self.handle_ffmpeg_notification(stream_id, notification, futures_channel);
             }
         }
     }
@@ -524,10 +512,12 @@ impl FfmpegTranscoder {
                     let closed_stream_id = stream.id.clone();
                     futures_channel.send_on_unbounded_recv(
                         watch_receiver,
-                        move |message| FutureResult::RtmpWatchNotificationReceived(
-                            recv_stream_id.clone(),
-                            message,
-                        ),
+                        move |message| {
+                            FutureResult::RtmpWatchNotificationReceived(
+                                recv_stream_id.clone(),
+                                message,
+                            )
+                        },
                         move || FutureResult::RtmpWatchChannelGone(closed_stream_id),
                     );
 
@@ -584,10 +574,12 @@ impl FfmpegTranscoder {
                     let closed_stream_id = stream.id.clone();
                     futures_channel.send_on_unbounded_recv(
                         receiver,
-                        move |message| FutureResult::RtmpPublishNotificationReceived(
-                            recv_stream_id.clone(),
-                            message,
-                        ),
+                        move |message| {
+                            FutureResult::RtmpPublishNotificationReceived(
+                                recv_stream_id.clone(),
+                                message,
+                            )
+                        },
                         move || FutureResult::RtmpPublishChannelGone(closed_stream_id),
                     );
 
@@ -628,10 +620,12 @@ impl FfmpegTranscoder {
                     let closed_stream_id = stream.id.clone();
                     futures_channel.send_on_unbounded_recv(
                         receiver,
-                        move |message| FutureResult::FfmpegNotificationReceived(
-                            recv_stream_id.clone(),
-                            message,
-                        ),
+                        move |message| {
+                            FutureResult::FfmpegNotificationReceived(
+                                recv_stream_id.clone(),
+                                message,
+                            )
+                        },
                         || FutureResult::FfmpegChannelGone(closed_stream_id),
                     );
 

@@ -623,7 +623,7 @@ fn notify_on_reactor_update(
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
     let recv_stream_id = stream_id.clone();
-    let cancelled_stream_id = stream_id.clone();
+    let cancelled_stream_id = stream_id;
     futures_channel.send_on_unbounded_recv_cancellable(
         update_receiver,
         cancellation_token,

@@ -11,6 +11,7 @@ use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParame
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -21,7 +22,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 const TARGET: &str = "target";
 
@@ -97,7 +97,7 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
             Box::new(handler_generator),
             self.is_keyframe_metadata_key,
             self.pts_offset_metadata_key,
-            &futures_channel
+            &futures_channel,
         );
 
         let step = FfmpegRtmpPushStep {
@@ -107,12 +107,10 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
         };
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                ffmpeg_endpoint.closed().await;
-                FutureResult::FfmpegEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            ffmpeg_endpoint.closed().await;
+            FutureResult::FfmpegEndpointGone
+        });
 
         Ok(Box::new(step))
     }
@@ -161,7 +159,8 @@ impl WorkflowStep for FfmpegRtmpPushStep {
         }
 
         for media in inputs.media.drain(..) {
-            self.stream_reader.handle_media(media, outputs, &futures_channel);
+            self.stream_reader
+                .handle_media(media, outputs, &futures_channel);
         }
     }
 
@@ -190,4 +189,3 @@ impl FfmpegParameterGenerator for ParamGenerator {
 fn get_rtmp_app(id: String) -> String {
     format!("ffmpeg-rtmp-push-{}", id)
 }
-

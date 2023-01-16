@@ -182,11 +182,11 @@ impl ExternalStreamHandler for FfmpegHandler {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc::UnboundedReceiver;
-    use mmids_core::workflows::definitions::WorkflowStepId;
-    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
     use super::*;
     use crate::endpoint::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
+    use mmids_core::workflows::definitions::WorkflowStepId;
+    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
+    use tokio::sync::mpsc::UnboundedReceiver;
 
     struct TestParamGenerator;
     impl FfmpegParameterGenerator for TestParamGenerator {
@@ -221,10 +221,8 @@ mod tests {
             };
 
             let (futures_sender, futures_receiver) = unbounded_channel();
-            let futures_channel = WorkflowStepFuturesChannel::new(
-                WorkflowStepId(234),
-                futures_sender,
-            );
+            let futures_channel =
+                WorkflowStepFuturesChannel::new(WorkflowStepId(234), futures_sender);
 
             let handler = generator.generate(StreamId(Arc::new("test".to_string())));
             TestContext {
@@ -240,7 +238,9 @@ mod tests {
     async fn prepare_stream_sends_start_ffmpeg_request() {
         let mut context = TestContext::new();
 
-        context.handler.prepare_stream("name", &context.step_futures_channel);
+        context
+            .handler
+            .prepare_stream("name", &context.step_futures_channel);
 
         match context.ffmpeg.try_recv() {
             Ok(FfmpegEndpointRequest::StartFfmpeg {
@@ -259,7 +259,9 @@ mod tests {
     async fn stop_ffmpeg_sent_when_stop_stream_called() {
         let mut context = TestContext::new();
 
-        context.handler.prepare_stream("name", &context.step_futures_channel);
+        context
+            .handler
+            .prepare_stream("name", &context.step_futures_channel);
         let _ = context.ffmpeg.try_recv();
         context.handler.stop_stream();
 

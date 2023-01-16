@@ -10,6 +10,7 @@ use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParame
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -20,7 +21,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::error;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 const PATH: &str = "path";
 const SEGMENT_DURATION: &str = "duration";
@@ -157,19 +157,15 @@ impl StepGenerator for FfmpegHlsStepGenerator {
         };
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                ffmpeg_endpoint.closed().await;
-                FutureResult::FfmpegEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            ffmpeg_endpoint.closed().await;
+            FutureResult::FfmpegEndpointGone
+        });
 
-        futures_channel.send_on_future_completion(
-            async move {
-                let result = tokio::fs::create_dir_all(&path).await;
-                FutureResult::HlsPathCreated(result)
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            let result = tokio::fs::create_dir_all(&path).await;
+            FutureResult::HlsPathCreated(result)
+        });
 
         Ok(Box::new(step))
     }
@@ -234,7 +230,8 @@ impl WorkflowStep for FfmpegHlsStep {
         }
 
         for media in inputs.media.drain(..) {
-            self.stream_reader.handle_media(media, outputs, &futures_channel);
+            self.stream_reader
+                .handle_media(media, outputs, &futures_channel);
         }
     }
 

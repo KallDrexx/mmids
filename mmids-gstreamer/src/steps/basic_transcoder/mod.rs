@@ -12,6 +12,7 @@ use crate::endpoints::gst_transcoder::{
 };
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -22,7 +23,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 
 pub const VIDEO_ENCODER: &str = "video";
 pub const AUDIO_ENCODER: &str = "audio";
@@ -126,12 +126,10 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         };
 
         let transcode_endpoint = self.transcode_endpoint.clone();
-        futures_channel.send_on_future_completion(
-            async move {
-                transcode_endpoint.closed().await;
-                FutureResult::TranscoderEndpointGone
-            }
-        );
+        futures_channel.send_on_future_completion(async move {
+            transcode_endpoint.closed().await;
+            FutureResult::TranscoderEndpointGone
+        });
 
         Ok(Box::new(step))
     }
@@ -266,11 +264,7 @@ impl BasicTranscodeStep {
                     );
 
                     // Since the stop wasn't requested, try restarting it
-                    self.start_transcode(
-                        stream_id,
-                        transcode.stream_name,
-                        futures_channel,
-                    );
+                    self.start_transcode(stream_id, transcode.stream_name, futures_channel);
                 }
             }
 
@@ -347,15 +341,14 @@ impl WorkflowStep for BasicTranscodeStep {
                     self.stop_transcode(stream_id);
                 }
 
-                FutureResult::TranscoderNotificationReceived { notification, stream_id} => {
-                    self.handle_transcode_notification(
-                        stream_id,
-                        notification,
-                        &futures_channel,
-                    );
+                FutureResult::TranscoderNotificationReceived {
+                    notification,
+                    stream_id,
+                } => {
+                    self.handle_transcode_notification(stream_id, notification, &futures_channel);
                 }
 
-                FutureResult::TranscodedMediaReceived { media, stream_id} => {
+                FutureResult::TranscodedMediaReceived { media, stream_id } => {
                     outputs.media.push(MediaNotification {
                         stream_id,
                         content: media,
