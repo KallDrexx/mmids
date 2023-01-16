@@ -108,7 +108,7 @@ pub trait WorkflowStep {
 #[cfg(feature = "test-utils")]
 use crate::workflows::steps::factory::StepGenerator;
 #[cfg(feature = "test-utils")]
-use crate::workflows::steps::futures_channel::FuturesChannelResult;
+use crate::workflows::steps::futures_channel::StepFutureResultChannel;
 use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 #[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
@@ -124,7 +124,7 @@ pub struct StepTestContext {
     pub step: Box<dyn WorkflowStep>,
     pub media_outputs: Vec<MediaNotification>,
     pub futures_channel_sender: WorkflowStepFuturesChannel,
-    futures_channel_receiver: UnboundedReceiver<FuturesChannelResult>,
+    futures_channel_receiver: UnboundedReceiver<StepFutureResultChannel>,
 }
 
 #[cfg(feature = "test-utils")]

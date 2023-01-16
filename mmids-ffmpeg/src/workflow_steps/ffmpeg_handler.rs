@@ -185,7 +185,7 @@ mod tests {
     use super::*;
     use crate::endpoint::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
     use mmids_core::workflows::definitions::WorkflowStepId;
-    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
+    use mmids_core::workflows::steps::futures_channel::StepFutureResultChannel;
     use tokio::sync::mpsc::UnboundedReceiver;
 
     struct TestParamGenerator;
@@ -209,7 +209,7 @@ mod tests {
         ffmpeg: UnboundedReceiver<FfmpegEndpointRequest>,
         handler: Box<dyn ExternalStreamHandler>,
         step_futures_channel: WorkflowStepFuturesChannel,
-        _step_futures_receiver: UnboundedReceiver<FuturesChannelResult>,
+        _step_futures_receiver: UnboundedReceiver<StepFutureResultChannel>,
     }
 
     impl TestContext {

@@ -1,5 +1,5 @@
 use crate::workflows::definitions::{WorkflowStepDefinition, WorkflowStepType};
-use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
+use crate::workflows::steps::futures_channel::{StepFutureResultChannel, WorkflowStepFuturesChannel};
 use crate::workflows::steps::StepCreationResult;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -63,7 +63,7 @@ impl WorkflowStepFactory {
     pub(crate) fn create_step(
         &self,
         definition: WorkflowStepDefinition,
-        futures_channel: &UnboundedSender<FuturesChannelResult>,
+        futures_channel: &UnboundedSender<StepFutureResultChannel>,
     ) -> Result<StepCreationResult, FactoryCreateError> {
         let generator = match self.generators.get(&definition.step_type) {
             Some(generator) => generator,

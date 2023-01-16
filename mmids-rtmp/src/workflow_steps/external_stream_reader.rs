@@ -405,7 +405,7 @@ mod tests {
     use mmids_core::workflows::metadata::{
         MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue,
     };
-    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
+    use mmids_core::workflows::steps::futures_channel::StepFutureResultChannel;
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
@@ -420,7 +420,7 @@ mod tests {
         rtmp_endpoint: UnboundedReceiver<RtmpEndpointRequest>,
         prepare_stream_receiver: UnboundedReceiver<String>,
         stop_stream_receiver: UnboundedReceiver<()>,
-        futures_channel_receiver: UnboundedReceiver<FuturesChannelResult>,
+        futures_channel_receiver: UnboundedReceiver<StepFutureResultChannel>,
         futures_channel: WorkflowStepFuturesChannel,
     }
 
