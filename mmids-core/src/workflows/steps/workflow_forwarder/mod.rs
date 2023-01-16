@@ -42,7 +42,15 @@ struct StreamDetails {
     // channel will be dropped causing the future waiting for reactor updates to be closed. This
     // will inform the reactor that this step is no longer interested in whatever workflow it was
     // managing for it.
-    _cancellation_channel: Option<CancellationToken>,
+    cancellation_token: Option<CancellationToken>,
+}
+
+impl Drop for StreamDetails {
+    fn drop(&mut self) {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+        }
+    }
 }
 
 struct WorkflowForwarderStep {
@@ -227,7 +235,7 @@ impl WorkflowForwarderStep {
                     let mut stream_details = StreamDetails {
                         target_workflow_names: HashSet::new(),
                         required_media: vec![media.clone()],
-                        _cancellation_channel: None,
+                        cancellation_token: None,
                     };
 
                     if let Some(workflow) = &self.global_workflow_name {
@@ -280,8 +288,8 @@ impl WorkflowForwarderStep {
 
             MediaNotificationContent::StreamDisconnected => {
                 if let Some(stream) = self.active_streams.remove(&media.stream_id) {
-                    for workflow in stream.target_workflow_names {
-                        if let Some(channel) = self.known_workflows.get(&workflow) {
+                    for workflow in &stream.target_workflow_names {
+                        if let Some(channel) = self.known_workflows.get(workflow) {
                             let _ = channel.send(WorkflowRequest {
                                 request_id: "from-workflow-forwarder_disconnection".to_string(),
                                 operation: WorkflowRequestOperation::MediaNotification {
@@ -290,10 +298,10 @@ impl WorkflowForwarderStep {
                             });
                         }
 
-                        if let Some(stream_ids) = self.stream_for_workflow_name.get_mut(&workflow) {
+                        if let Some(stream_ids) = self.stream_for_workflow_name.get_mut(workflow) {
                             stream_ids.remove(&media.stream_id);
                             if stream_ids.is_empty() {
-                                self.stream_for_workflow_name.remove(&workflow);
+                                self.stream_for_workflow_name.remove(workflow);
                             }
                         }
                     }
@@ -513,7 +521,7 @@ impl WorkflowStep for WorkflowForwarderStep {
 
                         let cancellation_token = CancellationToken::new();
                         let cancellation_receiver = cancellation_token.child_token();
-                        stream._cancellation_channel = Some(cancellation_token);
+                        stream.cancellation_token = Some(cancellation_token);
 
                         notify_on_reactor_update(
                             stream_id.clone(),
@@ -567,7 +575,7 @@ impl WorkflowStep for WorkflowForwarderStep {
                             }
                         }
 
-                        stream._cancellation_channel = None;
+                        stream.cancellation_token = None;
                     }
                 }
 

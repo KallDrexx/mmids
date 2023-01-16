@@ -107,12 +107,16 @@ pub trait WorkflowStep {
 
 #[cfg(feature = "test-utils")]
 use crate::workflows::steps::factory::StepGenerator;
-use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
+#[cfg(feature = "test-utils")]
+use crate::workflows::steps::futures_channel::FuturesChannelResult;
+use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 #[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
 #[cfg(feature = "test-utils")]
 use std::time::Duration;
+#[cfg(feature = "test-utils")]
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+#[cfg(feature = "test-utils")]
 use tokio::time::timeout;
 
 #[cfg(feature = "test-utils")]
