@@ -191,7 +191,7 @@ async fn workflow_in_error_state_if_any_step_goes_to_error_state() {
             failed_step_id,
         } => {
             assert_eq!(
-                failed_step_id, context.output_step_id,
+                failed_step_id, context.output_step_id.0,
                 "Unexpected failed step id"
             );
         }
@@ -500,7 +500,7 @@ async fn workflow_in_error_state_if_factory_cant_find_step() {
             message: _,
             failed_step_id,
         } => {
-            assert_eq!(failed_step_id, step_id, "Unexpected failed step id");
+            assert_eq!(failed_step_id, step_id.0, "Unexpected failed step id");
         }
 
         status => panic!("Unexpected workflow status: {:?}", status),
@@ -563,7 +563,7 @@ async fn workflow_in_error_state_if_updated_steps_arent_registered_with_factory(
             message: _,
             failed_step_id,
         } => {
-            assert_eq!(failed_step_id, step1_id, "Unexpected failed step id");
+            assert_eq!(failed_step_id, step1_id.0, "Unexpected failed step id");
         }
 
         status => panic!("Unexpected workflow status: {:?}", status),

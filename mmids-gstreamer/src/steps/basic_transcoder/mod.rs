@@ -10,9 +10,9 @@
 use crate::endpoints::gst_transcoder::{
     GstTranscoderNotification, GstTranscoderRequest, GstTranscoderStoppedCause,
 };
-use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -20,7 +20,7 @@ use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::StreamId;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
@@ -57,14 +57,12 @@ enum FutureResult {
     TranscoderNotificationReceived {
         stream_id: StreamId,
         notification: GstTranscoderNotification,
-        receiver: UnboundedReceiver<GstTranscoderNotification>,
     },
 
     TranscodedMediaChannelClosed(StreamId),
     TranscodedMediaReceived {
         stream_id: StreamId,
         media: MediaNotificationContent,
-        receiver: UnboundedReceiver<MediaNotificationContent>,
     },
 }
 
@@ -88,7 +86,11 @@ impl BasicTranscodeStepGenerator {
 }
 
 impl StepGenerator for BasicTranscodeStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let video_encoder_name = match definition.parameters.get(VIDEO_ENCODER) {
             Some(Some(encoder)) => encoder.clone(),
             _ => return Err(Box::new(StepStartupError::NoVideoEncoderSpecified)),
@@ -123,9 +125,13 @@ impl StepGenerator for BasicTranscodeStepGenerator {
             audio_parameters: audio_params,
         };
 
-        let futures = vec![notify_on_transcoder_gone(self.transcode_endpoint.clone()).boxed()];
+        let transcode_endpoint = self.transcode_endpoint.clone();
+        futures_channel.send_on_future_completion(async move {
+            transcode_endpoint.closed().await;
+            FutureResult::TranscoderEndpointGone
+        });
 
-        Ok((Box::new(step), futures))
+        Ok(Box::new(step))
     }
 }
 
@@ -151,12 +157,12 @@ impl BasicTranscodeStep {
         }
     }
 
-    #[instrument(skip(self, outputs))]
+    #[instrument(skip_all, fields(stream_id = ?stream_id, stream_name = %stream_name))]
     fn start_transcode(
         &mut self,
         stream_id: StreamId,
         stream_name: Arc<String>,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         if self.active_transcodes.contains_key(&stream_id) {
             warn!(
@@ -194,15 +200,30 @@ impl BasicTranscodeStep {
                 audio_parameters: self.audio_parameters.clone(),
             });
 
-        outputs
-            .futures
-            .push(notify_on_transcoder_notification(notification_receiver, stream_id).boxed());
+        let closed_stream_id = stream_id.clone();
+        futures_channel.send_on_unbounded_recv(
+            notification_receiver,
+            move |notification| FutureResult::TranscoderNotificationReceived {
+                stream_id: stream_id.clone(),
+                notification,
+            },
+            move || FutureResult::TranscoderNotificationSenderGone(closed_stream_id),
+        );
     }
 
-    fn handle_media(&mut self, media: MediaNotification, outputs: &mut StepOutputs) {
+    fn handle_media(
+        &mut self,
+        media: MediaNotification,
+        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         match &media.content {
             MediaNotificationContent::NewIncomingStream { stream_name } => {
-                self.start_transcode(media.stream_id.clone(), stream_name.clone(), outputs);
+                self.start_transcode(
+                    media.stream_id.clone(),
+                    stream_name.clone(),
+                    futures_channel,
+                );
 
                 outputs.media.push(media);
             }
@@ -226,7 +247,7 @@ impl BasicTranscodeStep {
         &mut self,
         stream_id: StreamId,
         notification: GstTranscoderNotification,
-        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         match notification {
             GstTranscoderNotification::TranscodingStopped(cause) => {
@@ -243,14 +264,20 @@ impl BasicTranscodeStep {
                     );
 
                     // Since the stop wasn't requested, try restarting it
-                    self.start_transcode(stream_id, transcode.stream_name, outputs);
+                    self.start_transcode(stream_id, transcode.stream_name, futures_channel);
                 }
             }
 
             GstTranscoderNotification::TranscodingStarted { output_media } => {
-                outputs
-                    .futures
-                    .push(notify_on_transcoder_media(output_media, stream_id).boxed());
+                let closed_stream_id = stream_id.clone();
+                futures_channel.send_on_unbounded_recv(
+                    output_media,
+                    move |media| FutureResult::TranscodedMediaReceived {
+                        stream_id: stream_id.clone(),
+                        media,
+                    },
+                    move || FutureResult::TranscodedMediaChannelClosed(closed_stream_id),
+                );
             }
         }
     }
@@ -265,9 +292,14 @@ impl WorkflowStep for BasicTranscodeStep {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) {
         for media in inputs.media.drain(..) {
-            self.handle_media(media, outputs);
+            self.handle_media(media, outputs, &futures_channel);
         }
 
         for future_result in inputs.notifications.drain(..) {
@@ -312,23 +344,11 @@ impl WorkflowStep for BasicTranscodeStep {
                 FutureResult::TranscoderNotificationReceived {
                     notification,
                     stream_id,
-                    receiver,
                 } => {
-                    outputs.futures.push(
-                        notify_on_transcoder_notification(receiver, stream_id.clone()).boxed(),
-                    );
-                    self.handle_transcode_notification(stream_id, notification, outputs);
+                    self.handle_transcode_notification(stream_id, notification, &futures_channel);
                 }
 
-                FutureResult::TranscodedMediaReceived {
-                    media,
-                    stream_id,
-                    receiver,
-                } => {
-                    outputs
-                        .futures
-                        .push(notify_on_transcoder_media(receiver, stream_id.clone()).boxed());
-
+                FutureResult::TranscodedMediaReceived { media, stream_id } => {
                     outputs.media.push(MediaNotification {
                         stream_id,
                         content: media,
@@ -341,45 +361,4 @@ impl WorkflowStep for BasicTranscodeStep {
     fn shutdown(&mut self) {
         self.status = StepStatus::Shutdown;
     }
-}
-
-async fn notify_on_transcoder_gone(
-    sender: UnboundedSender<GstTranscoderRequest>,
-) -> Box<dyn StepFutureResult> {
-    sender.closed().await;
-
-    Box::new(FutureResult::TranscoderEndpointGone)
-}
-
-async fn notify_on_transcoder_notification(
-    mut receiver: UnboundedReceiver<GstTranscoderNotification>,
-    stream_id: StreamId,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(notification) => FutureResult::TranscoderNotificationReceived {
-            stream_id,
-            notification,
-            receiver,
-        },
-
-        None => FutureResult::TranscoderNotificationSenderGone(stream_id),
-    };
-
-    Box::new(result)
-}
-
-async fn notify_on_transcoder_media(
-    mut receiver: UnboundedReceiver<MediaNotificationContent>,
-    stream_id: StreamId,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(media) => FutureResult::TranscodedMediaReceived {
-            stream_id,
-            media,
-            receiver,
-        },
-        None => FutureResult::TranscodedMediaChannelClosed(stream_id),
-    };
-
-    Box::new(result)
 }

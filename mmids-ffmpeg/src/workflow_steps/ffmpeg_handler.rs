@@ -1,13 +1,12 @@
 use crate::endpoint::{FfmpegEndpointNotification, FfmpegEndpointRequest, FfmpegParams};
-use futures::FutureExt;
-use mmids_core::workflows::steps::{StepFutureResult, StepOutputs};
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::StreamId;
 use mmids_rtmp::workflow_steps::external_stream_handler::{
     ExternalStreamHandler, ExternalStreamHandlerGenerator, ResolvedFutureStatus,
     StreamHandlerFutureResult, StreamHandlerFutureWrapper,
 };
 use std::sync::Arc;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
@@ -37,10 +36,7 @@ enum FfmpegHandlerStatus {
 
 enum FutureResult {
     FfmpegChannelGone,
-    NotificationReceived(
-        FfmpegEndpointNotification,
-        UnboundedReceiver<FfmpegEndpointNotification>,
-    ),
+    NotificationReceived(FfmpegEndpointNotification),
 }
 
 impl StreamHandlerFutureResult for FutureResult {}
@@ -114,7 +110,7 @@ impl FfmpegHandler {
 }
 
 impl ExternalStreamHandler for FfmpegHandler {
-    fn prepare_stream(&mut self, stream_name: &str, outputs: &mut StepOutputs) {
+    fn prepare_stream(&mut self, stream_name: &str, futures_channel: &WorkflowStepFuturesChannel) {
         if let FfmpegHandlerStatus::Inactive = &self.status {
             let parameters = self
                 .param_generator
@@ -128,9 +124,19 @@ impl ExternalStreamHandler for FfmpegHandler {
                     notification_channel: sender,
                 });
 
-            outputs
-                .futures
-                .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
+            let recv_stream_id = self.stream_id.clone();
+            let closed_stream_id = self.stream_id.clone();
+            futures_channel.send_on_unbounded_recv(
+                receiver,
+                move |notification| StreamHandlerFutureWrapper {
+                    stream_id: recv_stream_id.clone(),
+                    future: Box::new(FutureResult::NotificationReceived(notification)),
+                },
+                move || StreamHandlerFutureWrapper {
+                    stream_id: closed_stream_id,
+                    future: Box::new(FutureResult::FfmpegChannelGone),
+                },
+            );
 
             self.status = FfmpegHandlerStatus::Pending;
         }
@@ -157,7 +163,6 @@ impl ExternalStreamHandler for FfmpegHandler {
     fn handle_resolved_future(
         &mut self,
         future: Box<dyn StreamHandlerFutureResult>,
-        outputs: &mut StepOutputs,
     ) -> ResolvedFutureStatus {
         let future = match future.downcast::<FutureResult>() {
             Ok(x) => *x,
@@ -166,11 +171,7 @@ impl ExternalStreamHandler for FfmpegHandler {
 
         match future {
             FutureResult::FfmpegChannelGone => ResolvedFutureStatus::StreamShouldBeStopped,
-            FutureResult::NotificationReceived(notification, receiver) => {
-                outputs
-                    .futures
-                    .push(wait_for_ffmpeg_notification(self.stream_id.clone(), receiver).boxed());
-
+            FutureResult::NotificationReceived(notification) => {
                 self.handle_ffmpeg_notification(notification);
 
                 ResolvedFutureStatus::Success
@@ -179,26 +180,13 @@ impl ExternalStreamHandler for FfmpegHandler {
     }
 }
 
-async fn wait_for_ffmpeg_notification(
-    stream_id: StreamId,
-    mut receiver: UnboundedReceiver<FfmpegEndpointNotification>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::NotificationReceived(msg, receiver),
-
-        None => FutureResult::FfmpegChannelGone,
-    };
-
-    Box::new(StreamHandlerFutureWrapper {
-        stream_id,
-        future: Box::new(result),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::endpoint::{AudioTranscodeParams, TargetParams, VideoTranscodeParams};
+    use mmids_core::workflows::definitions::WorkflowStepId;
+    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
+    use tokio::sync::mpsc::UnboundedReceiver;
 
     struct TestParamGenerator;
     impl FfmpegParameterGenerator for TestParamGenerator {
@@ -220,30 +208,39 @@ mod tests {
     struct TestContext {
         ffmpeg: UnboundedReceiver<FfmpegEndpointRequest>,
         handler: Box<dyn ExternalStreamHandler>,
+        step_futures_channel: WorkflowStepFuturesChannel,
+        _step_futures_receiver: UnboundedReceiver<FuturesChannelResult>,
     }
 
     impl TestContext {
         fn new() -> Self {
-            let (sender, receiver) = unbounded_channel();
+            let (request_sender, request_receiver) = unbounded_channel();
             let generator = FfmpegHandlerGenerator {
-                ffmpeg_endpoint: sender,
+                ffmpeg_endpoint: request_sender,
                 param_generator: Arc::new(Box::new(TestParamGenerator)),
             };
+
+            let (futures_sender, futures_receiver) = unbounded_channel();
+            let futures_channel =
+                WorkflowStepFuturesChannel::new(WorkflowStepId(234), futures_sender);
 
             let handler = generator.generate(StreamId(Arc::new("test".to_string())));
             TestContext {
                 handler,
-                ffmpeg: receiver,
+                ffmpeg: request_receiver,
+                step_futures_channel: futures_channel,
+                _step_futures_receiver: futures_receiver,
             }
         }
     }
 
-    #[test]
-    fn prepare_stream_sends_start_ffmpeg_request() {
+    #[tokio::test]
+    async fn prepare_stream_sends_start_ffmpeg_request() {
         let mut context = TestContext::new();
-        let mut outputs = StepOutputs::new();
 
-        context.handler.prepare_stream("name", &mut outputs);
+        context
+            .handler
+            .prepare_stream("name", &context.step_futures_channel);
 
         match context.ffmpeg.try_recv() {
             Ok(FfmpegEndpointRequest::StartFfmpeg {
@@ -258,12 +255,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stop_ffmpeg_sent_when_stop_stream_called() {
+    #[tokio::test]
+    async fn stop_ffmpeg_sent_when_stop_stream_called() {
         let mut context = TestContext::new();
-        let mut outputs = StepOutputs::new();
 
-        context.handler.prepare_stream("name", &mut outputs);
+        context
+            .handler
+            .prepare_stream("name", &context.step_futures_channel);
         let _ = context.ffmpeg.try_recv();
         context.handler.stop_stream();
 

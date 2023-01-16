@@ -1,23 +1,21 @@
 //! Workflow steps are individual actions that can be taken on media as part of a media pipeline.
 
 pub mod factory;
+pub mod futures_channel;
 pub mod workflow_forwarder;
 
 use super::MediaNotification;
 use crate::workflows::definitions::WorkflowStepDefinition;
 use downcast_rs::{impl_downcast, Downcast};
-use futures::future::BoxFuture;
 
 /// Represents the result of a future for a workflow step.  It is expected that the workflow step
 /// will downcast this result into a struct that it owns.
 pub trait StepFutureResult: Downcast + Send {}
 impl_downcast!(StepFutureResult);
 
-pub type FutureList = Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>;
-pub type StepCreationResult = Result<
-    (Box<dyn WorkflowStep + Sync + Send>, FutureList),
-    Box<dyn std::error::Error + Sync + Send>,
->;
+pub type StepCreationResult =
+    Result<Box<dyn WorkflowStep + Sync + Send>, Box<dyn std::error::Error + Sync + Send>>;
+
 pub type CreateFactoryFnResult =
     Box<dyn Fn(&WorkflowStepDefinition) -> StepCreationResult + Send + Sync>;
 
@@ -65,9 +63,6 @@ impl StepInputs {
 pub struct StepOutputs {
     /// Media notifications that the workflow step intends to pass to the next workflow step
     pub media: Vec<MediaNotification>,
-
-    /// Any futures the workflow should track for this step
-    pub futures: Vec<BoxFuture<'static, Box<dyn StepFutureResult>>>,
 }
 
 impl StepOutputs {
@@ -76,7 +71,6 @@ impl StepOutputs {
     }
 
     pub fn clear(&mut self) {
-        self.futures.clear();
         self.media.clear();
     }
 }
@@ -95,7 +89,12 @@ pub trait WorkflowStep {
     ///
     /// It is expected that `execute()` will not be called if the step is in an Error or Torn Down
     /// state.
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs);
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    );
 
     /// Notifies the step that it is no longer needed and that all streams its managing should be
     /// closed.  All endpoints the step has interacted with should be proactively notified that it
@@ -109,21 +108,23 @@ pub trait WorkflowStep {
 #[cfg(feature = "test-utils")]
 use crate::workflows::steps::factory::StepGenerator;
 #[cfg(feature = "test-utils")]
+use crate::workflows::steps::futures_channel::FuturesChannelResult;
+use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
+#[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
 #[cfg(feature = "test-utils")]
-use futures::stream::FuturesUnordered;
-#[cfg(feature = "test-utils")]
-use futures::StreamExt;
-#[cfg(feature = "test-utils")]
-use std::iter::FromIterator;
-#[cfg(feature = "test-utils")]
 use std::time::Duration;
+#[cfg(feature = "test-utils")]
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+#[cfg(feature = "test-utils")]
+use tokio::time::timeout;
 
 #[cfg(feature = "test-utils")]
 pub struct StepTestContext {
     pub step: Box<dyn WorkflowStep>,
-    pub futures: FuturesUnordered<BoxFuture<'static, Box<dyn StepFutureResult>>>,
     pub media_outputs: Vec<MediaNotification>,
+    pub futures_channel_sender: WorkflowStepFuturesChannel,
+    futures_channel_receiver: UnboundedReceiver<FuturesChannelResult>,
 }
 
 #[cfg(feature = "test-utils")]
@@ -132,14 +133,18 @@ impl StepTestContext {
         generator: Box<dyn StepGenerator>,
         definition: WorkflowStepDefinition,
     ) -> Result<Self> {
-        let (step, futures) = generator
-            .generate(definition)
+        let (sender, receiver) = unbounded_channel();
+        let channel = WorkflowStepFuturesChannel::new(definition.get_id(), sender);
+
+        let step = generator
+            .generate(definition, channel.clone())
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 
         Ok(StepTestContext {
             step,
-            futures: FuturesUnordered::from_iter(futures),
             media_outputs: Vec::new(),
+            futures_channel_sender: channel,
+            futures_channel_receiver: receiver,
         })
     }
 
@@ -148,9 +153,12 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.media.push(media);
 
-        self.step.execute(&mut inputs, &mut outputs);
+        self.step.execute(
+            &mut inputs,
+            &mut outputs,
+            self.futures_channel_sender.clone(),
+        );
 
-        self.futures.extend(outputs.futures.drain(..));
         self.media_outputs = outputs.media;
     }
 
@@ -159,9 +167,11 @@ impl StepTestContext {
         let mut inputs = StepInputs::new();
         inputs.notifications.push(notification);
 
-        self.step.execute(&mut inputs, &mut outputs);
-
-        self.futures.extend(outputs.futures.drain(..));
+        self.step.execute(
+            &mut inputs,
+            &mut outputs,
+            self.futures_channel_sender.clone(),
+        );
         self.media_outputs = outputs.media;
 
         self.execute_pending_notifications().await;
@@ -169,19 +179,27 @@ impl StepTestContext {
 
     pub async fn execute_pending_notifications(&mut self) {
         loop {
-            let notification =
-                match tokio::time::timeout(Duration::from_millis(10), self.futures.next()).await {
-                    Ok(Some(notification)) => notification,
-                    _ => break,
-                };
+            let duration = Duration::from_millis(10);
+            let future = self.futures_channel_receiver.recv();
+
+            // We explicitly want to do a timeout instead of `try_recv` to ensure that any futures
+            // that are triggered get a chance to execute and complete. This is important since it's
+            // single threaded. A `yield()` may work but this is probably more reliable to give us
+            // enough time.
+            let notification = match timeout(duration, future).await {
+                Ok(Some(notification)) => notification,
+                _ => break,
+            };
 
             let mut outputs = StepOutputs::new();
             let mut inputs = StepInputs::new();
-            inputs.notifications.push(notification);
+            inputs.notifications.push(notification.result);
 
-            self.step.execute(&mut inputs, &mut outputs);
-
-            self.futures.extend(outputs.futures.drain(..));
+            self.step.execute(
+                &mut inputs,
+                &mut outputs,
+                self.futures_channel_sender.clone(),
+            );
             self.media_outputs = outputs.media;
         }
     }
@@ -201,5 +219,15 @@ impl StepTestContext {
         self.execute_with_media(media);
 
         assert!(self.media_outputs.is_empty(), "Expected no media outputs");
+    }
+
+    /// Gets the first future that was resolved on the workflow step futures channel. If no future
+    /// is resolved, then a panic will ensue.
+    pub async fn expect_future_resolved(&mut self) -> Box<dyn StepFutureResult> {
+        let future = self.futures_channel_receiver.recv();
+        match timeout(Duration::from_millis(10), future).await {
+            Ok(Some(response)) => response.result,
+            _ => panic!("No future resolved within timeout period"),
+        }
     }
 }

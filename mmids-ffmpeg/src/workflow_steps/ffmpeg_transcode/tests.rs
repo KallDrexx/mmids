@@ -231,8 +231,8 @@ impl TestContext {
     }
 }
 
-#[test]
-fn step_starts_in_active_state() {
+#[tokio::test]
+async fn step_starts_in_active_state() {
     let definition = DefinitionBuilder::new().build();
     let context = TestContext::new(definition).unwrap();
 
@@ -240,8 +240,8 @@ fn step_starts_in_active_state() {
     assert_eq!(status, &StepStatus::Active, "Unexpected step status");
 }
 
-#[test]
-fn step_fails_to_build_when_invalid_vcodec_specified() {
+#[tokio::test]
+async fn step_fails_to_build_when_invalid_vcodec_specified() {
     let definition = DefinitionBuilder::new().vcodec("abcdef").build();
 
     match TestContext::new(definition) {
@@ -250,8 +250,8 @@ fn step_fails_to_build_when_invalid_vcodec_specified() {
     }
 }
 
-#[test]
-fn step_fails_to_build_when_no_vcodec_specified() {
+#[tokio::test]
+async fn step_fails_to_build_when_no_vcodec_specified() {
     let mut definition = DefinitionBuilder::new().build();
     definition.parameters.remove(VIDEO_CODEC_NAME);
 
@@ -624,8 +624,8 @@ async fn if_ffmpeg_process_stops_unexpectedly_it_starts_again_with_same_id_and_p
     assert_eq!(new_id, id, "Ids were not equal");
 }
 
-#[test]
-fn stream_started_notification_passed_through_immediately() {
+#[tokio::test]
+async fn stream_started_notification_passed_through_immediately() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -639,8 +639,8 @@ fn stream_started_notification_passed_through_immediately() {
         });
 }
 
-#[test]
-fn disconnection_notification_passed_through_immediately() {
+#[tokio::test]
+async fn disconnection_notification_passed_through_immediately() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -651,8 +651,8 @@ fn disconnection_notification_passed_through_immediately() {
             content: MediaNotificationContent::StreamDisconnected,
         });
 }
-#[test]
-fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -666,8 +666,8 @@ fn metadata_notification_passed_as_input_does_not_get_passed_as_output() {
         });
 }
 
-#[test]
-fn video_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn video_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 
@@ -686,8 +686,8 @@ fn video_notification_passed_as_input_does_not_get_passed_as_output() {
         });
 }
 
-#[test]
-fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
+#[tokio::test]
+async fn audio_notification_passed_as_input_does_not_get_passed_as_output() {
     let definition = DefinitionBuilder::new().build();
     let mut context = TestContext::new(definition).unwrap();
 

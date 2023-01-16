@@ -1,4 +1,6 @@
-use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepType};
+use crate::workflows::definitions::{
+    WorkflowDefinition, WorkflowStepDefinition, WorkflowStepId, WorkflowStepType,
+};
 use crate::workflows::runner::test_steps::{TestInputStepGenerator, TestOutputStepGenerator};
 use crate::workflows::steps::factory::WorkflowStepFactory;
 use crate::workflows::steps::StepStatus;
@@ -17,8 +19,8 @@ pub struct TestContext {
     pub media_receiver: UnboundedReceiver<MediaNotification>,
     pub input_status: Sender<StepStatus>,
     pub output_status: Sender<StepStatus>,
-    pub input_step_id: u64,
-    pub output_step_id: u64,
+    pub input_step_id: WorkflowStepId,
+    pub output_step_id: WorkflowStepId,
 }
 
 impl TestContext {

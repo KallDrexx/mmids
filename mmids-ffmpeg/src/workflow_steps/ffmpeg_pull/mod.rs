@@ -10,13 +10,13 @@ use crate::endpoint::{
     TargetParams, VideoTranscodeParams,
 };
 use bytes::BytesMut;
-use futures::FutureExt;
 use mmids_core::codecs::{AUDIO_CODEC_AAC_RAW, VIDEO_CODEC_H264_AVC};
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::{
     MediaPayloadMetadataCollection, MetadataEntry, MetadataKey, MetadataValue,
 };
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -30,7 +30,7 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -63,14 +63,8 @@ struct FfmpegPullStep {
 enum FutureResult {
     RtmpEndpointGone,
     FfmpegEndpointGone,
-    RtmpEndpointResponseReceived(
-        RtmpEndpointPublisherMessage,
-        UnboundedReceiver<RtmpEndpointPublisherMessage>,
-    ),
-    FfmpegNotificationReceived(
-        FfmpegEndpointNotification,
-        UnboundedReceiver<FfmpegEndpointNotification>,
-    ),
+    RtmpEndpointResponseReceived(RtmpEndpointPublisherMessage),
+    FfmpegNotificationReceived(FfmpegEndpointNotification),
 }
 
 impl StepFutureResult for FutureResult {}
@@ -101,7 +95,11 @@ impl FfmpegPullStepGenerator {
 }
 
 impl StepGenerator for FfmpegPullStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let location = match definition.parameters.get(LOCATION) {
             Some(Some(value)) => value.clone(),
             _ => return Err(Box::new(StepStartupError::NoLocationSpecified)),
@@ -141,18 +139,29 @@ impl StepGenerator for FfmpegPullStepGenerator {
                 requires_registrant_approval: false,
             });
 
-        let futures = vec![
-            notify_rtmp_endpoint_gone(self.rtmp_endpoint.clone()).boxed(),
-            notify_ffmpeg_endpoint_gone(self.ffmpeg_endpoint.clone()).boxed(),
-            wait_for_rtmp_notification(receiver).boxed(),
-        ];
+        let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
+        futures_channel.send_on_future_completion(async move {
+            ffmpeg_endpoint.closed().await;
+            FutureResult::FfmpegEndpointGone
+        });
 
-        Ok((Box::new(step), futures))
+        futures_channel.send_on_unbounded_recv(
+            receiver,
+            FutureResult::RtmpEndpointResponseReceived,
+            || FutureResult::RtmpEndpointGone,
+        );
+
+        Ok(Box::new(step))
     }
 }
 
 impl FfmpegPullStep {
-    fn handle_resolved_future(&mut self, result: FutureResult, outputs: &mut StepOutputs) {
+    fn handle_resolved_future(
+        &mut self,
+        result: FutureResult,
+        outputs: &mut StepOutputs,
+        futures_channel: &WorkflowStepFuturesChannel,
+    ) {
         match result {
             FutureResult::FfmpegEndpointGone => {
                 error!("Ffmpeg endpoint is gone");
@@ -170,26 +179,17 @@ impl FfmpegPullStep {
                 self.stop_ffmpeg();
             }
 
-            FutureResult::RtmpEndpointResponseReceived(response, receiver) => {
-                outputs
-                    .futures
-                    .push(wait_for_rtmp_notification(receiver).boxed());
-
-                self.handle_rtmp_notification(outputs, response);
+            FutureResult::RtmpEndpointResponseReceived(response) => {
+                self.handle_rtmp_notification(outputs, response, futures_channel);
             }
 
-            FutureResult::FfmpegNotificationReceived(notification, receiver) => {
-                self.handle_ffmpeg_notification(outputs, notification, receiver);
+            FutureResult::FfmpegNotificationReceived(notification) => {
+                self.handle_ffmpeg_notification(notification);
             }
         }
     }
 
-    fn handle_ffmpeg_notification(
-        &mut self,
-        outputs: &mut StepOutputs,
-        message: FfmpegEndpointNotification,
-        receiver: UnboundedReceiver<FfmpegEndpointNotification>,
-    ) {
+    fn handle_ffmpeg_notification(&mut self, message: FfmpegEndpointNotification) {
         match message {
             FfmpegEndpointNotification::FfmpegFailedToStart { cause } => {
                 error!("Ffmpeg failed to start: {:?}", cause);
@@ -200,9 +200,6 @@ impl FfmpegPullStep {
 
             FfmpegEndpointNotification::FfmpegStarted => {
                 info!("Ffmpeg started");
-                outputs
-                    .futures
-                    .push(wait_for_ffmpeg_notification(receiver).boxed());
             }
 
             FfmpegEndpointNotification::FfmpegStopped => {
@@ -215,6 +212,7 @@ impl FfmpegPullStep {
         &mut self,
         outputs: &mut StepOutputs,
         message: RtmpEndpointPublisherMessage,
+        futures_channel: &WorkflowStepFuturesChannel,
     ) {
         match message {
             RtmpEndpointPublisherMessage::PublisherRegistrationFailed => {
@@ -227,7 +225,7 @@ impl FfmpegPullStep {
             RtmpEndpointPublisherMessage::PublisherRegistrationSuccessful => {
                 info!("Publisher registration successful");
                 self.status = StepStatus::Active;
-                self.start_ffmpeg(outputs);
+                self.start_ffmpeg(futures_channel);
             }
 
             RtmpEndpointPublisherMessage::NewPublisherConnected {
@@ -387,7 +385,7 @@ impl FfmpegPullStep {
         }
     }
 
-    fn start_ffmpeg(&mut self, outputs: &mut StepOutputs) {
+    fn start_ffmpeg(&mut self, futures_channel: &WorkflowStepFuturesChannel) {
         if self.ffmpeg_id.is_none() {
             info!("Starting ffmpeg");
             let id = Uuid::new_v4();
@@ -410,9 +408,11 @@ impl FfmpegPullStep {
                     },
                 });
 
-            outputs
-                .futures
-                .push(wait_for_ffmpeg_notification(receiver).boxed());
+            futures_channel.send_on_unbounded_recv(
+                receiver,
+                FutureResult::FfmpegNotificationReceived,
+                || FutureResult::FfmpegEndpointGone,
+            );
         }
     }
 
@@ -436,10 +436,15 @@ impl WorkflowStep for FfmpegPullStep {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) {
         for result in inputs.notifications.drain(..) {
             if let Ok(result) = result.downcast::<FutureResult>() {
-                self.handle_resolved_future(*result, outputs);
+                self.handle_resolved_future(*result, outputs, &futures_channel);
             }
         }
     }
@@ -457,42 +462,4 @@ impl WorkflowStep for FfmpegPullStep {
                 rtmp_stream_key: StreamKeyRegistration::Exact(self.stream_name.clone()),
             });
     }
-}
-
-async fn notify_rtmp_endpoint_gone(
-    endpoint: UnboundedSender<RtmpEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::RtmpEndpointGone)
-}
-
-async fn notify_ffmpeg_endpoint_gone(
-    endpoint: UnboundedSender<FfmpegEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::FfmpegEndpointGone)
-}
-
-async fn wait_for_rtmp_notification(
-    mut receiver: UnboundedReceiver<RtmpEndpointPublisherMessage>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::RtmpEndpointResponseReceived(msg, receiver),
-        None => FutureResult::RtmpEndpointGone,
-    };
-
-    Box::new(result)
-}
-
-async fn wait_for_ffmpeg_notification(
-    mut receiver: UnboundedReceiver<FfmpegEndpointNotification>,
-) -> Box<dyn StepFutureResult> {
-    let result = match receiver.recv().await {
-        Some(msg) => FutureResult::FfmpegNotificationReceived(msg, receiver),
-        None => FutureResult::FfmpegEndpointGone,
-    };
-
-    Box::new(result)
 }

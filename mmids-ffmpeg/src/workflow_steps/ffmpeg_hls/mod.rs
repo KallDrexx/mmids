@@ -7,10 +7,10 @@ use crate::endpoint::{
     AudioTranscodeParams, FfmpegEndpointRequest, FfmpegParams, TargetParams, VideoTranscodeParams,
 };
 use crate::workflow_steps::ffmpeg_handler::{FfmpegHandlerGenerator, FfmpegParameterGenerator};
-use futures::FutureExt;
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::metadata::MetadataKey;
 use mmids_core::workflows::steps::factory::StepGenerator;
+use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -89,7 +89,11 @@ impl FfmpegHlsStepGenerator {
 }
 
 impl StepGenerator for FfmpegHlsStepGenerator {
-    fn generate(&self, definition: WorkflowStepDefinition) -> StepCreationResult {
+    fn generate(
+        &self,
+        definition: WorkflowStepDefinition,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) -> StepCreationResult {
         let path = match definition.parameters.get(PATH) {
             Some(Some(value)) => value,
             _ => return Err(Box::new(StepStartupError::NoPathProvided)),
@@ -135,12 +139,13 @@ impl StepGenerator for FfmpegHlsStepGenerator {
         let handler_generator =
             FfmpegHandlerGenerator::new(self.ffmpeg_endpoint.clone(), Box::new(param_generator));
 
-        let (reader, mut futures) = ExternalStreamReader::new(
+        let reader = ExternalStreamReader::new(
             rtmp_app,
             self.rtmp_endpoint.clone(),
             Box::new(handler_generator),
             self.is_keyframe_metadata_key,
             self.pts_offset_metadata_key,
+            &futures_channel,
         );
 
         let path = path.clone();
@@ -151,10 +156,18 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             path: path.clone(),
         };
 
-        futures.push(notify_when_ffmpeg_endpoint_is_gone(self.ffmpeg_endpoint.clone()).boxed());
-        futures.push(notify_when_path_created(path).boxed());
+        let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
+        futures_channel.send_on_future_completion(async move {
+            ffmpeg_endpoint.closed().await;
+            FutureResult::FfmpegEndpointGone
+        });
 
-        Ok((Box::new(step), futures))
+        futures_channel.send_on_future_completion(async move {
+            let result = tokio::fs::create_dir_all(&path).await;
+            FutureResult::HlsPathCreated(result)
+        });
+
+        Ok(Box::new(step))
     }
 }
 
@@ -167,7 +180,12 @@ impl WorkflowStep for FfmpegHlsStep {
         &self.definition
     }
 
-    fn execute(&mut self, inputs: &mut StepInputs, outputs: &mut StepOutputs) {
+    fn execute(
+        &mut self,
+        inputs: &mut StepInputs,
+        outputs: &mut StepOutputs,
+        futures_channel: WorkflowStepFuturesChannel,
+    ) {
         if let StepStatus::Error { message } = &self.stream_reader.status {
             error!("external stream reader is in error status, so putting the step in in error status as well.");
             self.status = StepStatus::Error {
@@ -181,7 +199,7 @@ impl WorkflowStep for FfmpegHlsStep {
                 Err(future_result) => {
                     // Not a future we can handle
                     self.stream_reader
-                        .handle_resolved_future(future_result, outputs)
+                        .handle_resolved_future(future_result, &futures_channel)
                 }
 
                 Ok(future_result) => match *future_result {
@@ -212,7 +230,8 @@ impl WorkflowStep for FfmpegHlsStep {
         }
 
         for media in inputs.media.drain(..) {
-            self.stream_reader.handle_media(media, outputs);
+            self.stream_reader
+                .handle_media(media, outputs, &futures_channel);
         }
     }
 
@@ -246,17 +265,4 @@ impl FfmpegParameterGenerator for ParamGenerator {
 
 fn get_rtmp_app(id: String) -> String {
     format!("ffmpeg-hls-{}", id)
-}
-
-async fn notify_when_ffmpeg_endpoint_is_gone(
-    endpoint: UnboundedSender<FfmpegEndpointRequest>,
-) -> Box<dyn StepFutureResult> {
-    endpoint.closed().await;
-
-    Box::new(FutureResult::FfmpegEndpointGone)
-}
-
-async fn notify_when_path_created(path: String) -> Box<dyn StepFutureResult> {
-    let result = tokio::fs::create_dir_all(&path).await;
-    Box::new(FutureResult::HlsPathCreated(result))
 }

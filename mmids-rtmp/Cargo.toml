@@ -13,7 +13,8 @@ downcast-rs = "1.2"
 futures = "0.3"
 rml_rtmp = "0.6"
 thiserror = "1.0"
-tokio = {version = "= 1.21", features = ["sync"]}
+tokio = {version = "= 1.24", features = ["sync"]}
+tokio-util = "0.7"
 tracing = {version = "0.1", features = ["log"]}
 uuid = {version = "1.2", features = ["v4"]}
 

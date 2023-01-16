@@ -154,7 +154,7 @@ impl From<WorkflowState> for WorkflowStateResponse {
 impl From<WorkflowStepState> for WorkflowStepStateResponse {
     fn from(step_state: WorkflowStepState) -> Self {
         WorkflowStepStateResponse {
-            step_id: step_state.definition.get_id().to_string(),
+            step_id: step_state.definition.get_id().0.to_string(),
             step_type: step_state.definition.step_type.0,
             parameters: step_state.definition.parameters,
             status: match step_state.status {
