@@ -256,14 +256,14 @@ impl StepGenerator for RtmpWatchStepGenerator {
                 requires_registrant_approval: step.reactor_name.is_some(),
             });
 
-        futures_channel.send_on_unbounded_recv(
+        futures_channel.send_on_generic_unbounded_recv(
             notification_receiver,
             RtmpWatchStepFutureResult::RtmpWatchNotificationReceived,
             || RtmpWatchStepFutureResult::RtmpEndpointGone,
         );
 
         let reactor_manager = self.reactor_manager.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             reactor_manager.closed().await;
             RtmpWatchStepFutureResult::ReactorManagerGone
         });
@@ -305,7 +305,7 @@ impl RtmpWatchStep {
                         let cancellation_token = CancellationToken::new();
                         let recv_stream_key = stream_key.clone();
                         let cancelled_stream_key = stream_key.clone();
-                        futures_channel.send_on_unbounded_recv_cancellable(
+                        futures_channel.send_on_generic_unbounded_recv_cancellable(
                             reactor_update_channel,
                             cancellation_token.child_token(),
                             move |update| RtmpWatchStepFutureResult::ReactorUpdateReceived {
@@ -355,7 +355,7 @@ impl RtmpWatchStep {
                         },
                     );
 
-                    futures_channel.send_on_future_completion(async move {
+                    futures_channel.send_on_generic_future_completion(async move {
                         let is_valid = match receiver.recv().await {
                             Some(response) => response.is_valid,
                             None => false, // Assume not valid if channel closed

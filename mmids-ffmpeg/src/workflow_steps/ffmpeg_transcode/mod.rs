@@ -285,13 +285,13 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
         };
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             ffmpeg_endpoint.closed().await;
             FutureResult::FfmpegEndpointGone
         });
 
         let rtmp_endpoint = self.rtmp_server_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             rtmp_endpoint.closed().await;
             FutureResult::RtmpEndpointGone
         });
@@ -510,7 +510,7 @@ impl FfmpegTranscoder {
 
                     let recv_stream_id = stream.id.clone();
                     let closed_stream_id = stream.id.clone();
-                    futures_channel.send_on_unbounded_recv(
+                    futures_channel.send_on_generic_unbounded_recv(
                         watch_receiver,
                         move |message| {
                             FutureResult::RtmpWatchNotificationReceived(
@@ -572,7 +572,7 @@ impl FfmpegTranscoder {
 
                     let recv_stream_id = stream.id.clone();
                     let closed_stream_id = stream.id.clone();
-                    futures_channel.send_on_unbounded_recv(
+                    futures_channel.send_on_generic_unbounded_recv(
                         receiver,
                         move |message| {
                             FutureResult::RtmpPublishNotificationReceived(
@@ -618,7 +618,7 @@ impl FfmpegTranscoder {
 
                     let recv_stream_id = stream.id.clone();
                     let closed_stream_id = stream.id.clone();
-                    futures_channel.send_on_unbounded_recv(
+                    futures_channel.send_on_generic_unbounded_recv(
                         receiver,
                         move |message| {
                             FutureResult::FfmpegNotificationReceived(

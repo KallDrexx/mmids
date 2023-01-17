@@ -140,12 +140,12 @@ impl StepGenerator for FfmpegPullStepGenerator {
             });
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             ffmpeg_endpoint.closed().await;
             FutureResult::FfmpegEndpointGone
         });
 
-        futures_channel.send_on_unbounded_recv(
+        futures_channel.send_on_generic_unbounded_recv(
             receiver,
             FutureResult::RtmpEndpointResponseReceived,
             || FutureResult::RtmpEndpointGone,
@@ -408,7 +408,7 @@ impl FfmpegPullStep {
                     },
                 });
 
-            futures_channel.send_on_unbounded_recv(
+            futures_channel.send_on_generic_unbounded_recv(
                 receiver,
                 FutureResult::FfmpegNotificationReceived,
                 || FutureResult::FfmpegEndpointGone,

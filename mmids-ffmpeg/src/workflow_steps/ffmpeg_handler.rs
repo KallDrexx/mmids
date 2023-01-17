@@ -126,7 +126,7 @@ impl ExternalStreamHandler for FfmpegHandler {
 
             let recv_stream_id = self.stream_id.clone();
             let closed_stream_id = self.stream_id.clone();
-            futures_channel.send_on_unbounded_recv(
+            futures_channel.send_on_generic_unbounded_recv(
                 receiver,
                 move |notification| StreamHandlerFutureWrapper {
                     stream_id: recv_stream_id.clone(),

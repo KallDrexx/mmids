@@ -126,7 +126,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         };
 
         let transcode_endpoint = self.transcode_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             transcode_endpoint.closed().await;
             FutureResult::TranscoderEndpointGone
         });
@@ -201,7 +201,7 @@ impl BasicTranscodeStep {
             });
 
         let closed_stream_id = stream_id.clone();
-        futures_channel.send_on_unbounded_recv(
+        futures_channel.send_on_generic_unbounded_recv(
             notification_receiver,
             move |notification| FutureResult::TranscoderNotificationReceived {
                 stream_id: stream_id.clone(),
@@ -270,7 +270,7 @@ impl BasicTranscodeStep {
 
             GstTranscoderNotification::TranscodingStarted { output_media } => {
                 let closed_stream_id = stream_id.clone();
-                futures_channel.send_on_unbounded_recv(
+                futures_channel.send_on_generic_unbounded_recv(
                     output_media,
                     move |media| FutureResult::TranscodedMediaReceived {
                         stream_id: stream_id.clone(),

@@ -157,12 +157,12 @@ impl StepGenerator for FfmpegHlsStepGenerator {
         };
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             ffmpeg_endpoint.closed().await;
             FutureResult::FfmpegEndpointGone
         });
 
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             let result = tokio::fs::create_dir_all(&path).await;
             FutureResult::HlsPathCreated(result)
         });

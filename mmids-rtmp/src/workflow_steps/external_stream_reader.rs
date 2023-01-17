@@ -80,7 +80,7 @@ impl ExternalStreamReader {
             pts_offset_metadata_key,
         };
 
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             rtmp_server.closed().await;
             FutureResult::RtmpEndpointGone
         });
@@ -253,7 +253,7 @@ impl ExternalStreamReader {
 
                     let stream_id = stream.id.clone();
                     let closed_stream_id = stream_id.clone();
-                    futures_channel.send_on_unbounded_recv(
+                    futures_channel.send_on_generic_unbounded_recv(
                         watch_receiver,
                         move |event| {
                             FutureResult::WatchNotificationReceived(stream_id.clone(), event)
@@ -405,7 +405,9 @@ mod tests {
     use mmids_core::workflows::metadata::{
         MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap, MetadataValue,
     };
-    use mmids_core::workflows::steps::futures_channel::FuturesChannelResult;
+    use mmids_core::workflows::steps::futures_channel::{
+        FuturesChannelInnerResult, FuturesChannelResult,
+    };
     use mmids_core::workflows::MediaType;
     use mmids_core::{test_utils, VideoTimestamp};
     use rml_rtmp::time::RtmpTimestamp;
@@ -529,17 +531,19 @@ mod tests {
                 .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful)
                 .expect("Failed to send registration success response");
 
-            let result = self.expect_future_resolved().await;
-
-            self.external_stream_reader
-                .handle_resolved_future(result, &self.futures_channel);
+            match self.expect_future_resolved().await {
+                FuturesChannelInnerResult::Generic(result) => {
+                    self.external_stream_reader
+                        .handle_resolved_future(result, &self.futures_channel);
+                }
+            }
 
             media_channel
         }
 
         /// Gets the first future that was resolved on the workflow step futures channel. If no future
         /// is resolved, then a panic will ensue.
-        pub async fn expect_future_resolved(&mut self) -> Box<dyn StepFutureResult> {
+        pub async fn expect_future_resolved(&mut self) -> FuturesChannelInnerResult {
             let future = self.futures_channel_receiver.recv();
             match timeout(Duration::from_millis(10), future).await {
                 Ok(Some(response)) => response.result,
@@ -812,10 +816,13 @@ mod tests {
             .send(RtmpEndpointWatcherNotification::WatcherRegistrationSuccessful)
             .expect("Failed to send registration success response");
 
-        let result = context.expect_future_resolved().await;
-        context
-            .external_stream_reader
-            .handle_resolved_future(result, &context.futures_channel);
+        match context.expect_future_resolved().await {
+            FuturesChannelInnerResult::Generic(result) => {
+                context
+                    .external_stream_reader
+                    .handle_resolved_future(result, &context.futures_channel);
+            }
+        }
 
         let stream_name =
             test_utils::expect_mpsc_response(&mut context.prepare_stream_receiver).await;

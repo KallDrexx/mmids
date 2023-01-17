@@ -245,14 +245,14 @@ impl StepGenerator for RtmpReceiverStepGenerator {
                 requires_registrant_approval: step.reactor_name.is_some(),
             });
 
-        futures_channel.send_on_unbounded_recv(
+        futures_channel.send_on_generic_unbounded_recv(
             receiver,
             FutureResult::RtmpEndpointResponseReceived,
             || FutureResult::RtmpEndpointDroppedRegistration,
         );
 
         let reactor_manager = self.reactor_manager.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             reactor_manager.closed().await;
             FutureResult::ReactorManagerGone
         });
@@ -298,7 +298,7 @@ impl RtmpReceiverStep {
                 let cancellation_token = if let Some(update_channel) = reactor_update_channel {
                     let cancellation_token = CancellationToken::new();
                     let connection_id = connection_id.clone();
-                    futures_channel.send_on_unbounded_recv_cancellable(
+                    futures_channel.send_on_generic_unbounded_recv_cancellable(
                         update_channel,
                         cancellation_token.child_token(),
                         move |update| FutureResult::ReactorUpdateReceived {
@@ -446,7 +446,7 @@ impl RtmpReceiverStep {
                     );
 
                     // Start a future waiting for reactor's response
-                    futures_channel.send_on_future_completion(async move {
+                    futures_channel.send_on_generic_future_completion(async move {
                         let is_valid = match receiver.recv().await {
                             Some(response) => response.is_valid,
                             None => false, // reactor closed, treat it the same as no workflow scenario

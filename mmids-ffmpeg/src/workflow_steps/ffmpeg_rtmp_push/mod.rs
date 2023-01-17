@@ -107,7 +107,7 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
         };
 
         let ffmpeg_endpoint = self.ffmpeg_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             ffmpeg_endpoint.closed().await;
             FutureResult::FfmpegEndpointGone
         });

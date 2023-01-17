@@ -8,7 +8,9 @@ mod tests;
 use crate::actor_utils::notify_on_unbounded_recv;
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepId};
 use crate::workflows::steps::factory::WorkflowStepFactory;
-use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
+use crate::workflows::steps::futures_channel::{
+    FuturesChannelInnerResult, FuturesChannelResult, WorkflowStepFuturesChannel,
+};
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -90,11 +92,7 @@ enum FutureResult {
     AllConsumersGone,
     WorkflowRequestReceived(WorkflowRequest),
     StepFutureSendersGone,
-
-    StepFutureResolved {
-        step_id: WorkflowStepId,
-        result: Box<dyn StepFutureResult>,
-    },
+    StepFutureResolved(FuturesChannelResult),
 }
 
 struct StreamDetails {
@@ -138,10 +136,7 @@ impl Actor {
         notify_on_unbounded_recv(
             futures_receiver,
             actor_sender,
-            |result: FuturesChannelResult| FutureResult::StepFutureResolved {
-                step_id: result.step_id,
-                result: result.result,
-            },
+            FutureResult::StepFutureResolved,
             || FutureResult::StepFutureSendersGone,
         );
 
@@ -195,8 +190,13 @@ impl Actor {
                     }
                 }
 
-                FutureResult::StepFutureResolved { step_id, result } => {
-                    self.execute_steps(step_id, Some(result), false, true);
+                FutureResult::StepFutureResolved(value) => {
+                    let step_id = value.step_id;
+                    match value.result {
+                        FuturesChannelInnerResult::Generic(result) => {
+                            self.execute_steps(step_id, Some(result), false, true);
+                        }
+                    }
                 }
             }
         }

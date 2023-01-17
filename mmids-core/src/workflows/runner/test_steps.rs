@@ -191,7 +191,7 @@ fn input_media_received(
     receiver: Receiver<MediaNotification>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_watch_recv(
+    futures_channel.send_on_generic_watch_recv(
         receiver,
         |_| InputFutureResult::MediaReceived,
         || InputFutureResult::MediaChannelClosed,
@@ -202,7 +202,7 @@ fn input_status_received(
     receiver: Receiver<StepStatus>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_watch_recv(
+    futures_channel.send_on_generic_watch_recv(
         receiver,
         |_| InputFutureResult::StatusReceived,
         || InputFutureResult::StatusChannelClosed,
@@ -213,7 +213,7 @@ fn output_status_received(
     receiver: Receiver<StepStatus>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_watch_recv(
+    futures_channel.send_on_generic_watch_recv(
         receiver,
         |_| OutputFutureResult::StatusReceived,
         || OutputFutureResult::StatusChannelClosed,
