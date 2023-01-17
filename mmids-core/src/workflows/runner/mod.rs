@@ -8,7 +8,7 @@ mod tests;
 use crate::actor_utils::notify_on_unbounded_recv;
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepId};
 use crate::workflows::steps::factory::WorkflowStepFactory;
-use crate::workflows::steps::futures_channel::{StepFutureResultChannel, WorkflowStepFuturesChannel};
+use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -116,7 +116,7 @@ struct Actor {
     step_factory: Arc<WorkflowStepFactory>,
     step_definitions: HashMap<WorkflowStepId, WorkflowStepDefinition>,
     status: WorkflowStatus,
-    step_futures_sender: UnboundedSender<StepFutureResultChannel>,
+    step_futures_sender: UnboundedSender<FuturesChannelResult>,
 }
 
 impl Actor {
@@ -138,7 +138,7 @@ impl Actor {
         notify_on_unbounded_recv(
             futures_receiver,
             actor_sender,
-            |result: StepFutureResultChannel| FutureResult::StepFutureResolved {
+            |result: FuturesChannelResult| FutureResult::StepFutureResolved {
                 step_id: result.step_id,
                 result: result.result,
             },
