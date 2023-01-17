@@ -176,10 +176,12 @@ impl StepTestContext {
         );
         self.media_outputs = outputs.media;
 
-        self.execute_pending_notifications().await;
+        self.execute_pending_futures().await;
     }
 
-    pub async fn execute_pending_notifications(&mut self) {
+    pub async fn execute_pending_futures(&mut self) {
+        self.media_outputs.clear();
+
         loop {
             let duration = Duration::from_millis(10);
             let future = self.futures_channel_receiver.recv();
@@ -193,20 +195,29 @@ impl StepTestContext {
                 _ => break,
             };
 
-            let notification = match notification.result {
-                FuturesChannelInnerResult::Generic(notification) => notification,
-            };
-
             let mut outputs = StepOutputs::new();
             let mut inputs = StepInputs::new();
-            inputs.notifications.push(notification);
+
+            match notification.result {
+                FuturesChannelInnerResult::Generic(notification) => {
+                    inputs.notifications.push(notification)
+                }
+
+                FuturesChannelInnerResult::Media(media) => {
+                    // Media raised as a result goes to the next step, not the current step, so
+                    // it just gets added directly as a step output.
+                    self.media_outputs.push(media);
+                    continue;
+                }
+            };
 
             self.step.execute(
                 &mut inputs,
                 &mut outputs,
                 self.futures_channel_sender.clone(),
             );
-            self.media_outputs = outputs.media;
+
+            self.media_outputs.extend(outputs.media);
         }
     }
 

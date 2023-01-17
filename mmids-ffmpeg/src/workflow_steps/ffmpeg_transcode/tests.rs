@@ -183,7 +183,7 @@ impl TestContext {
             request => panic!("Unexpected rtmp request seen: {:?}", request),
         };
 
-        self.step_context.execute_pending_notifications().await;
+        self.step_context.execute_pending_futures().await;
 
         channels
     }
@@ -206,7 +206,7 @@ impl TestContext {
             request => panic!("Unexpected rtmp request seen: {:?}", request),
         };
 
-        self.step_context.execute_pending_notifications().await;
+        self.step_context.execute_pending_futures().await;
 
         channel
     }
@@ -616,7 +616,7 @@ async fn if_ffmpeg_process_stops_unexpectedly_it_starts_again_with_same_id_and_p
         .send(FfmpegEndpointNotification::FfmpegStopped)
         .expect("Failed to send ffmpeg stopped command");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let (_channel, new_params, new_id) = context.process_ffmpeg_event().await;
 
@@ -822,7 +822,7 @@ async fn metadata_packet_sent_to_watcher_media_channel() {
     };
 
     context.step_context.execute_with_media(media.clone());
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let response = test_utils::expect_mpsc_response(&mut media_channel).await;
     assert_eq!(response.stream_key.as_str(), "abc", "Unexpected stream key");
@@ -900,7 +900,7 @@ async fn video_packet_from_publisher_passed_as_media_output() {
         })
         .expect("Failed to send video message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -988,7 +988,7 @@ async fn audio_packet_from_publisher_passed_as_media_output() {
         })
         .expect("Failed to send video message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -1038,7 +1038,7 @@ async fn metadata_packet_from_publisher_passed_as_media_output() {
         })
         .expect("Failed to send video message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),

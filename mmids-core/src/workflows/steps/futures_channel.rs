@@ -4,6 +4,7 @@
 
 use crate::workflows::definitions::WorkflowStepId;
 use crate::workflows::steps::StepFutureResult;
+use crate::workflows::MediaNotification;
 use std::future::Future;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,11 @@ pub enum FuturesChannelInnerResult {
     /// Declares the result is a type that implements the `StepFutureResult` trait, and therefore
     /// is only readable by the raising step itself.
     Generic(Box<dyn StepFutureResult>),
+
+    /// The result of the future is a strongly typed media notification that is ready to be passed
+    /// on to the next step in the workflow. Media notifications raised in this manner *will not*
+    /// be passed back to the step whose future produced it.
+    Media(MediaNotification),
 }
 
 impl WorkflowStepFuturesChannel {

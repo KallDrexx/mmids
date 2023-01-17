@@ -536,6 +536,10 @@ mod tests {
                     self.external_stream_reader
                         .handle_resolved_future(result, &self.futures_channel);
                 }
+
+                FuturesChannelInnerResult::Media(_) => {
+                    panic!("Expected a generic step future result but instead got media packet");
+                }
             }
 
             media_channel
@@ -821,6 +825,10 @@ mod tests {
                 context
                     .external_stream_reader
                     .handle_resolved_future(result, &context.futures_channel);
+            }
+
+            FuturesChannelInnerResult::Media(_) => {
+                panic!("Expected a generic step future result but instead got media packet");
             }
         }
 

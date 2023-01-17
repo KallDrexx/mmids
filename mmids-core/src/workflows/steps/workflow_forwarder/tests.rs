@@ -95,6 +95,10 @@ impl TestContext {
             FuturesChannelInnerResult::Generic(result) => {
                 self.step_context.execute_notification(result).await;
             }
+
+            FuturesChannelInnerResult::Media(_) => {
+                panic!("Expected a generic step future result but instead got media packet");
+            }
         }
     }
 
@@ -109,6 +113,10 @@ impl TestContext {
         match result {
             FuturesChannelInnerResult::Generic(result) => {
                 self.step_context.execute_notification(result).await;
+            }
+
+            FuturesChannelInnerResult::Media(_) => {
+                panic!("Expected a generic step future result but instead got media packet");
             }
         }
     }
