@@ -62,6 +62,46 @@ impl WorkflowStepFuturesChannel {
     /// Helper function for workflow steps to watch a receiver for messages, and send them back
     /// to the workflow step for processing.
     ///
+    /// This can send any type of future result.
+    pub fn send_on_unbounded_recv<ReceiverMessage>(
+        &self,
+        mut receiver: UnboundedReceiver<ReceiverMessage>,
+        on_recv: impl Fn(ReceiverMessage) -> FuturesChannelInnerResult + Send + 'static,
+        on_closed: impl FnOnce() -> FuturesChannelInnerResult + Send + 'static,
+    ) where
+        ReceiverMessage: Send + 'static,
+    {
+        let channel = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    message = receiver.recv() => {
+                        match message {
+                            Some(message) => {
+                                let future_result = on_recv(message);
+                                let _ = channel.send(future_result);
+                            }
+
+                            None => {
+                                let future_result = on_closed();
+                                let _ = channel.send(future_result);
+
+                                break;
+                            }
+                        }
+                    }
+
+                    _ = channel.closed() => {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Helper function for workflow steps to watch a receiver for messages, and send them back
+    /// to the workflow step for processing.
+    ///
     /// This only sends a generic `StepFutureResult` value.
     pub fn send_on_generic_unbounded_recv<ReceiverMessage, FutureResult>(
         &self,
