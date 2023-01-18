@@ -10,17 +10,20 @@ use crate::workflows::{
 use crate::StreamId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU16;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch::{channel, Sender};
 
 pub struct TestContext {
     pub workflow: UnboundedSender<WorkflowRequest>,
-    pub media_sender: Sender<MediaNotification>,
-    pub media_receiver: UnboundedReceiver<MediaNotification>,
+    pub input_media_sender: Sender<MediaNotification>,
+    pub output_step_media_receiver: UnboundedReceiver<MediaNotification>,
     pub input_status: Sender<StepStatus>,
     pub output_status: Sender<StepStatus>,
     pub input_step_id: WorkflowStepId,
     pub output_step_id: WorkflowStepId,
+    pub input_future_media_sender: Sender<MediaNotification>,
+    pub input_step_media_received_count: Arc<AtomicU16>,
 }
 
 impl TestContext {
@@ -33,10 +36,19 @@ impl TestContext {
         let (output_media_sender, output_media_receiver) = unbounded_channel();
         let (input_status_sender, input_status_receiver) = channel(StepStatus::Created);
         let (output_status_sender, output_status_receiver) = channel(StepStatus::Created);
+        // let (input_media_sender, input_media_receiver) = unbounded_channel();
+        let (future_media_sender, future_media_receiver) = channel(MediaNotification {
+            stream_id: StreamId(Arc::new("bad".to_string())),
+            content: MediaNotificationContent::StreamDisconnected,
+        });
+
+        let input_received_counter = Arc::new(AtomicU16::new(0));
 
         let input_step = TestInputStepGenerator {
             media_receiver: input_media_receiver,
             status_change: input_status_receiver,
+            future_result_media_receiver: future_media_receiver,
+            media_received_count: input_received_counter.clone(),
         };
 
         let output_step = TestOutputStepGenerator {
@@ -78,12 +90,14 @@ impl TestContext {
 
         TestContext {
             workflow,
-            media_sender: input_media_sender,
-            media_receiver: output_media_receiver,
+            input_media_sender,
+            output_step_media_receiver: output_media_receiver,
             input_status: input_status_sender,
             output_status: output_status_sender,
             input_step_id,
             output_step_id,
+            input_future_media_sender: future_media_sender,
+            input_step_media_received_count: input_received_counter,
         }
     }
 }
