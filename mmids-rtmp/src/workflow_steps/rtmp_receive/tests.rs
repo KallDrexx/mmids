@@ -148,7 +148,7 @@ impl TestContext {
             request => panic!("Unexpected rtmp request seen: {:?}", request),
         };
 
-        self.step_context.execute_pending_notifications().await;
+        self.step_context.execute_pending_futures().await;
 
         channel
     }
@@ -282,7 +282,7 @@ async fn registration_failure_sets_status_to_error() {
         request => panic!("Unexpected rtmp request seen: {:?}", request),
     };
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let status = context.step_context.step.get_status();
     match status {
@@ -311,7 +311,7 @@ async fn registration_success_sets_status_to_active() {
         request => panic!("Unexpected rtmp request seen: {:?}", request),
     };
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let status = context.step_context.step.get_status();
     match status {
@@ -335,7 +335,7 @@ async fn stream_started_notification_raised_when_publisher_connects() {
         })
         .expect("Failed to send publisher connected message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -370,7 +370,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
         })
         .expect("Failed to send publisher connected message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
     context.step_context.media_outputs.clear();
 
     channel
@@ -379,7 +379,7 @@ async fn stream_disconnected_notification_raised_when_publisher_disconnects() {
         })
         .expect("Failed to send disconnected message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -411,7 +411,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
         })
         .expect("Failed to send publisher connected message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let mut metadata = StreamMetadata::new();
     metadata.video_width = Some(1920);
@@ -423,7 +423,7 @@ async fn metadata_notification_raised_when_publisher_sends_one() {
         })
         .expect("Failed to send metadata message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -462,7 +462,7 @@ async fn video_notification_received_when_publisher_sends_video() {
         })
         .expect("Failed to send publisher connected message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     channel
         .send(RtmpEndpointPublisherMessage::NewVideoData {
@@ -475,7 +475,7 @@ async fn video_notification_received_when_publisher_sends_video() {
         })
         .expect("Failed to send video message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -549,7 +549,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         })
         .expect("Failed to send publisher connected message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     channel
         .send(RtmpEndpointPublisherMessage::NewAudioData {
@@ -560,7 +560,7 @@ async fn audio_notification_received_when_publisher_sends_audio() {
         })
         .expect("Failed to send audio message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     assert_eq!(
         context.step_context.media_outputs.len(),
@@ -701,7 +701,7 @@ async fn reactor_queried_for_stream_key_when_approval_required() {
         })
         .expect("Failed to send publisher message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let request = test_utils::expect_mpsc_response(&mut context.reactor_manager).await;
     match request {
@@ -733,7 +733,7 @@ async fn rejection_sent_when_reactor_says_stream_is_not_valid() {
         })
         .expect("Failed to send publisher message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
     let reactor_channel = context.get_reactor_channel().await;
 
     reactor_channel
@@ -743,7 +743,7 @@ async fn rejection_sent_when_reactor_says_stream_is_not_valid() {
         })
         .expect("Failed to send reactor response");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let response = test_utils::expect_oneshot_response(receiver).await;
     match response {
@@ -767,7 +767,7 @@ async fn approval_sent_when_reactor_says_stream_is_valid() {
         })
         .expect("Failed to send publisher message");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
     let reactor_channel = context.get_reactor_channel().await;
 
     reactor_channel
@@ -777,7 +777,7 @@ async fn approval_sent_when_reactor_says_stream_is_valid() {
         })
         .expect("Failed to send reactor response");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let response = test_utils::expect_oneshot_response(receiver).await;
     match response {

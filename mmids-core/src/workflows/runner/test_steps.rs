@@ -1,16 +1,22 @@
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::factory::StepGenerator;
-use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
+use crate::workflows::steps::futures_channel::{
+    FuturesChannelInnerResult, WorkflowStepFuturesChannel,
+};
 use crate::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::MediaNotification;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch::Receiver;
 
 pub struct TestInputStepGenerator {
     pub media_receiver: Receiver<MediaNotification>,
     pub status_change: Receiver<StepStatus>,
+    pub future_result_media_receiver: Receiver<MediaNotification>,
+    pub media_received_count: Arc<AtomicU16>,
 }
 
 pub struct TestOutputStepGenerator {
@@ -23,6 +29,7 @@ struct TestInputStep {
     definition: WorkflowStepDefinition,
     media_receiver: Receiver<MediaNotification>,
     status_receiver: Receiver<StepStatus>,
+    media_received_count: Arc<AtomicU16>,
 }
 
 struct TestOutputStep {
@@ -39,6 +46,8 @@ enum InputFutureResult {
     MediaChannelClosed,
     StatusReceived,
     MediaReceived,
+    FutureResultMediaReceived(MediaNotification),
+    FutureResultMediaChannelClosed,
 }
 
 impl StepFutureResult for OutputFutureResult {}
@@ -59,10 +68,17 @@ impl StepGenerator for TestInputStepGenerator {
             definition,
             media_receiver: self.media_receiver.clone(),
             status_receiver: self.status_change.clone(),
+            media_received_count: self.media_received_count.clone(),
         };
 
         input_media_received(self.media_receiver.clone(), &futures_channel);
         input_status_received(self.status_change.clone(), &futures_channel);
+
+        futures_channel.send_on_generic_watch_recv(
+            self.future_result_media_receiver.clone(),
+            |media| InputFutureResult::FutureResultMediaReceived(media.clone()),
+            || InputFutureResult::FutureResultMediaChannelClosed,
+        );
 
         Ok(Box::new(step))
     }
@@ -100,7 +116,7 @@ impl WorkflowStep for TestInputStep {
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
-        _futures_channel: WorkflowStepFuturesChannel,
+        futures_channel: WorkflowStepFuturesChannel,
     ) {
         for notification in inputs.notifications.drain(..) {
             let future_result = match notification.downcast::<InputFutureResult>() {
@@ -124,17 +140,29 @@ impl WorkflowStep for TestInputStep {
                 InputFutureResult::MediaReceived => {
                     let media = (*self.media_receiver.borrow()).clone();
                     outputs.media.push(media);
+                    self.media_received_count.fetch_add(1, Ordering::SeqCst);
                 }
 
                 InputFutureResult::StatusReceived => {
                     let status = (*self.status_receiver.borrow()).clone();
                     self.status = status;
                 }
+
+                InputFutureResult::FutureResultMediaReceived(media) => {
+                    let _ = futures_channel.send(FuturesChannelInnerResult::Media(media));
+                }
+
+                InputFutureResult::FutureResultMediaChannelClosed => {
+                    self.status = StepStatus::Error {
+                        message: "futures media channel closed".to_string(),
+                    };
+                }
             }
         }
 
         for media in inputs.media.drain(..) {
             outputs.media.push(media); // for workflow forwarding tests
+            self.media_received_count.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -191,7 +219,7 @@ fn input_media_received(
     receiver: Receiver<MediaNotification>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_watch_recv(
+    futures_channel.send_on_generic_watch_recv(
         receiver,
         |_| InputFutureResult::MediaReceived,
         || InputFutureResult::MediaChannelClosed,
@@ -202,7 +230,7 @@ fn input_status_received(
     receiver: Receiver<StepStatus>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_watch_recv(
+    futures_channel.send_on_generic_watch_recv(
         receiver,
         |_| InputFutureResult::StatusReceived,
         || InputFutureResult::StatusChannelClosed,
@@ -213,7 +241,7 @@ fn output_status_received(
     receiver: Receiver<StepStatus>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_watch_recv(
+    futures_channel.send_on_generic_watch_recv(
         receiver,
         |_| OutputFutureResult::StatusReceived,
         || OutputFutureResult::StatusChannelClosed,

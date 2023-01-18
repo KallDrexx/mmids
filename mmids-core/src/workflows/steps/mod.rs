@@ -109,7 +109,9 @@ pub trait WorkflowStep {
 use crate::workflows::steps::factory::StepGenerator;
 #[cfg(feature = "test-utils")]
 use crate::workflows::steps::futures_channel::FuturesChannelResult;
-use crate::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
+use crate::workflows::steps::futures_channel::{
+    FuturesChannelInnerResult, WorkflowStepFuturesChannel,
+};
 #[cfg(feature = "test-utils")]
 use anyhow::{anyhow, Result};
 #[cfg(feature = "test-utils")]
@@ -174,10 +176,12 @@ impl StepTestContext {
         );
         self.media_outputs = outputs.media;
 
-        self.execute_pending_notifications().await;
+        self.execute_pending_futures().await;
     }
 
-    pub async fn execute_pending_notifications(&mut self) {
+    pub async fn execute_pending_futures(&mut self) {
+        self.media_outputs.clear();
+
         loop {
             let duration = Duration::from_millis(10);
             let future = self.futures_channel_receiver.recv();
@@ -193,14 +197,27 @@ impl StepTestContext {
 
             let mut outputs = StepOutputs::new();
             let mut inputs = StepInputs::new();
-            inputs.notifications.push(notification.result);
+
+            match notification.result {
+                FuturesChannelInnerResult::Generic(notification) => {
+                    inputs.notifications.push(notification)
+                }
+
+                FuturesChannelInnerResult::Media(media) => {
+                    // Media raised as a result goes to the next step, not the current step, so
+                    // it just gets added directly as a step output.
+                    self.media_outputs.push(media);
+                    continue;
+                }
+            };
 
             self.step.execute(
                 &mut inputs,
                 &mut outputs,
                 self.futures_channel_sender.clone(),
             );
-            self.media_outputs = outputs.media;
+
+            self.media_outputs.extend(outputs.media);
         }
     }
 
@@ -223,7 +240,7 @@ impl StepTestContext {
 
     /// Gets the first future that was resolved on the workflow step futures channel. If no future
     /// is resolved, then a panic will ensue.
-    pub async fn expect_future_resolved(&mut self) -> Box<dyn StepFutureResult> {
+    pub async fn expect_future_resolved(&mut self) -> FuturesChannelInnerResult {
         let future = self.futures_channel_receiver.recv();
         match timeout(Duration::from_millis(10), future).await {
             Ok(Some(response)) => response.result,

@@ -2,7 +2,7 @@ use super::*;
 use crate::test_utils;
 use crate::workflows::definitions::WorkflowStepType;
 use crate::workflows::metadata::MediaPayloadMetadataCollection;
-use crate::workflows::steps::StepTestContext;
+use crate::workflows::steps::{FuturesChannelInnerResult, StepTestContext};
 use crate::workflows::MediaType;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
@@ -91,7 +91,15 @@ impl TestContext {
             .expect("Failed to send workflow started event");
 
         let result = self.step_context.expect_future_resolved().await;
-        self.step_context.execute_notification(result).await;
+        match result {
+            FuturesChannelInnerResult::Generic(result) => {
+                self.step_context.execute_notification(result).await;
+            }
+
+            FuturesChannelInnerResult::Media(_) => {
+                panic!("Expected a generic step future result but instead got media packet");
+            }
+        }
     }
 
     async fn send_workflow_stopped_event(&mut self, name: &str) {
@@ -102,7 +110,15 @@ impl TestContext {
             .expect("Failed to send workflow ended event");
 
         let result = self.step_context.expect_future_resolved().await;
-        self.step_context.execute_notification(result).await;
+        match result {
+            FuturesChannelInnerResult::Generic(result) => {
+                self.step_context.execute_notification(result).await;
+            }
+
+            FuturesChannelInnerResult::Media(_) => {
+                panic!("Expected a generic step future result but instead got media packet");
+            }
+        }
     }
 }
 

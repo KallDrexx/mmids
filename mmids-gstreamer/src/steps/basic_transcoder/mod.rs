@@ -12,7 +12,9 @@ use crate::endpoints::gst_transcoder::{
 };
 use mmids_core::workflows::definitions::WorkflowStepDefinition;
 use mmids_core::workflows::steps::factory::StepGenerator;
-use mmids_core::workflows::steps::futures_channel::WorkflowStepFuturesChannel;
+use mmids_core::workflows::steps::futures_channel::{
+    FuturesChannelInnerResult, WorkflowStepFuturesChannel,
+};
 use mmids_core::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -60,10 +62,6 @@ enum FutureResult {
     },
 
     TranscodedMediaChannelClosed(StreamId),
-    TranscodedMediaReceived {
-        stream_id: StreamId,
-        media: MediaNotificationContent,
-    },
 }
 
 impl StepFutureResult for FutureResult {}
@@ -126,7 +124,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         };
 
         let transcode_endpoint = self.transcode_endpoint.clone();
-        futures_channel.send_on_future_completion(async move {
+        futures_channel.send_on_generic_future_completion(async move {
             transcode_endpoint.closed().await;
             FutureResult::TranscoderEndpointGone
         });
@@ -201,7 +199,7 @@ impl BasicTranscodeStep {
             });
 
         let closed_stream_id = stream_id.clone();
-        futures_channel.send_on_unbounded_recv(
+        futures_channel.send_on_generic_unbounded_recv(
             notification_receiver,
             move |notification| FutureResult::TranscoderNotificationReceived {
                 stream_id: stream_id.clone(),
@@ -270,13 +268,20 @@ impl BasicTranscodeStep {
 
             GstTranscoderNotification::TranscodingStarted { output_media } => {
                 let closed_stream_id = stream_id.clone();
+
                 futures_channel.send_on_unbounded_recv(
                     output_media,
-                    move |media| FutureResult::TranscodedMediaReceived {
-                        stream_id: stream_id.clone(),
-                        media,
+                    move |media| {
+                        FuturesChannelInnerResult::Media(MediaNotification {
+                            stream_id: stream_id.clone(),
+                            content: media,
+                        })
                     },
-                    move || FutureResult::TranscodedMediaChannelClosed(closed_stream_id),
+                    move || {
+                        FuturesChannelInnerResult::Generic(Box::new(
+                            FutureResult::TranscodedMediaChannelClosed(closed_stream_id),
+                        ))
+                    },
                 );
             }
         }
@@ -346,13 +351,6 @@ impl WorkflowStep for BasicTranscodeStep {
                     stream_id,
                 } => {
                     self.handle_transcode_notification(stream_id, notification, &futures_channel);
-                }
-
-                FutureResult::TranscodedMediaReceived { media, stream_id } => {
-                    outputs.media.push(MediaNotification {
-                        stream_id,
-                        content: media,
-                    });
                 }
             }
         }

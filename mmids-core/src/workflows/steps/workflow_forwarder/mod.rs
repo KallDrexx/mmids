@@ -181,7 +181,7 @@ impl WorkflowForwarderStep {
                 {
                     let channel = channel.clone();
                     let name = name.clone();
-                    futures_channel.send_on_future_completion(async move {
+                    futures_channel.send_on_generic_future_completion(async move {
                         channel.closed().await;
                         FutureResult::WorkflowGone {
                             workflow_name: name,
@@ -263,7 +263,7 @@ impl WorkflowForwarderStep {
 
                         let stream_id = media.stream_id.clone();
                         let stream_name = stream_name.clone();
-                        futures_channel.send_on_future_completion(async move {
+                        futures_channel.send_on_generic_future_completion(async move {
                             let result = match receiver.recv().await {
                                 Some(response) => response,
                                 None => ReactorWorkflowUpdate {
@@ -617,7 +617,7 @@ fn notify_on_workflow_event(
     receiver: UnboundedReceiver<WorkflowStartedOrStoppedEvent>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_unbounded_recv(
+    futures_channel.send_on_generic_unbounded_recv(
         receiver,
         FutureResult::WorkflowStartedOrStopped,
         || FutureResult::EventHubGone,
@@ -632,7 +632,7 @@ fn notify_on_reactor_update(
 ) {
     let recv_stream_id = stream_id.clone();
     let cancelled_stream_id = stream_id;
-    futures_channel.send_on_unbounded_recv_cancellable(
+    futures_channel.send_on_generic_unbounded_recv_cancellable(
         update_receiver,
         cancellation_token,
         move |update| FutureResult::ReactorUpdateReceived {
@@ -650,7 +650,7 @@ fn notify_reactor_manager_gone(
     sender: UnboundedSender<ReactorManagerRequest>,
     futures_channel: &WorkflowStepFuturesChannel,
 ) {
-    futures_channel.send_on_future_completion(async move {
+    futures_channel.send_on_generic_future_completion(async move {
         sender.closed().await;
         FutureResult::ReactorManagerGone
     });

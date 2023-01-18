@@ -8,7 +8,9 @@ mod tests;
 use crate::actor_utils::notify_on_unbounded_recv;
 use crate::workflows::definitions::{WorkflowDefinition, WorkflowStepDefinition, WorkflowStepId};
 use crate::workflows::steps::factory::WorkflowStepFactory;
-use crate::workflows::steps::futures_channel::{FuturesChannelResult, WorkflowStepFuturesChannel};
+use crate::workflows::steps::futures_channel::{
+    FuturesChannelInnerResult, FuturesChannelResult, WorkflowStepFuturesChannel,
+};
 use crate::workflows::steps::{
     StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
@@ -90,11 +92,7 @@ enum FutureResult {
     AllConsumersGone,
     WorkflowRequestReceived(WorkflowRequest),
     StepFutureSendersGone,
-
-    StepFutureResolved {
-        step_id: WorkflowStepId,
-        result: Box<dyn StepFutureResult>,
-    },
+    StepFutureResolved(FuturesChannelResult),
 }
 
 struct StreamDetails {
@@ -138,10 +136,7 @@ impl Actor {
         notify_on_unbounded_recv(
             futures_receiver,
             actor_sender,
-            |result: FuturesChannelResult| FutureResult::StepFutureResolved {
-                step_id: result.step_id,
-                result: result.result,
-            },
+            FutureResult::StepFutureResolved,
             || FutureResult::StepFutureSendersGone,
         );
 
@@ -195,8 +190,32 @@ impl Actor {
                     }
                 }
 
-                FutureResult::StepFutureResolved { step_id, result } => {
-                    self.execute_steps(step_id, Some(result), false, true);
+                FutureResult::StepFutureResolved(value) => {
+                    let step_id = value.step_id;
+                    match value.result {
+                        FuturesChannelInnerResult::Generic(result) => {
+                            self.execute_steps(step_id, Some(result), false, true);
+                        }
+
+                        FuturesChannelInnerResult::Media(media) => {
+                            // Handle the media as if it came as an output of a normal step execution
+                            self.step_outputs.clear();
+                            self.step_outputs.media.push(media);
+                            self.handle_executed_step_outputs(step_id);
+
+                            // If this came from an active step, then we need to start executing
+                            // inputs from the *next* step after the one that produced this media.
+                            // This works because `handle_executed_step_outputs` takes outputs
+                            // and puts them properly into inputs, thus allowing us to just
+                            // execute the next step normally.
+                            if let Some(step_index) = self.get_active_step_index(step_id) {
+                                let next_step_index = step_index + 1;
+                                if let Some(next_step_id) = self.active_steps.get(next_step_index) {
+                                    self.execute_steps(*next_step_id, None, true, false);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -407,17 +426,10 @@ impl Actor {
             self.step_inputs.notifications.push(future_result);
         }
 
-        let mut start_index = None;
-        for x in 0..self.active_steps.len() {
-            if self.active_steps[x] == initial_step_id {
-                start_index = Some(x);
-                break;
-            }
-        }
-
         // If we have a start_index, that means the step we want to execute is an active step.  So
         // execute that step and all active steps after it. If it's not an active step, then we
         // only want to execute that one step and none others.
+        let start_index = self.get_active_step_index(initial_step_id);
         if let Some(start_index) = start_index {
             for x in start_index..self.active_steps.len() {
                 self.execute_step(self.active_steps[x]);
@@ -461,12 +473,7 @@ impl Actor {
             return;
         }
 
-        self.update_stream_details(step_id);
-        self.update_media_cache_from_outputs(step_id);
-        self.step_inputs.clear();
-        self.step_inputs.media.append(&mut self.step_outputs.media);
-
-        self.step_outputs.clear();
+        self.handle_executed_step_outputs(step_id);
     }
 
     fn check_if_all_pending_steps_are_active(&mut self, swap_if_pending_is_empty: bool) {
@@ -735,5 +742,17 @@ impl Actor {
                 step.shutdown();
             }
         }
+    }
+
+    fn get_active_step_index(&self, step_id: WorkflowStepId) -> Option<usize> {
+        (0..self.active_steps.len()).find(|&index| self.active_steps[index] == step_id)
+    }
+
+    fn handle_executed_step_outputs(&mut self, step_id: WorkflowStepId) {
+        self.update_stream_details(step_id);
+        self.update_media_cache_from_outputs(step_id);
+        self.step_inputs.clear();
+        self.step_inputs.media.append(&mut self.step_outputs.media);
+        self.step_outputs.clear();
     }
 }

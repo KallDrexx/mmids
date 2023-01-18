@@ -161,7 +161,7 @@ impl TestContext {
             request => panic!("Unexpected rtmp request seen: {:?}", request),
         };
 
-        self.step_context.execute_pending_notifications().await;
+        self.step_context.execute_pending_futures().await;
 
         channel
     }
@@ -300,7 +300,7 @@ async fn registration_failure_changes_status_to_error() {
         response => panic!("Unexpected response: {:?}", response),
     };
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let status = context.step_context.step.get_status();
     match status {
@@ -330,7 +330,7 @@ async fn registration_success_changes_status_to_active() {
         response => panic!("Unexpected response: {:?}", response),
     };
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let status = context.step_context.step.get_status();
     match status {
@@ -705,7 +705,7 @@ async fn watchers_requiring_approval_sends_request_to_reactor() {
         })
         .expect("Failed to send approval request");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let request = test_utils::expect_mpsc_response(&mut context.reactor_manager).await;
     match request {
@@ -743,7 +743,7 @@ async fn reactor_responding_with_invalid_sends_rejection_response() {
         })
         .expect("Failed to send approval request");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let reactor_channel = context.get_reactor_channel().await;
     reactor_channel
@@ -753,7 +753,7 @@ async fn reactor_responding_with_invalid_sends_rejection_response() {
         })
         .expect("Failed to send reactor response");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
     let response = test_utils::expect_oneshot_response(receiver).await;
     match response {
         ValidationResponse::Reject => (),
@@ -778,7 +778,7 @@ async fn reactor_responding_with_valid_sends_approved_response() {
         })
         .expect("Failed to send approval request");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
 
     let reactor_channel = context.get_reactor_channel().await;
     reactor_channel
@@ -788,7 +788,7 @@ async fn reactor_responding_with_valid_sends_approved_response() {
         })
         .expect("Failed to send reactor response");
 
-    context.step_context.execute_pending_notifications().await;
+    context.step_context.execute_pending_futures().await;
     let response = test_utils::expect_oneshot_response(receiver).await;
     match response {
         ValidationResponse::Approve { .. } => (),
