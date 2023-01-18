@@ -13,7 +13,7 @@ use mmids_core::workflows::metadata::common_metadata::{
 use mmids_core::workflows::metadata::{
     MediaPayloadMetadataCollection, MetadataEntry, MetadataKeyMap,
 };
-use mmids_core::workflows::steps::StepTestContext;
+use mmids_core::workflows::steps::test_utils::StepTestContext;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId};
 use rml_rtmp::time::RtmpTimestamp;
