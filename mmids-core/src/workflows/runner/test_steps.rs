@@ -1,12 +1,14 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 use crate::workflows::definitions::WorkflowStepDefinition;
 use crate::workflows::steps::factory::StepGenerator;
-use crate::workflows::steps::futures_channel::{FuturesChannelInnerResult, WorkflowStepFuturesChannel};
+use crate::workflows::steps::futures_channel::{
+    FuturesChannelInnerResult, WorkflowStepFuturesChannel,
+};
 use crate::workflows::steps::{
     StepCreationResult, StepFutureResult, StepInputs, StepOutputs, StepStatus, WorkflowStep,
 };
 use crate::workflows::MediaNotification;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch::Receiver;
 
@@ -147,9 +149,7 @@ impl WorkflowStep for TestInputStep {
                 }
 
                 InputFutureResult::FutureResultMediaReceived(media) => {
-                    let _ = futures_channel.send(
-                        FuturesChannelInnerResult::Media(media)
-                    );
+                    let _ = futures_channel.send(FuturesChannelInnerResult::Media(media));
                 }
 
                 InputFutureResult::FutureResultMediaChannelClosed => {
@@ -162,6 +162,7 @@ impl WorkflowStep for TestInputStep {
 
         for media in inputs.media.drain(..) {
             outputs.media.push(media); // for workflow forwarding tests
+            self.media_received_count.fetch_add(1, Ordering::SeqCst);
         }
     }
 

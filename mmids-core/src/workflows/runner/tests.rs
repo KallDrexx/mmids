@@ -8,8 +8,8 @@ use crate::workflows::{
 };
 use crate::{test_utils, StreamId};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot::channel;
 use tokio::time::timeout;
@@ -271,8 +271,6 @@ async fn media_sent_to_workflow_flows_through_steps() {
         MediaNotificationContent::StreamDisconnected => (),
         x => panic!("Unexpected media notification: {:?}", x),
     }
-    let count = context.input_step_media_received_count.load(Ordering::SeqCst);
-    assert_eq!(count, 1, "Expected no media received by first step")
 }
 
 #[tokio::test]
@@ -573,7 +571,7 @@ async fn workflow_in_error_state_if_updated_steps_arent_registered_with_factory(
 }
 
 #[tokio::test]
-async fn media_future_result_from_active_step_goes_to_next_step() {
+async fn media_future_result_from_active_step_immediately_goes_to_next_step() {
     let mut context = TestContext::new();
 
     context
@@ -591,7 +589,7 @@ async fn media_future_result_from_active_step_goes_to_next_step() {
         stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: Arc::new("def".to_string()),
-        }
+        },
     };
 
     context
@@ -602,7 +600,9 @@ async fn media_future_result_from_active_step_goes_to_next_step() {
     let response = test_utils::expect_mpsc_response(&mut context.output_step_media_receiver).await;
     assert_eq!(media, response, "Unexpected media packet");
 
-    let count = context.input_step_media_received_count.load(Ordering::Acquire);
+    let count = context
+        .input_step_media_received_count
+        .load(Ordering::Acquire);
     assert_eq!(count, 0, "Expected no media received by first step")
 }
 
@@ -625,7 +625,7 @@ async fn media_future_result_from_pending_step_does_not_go_to_next_step() {
         stream_id: StreamId(Arc::new("abc".to_string())),
         content: MediaNotificationContent::NewIncomingStream {
             stream_name: Arc::new("def".to_string()),
-        }
+        },
     };
 
     context

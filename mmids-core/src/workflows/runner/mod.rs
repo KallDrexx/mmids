@@ -745,13 +745,7 @@ impl Actor {
     }
 
     fn get_active_step_index(&self, step_id: WorkflowStepId) -> Option<usize> {
-        for x in 0..self.active_steps.len() {
-            if self.active_steps[x] == step_id {
-                return Some(x);
-            }
-        }
-
-        None
+        (0..self.active_steps.len()).find(|&index| self.active_steps[index] == step_id)
     }
 
     fn handle_executed_step_outputs(&mut self, step_id: WorkflowStepId) {
