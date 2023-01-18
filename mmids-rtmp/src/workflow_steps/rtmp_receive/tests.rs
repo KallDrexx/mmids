@@ -7,7 +7,7 @@ use mmids_core::workflows::metadata::common_metadata::{
     get_is_keyframe_metadata_key, get_pts_offset_metadata_key,
 };
 use mmids_core::workflows::metadata::MetadataKeyMap;
-use mmids_core::workflows::steps::StepTestContext;
+use mmids_core::workflows::steps::test_utils::StepTestContext;
 use mmids_core::workflows::MediaNotificationContent::StreamDisconnected;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent};
 use mmids_core::{test_utils, StreamId};

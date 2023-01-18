@@ -17,7 +17,8 @@ use mmids_core::workflows::metadata::common_metadata::{
 use mmids_core::workflows::metadata::{
     MediaPayloadMetadataCollection, MetadataKey, MetadataKeyMap, MetadataValue,
 };
-use mmids_core::workflows::steps::{StepStatus, StepTestContext};
+use mmids_core::workflows::steps::test_utils::StepTestContext;
+use mmids_core::workflows::steps::StepStatus;
 use mmids_core::workflows::{MediaNotification, MediaNotificationContent, MediaType};
 use mmids_core::{test_utils, StreamId};
 use mmids_rtmp::rtmp_server::{
