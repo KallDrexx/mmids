@@ -16,5 +16,4 @@ native-tls = "0.2"
 tokio = { version = "1.24", features = ["sync", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-appender = "0.2.0"
-tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3.2", features = ["json"] }
