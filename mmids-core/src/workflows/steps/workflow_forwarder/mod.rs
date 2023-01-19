@@ -57,8 +57,6 @@ struct WorkflowForwarderStep {
     global_workflow_name: Option<Arc<String>>,
     reactor_name: Option<Arc<String>>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
-    definition: WorkflowStepDefinition,
-    status: StepStatus,
     active_streams: HashMap<StreamId, StreamDetails>,
     stream_for_workflow_name: HashMap<Arc<String>, HashSet<StreamId>>,
     known_workflows: HashMap<Arc<String>, UnboundedSender<WorkflowRequest>>,
@@ -152,8 +150,6 @@ impl StepGenerator for WorkflowForwarderStepGenerator {
             global_workflow_name: target_workflow_name,
             reactor_name,
             stream_for_workflow_name: HashMap::new(),
-            definition,
-            status: StepStatus::Active,
             active_streams: HashMap::new(),
             reactor_manager: self.reactor_manager.clone(),
             known_workflows: HashMap::new(),
@@ -162,7 +158,7 @@ impl StepGenerator for WorkflowForwarderStepGenerator {
         notify_on_workflow_event(event_receiver, &futures_channel);
         notify_reactor_manager_gone(self.reactor_manager.clone(), &futures_channel);
 
-        Ok(Box::new(step))
+        Ok((Box::new(step), StepStatus::Active))
     }
 }
 
@@ -445,20 +441,12 @@ impl WorkflowForwarderStep {
 }
 
 impl WorkflowStep for WorkflowForwarderStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for notification in inputs.notifications.drain(..) {
             let notification: Box<dyn StepFutureResult> = notification;
             let future_result = match notification.downcast::<FutureResult>() {
@@ -468,31 +456,25 @@ impl WorkflowStep for WorkflowForwarderStep {
                         "Workflow forwarder step received a notification that is not a known type"
                     );
 
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Received future result of unknown type".to_string(),
                     };
-
-                    return;
                 }
             };
 
             match future_result {
                 FutureResult::EventHubGone => {
                     error!("Received a notification that the event hub is gone");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Event hub gone".to_string(),
                     };
-
-                    return;
                 }
 
                 FutureResult::ReactorManagerGone => {
                     error!("Reactor manager is gone");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Reactor manager gone".to_string(),
                     };
-
-                    return;
                 }
 
                 FutureResult::ReactorGone => {
@@ -502,11 +484,9 @@ impl WorkflowStep for WorkflowForwarderStep {
                         error!("Received notice that a reactor is gone but we aren't using one");
                     }
 
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Reactor gone".to_string(),
                     };
-
-                    return;
                 }
 
                 FutureResult::ReactorResponseReceived {
@@ -588,11 +568,13 @@ impl WorkflowStep for WorkflowForwarderStep {
         for media in inputs.media.drain(..) {
             self.handle_media(media, outputs, &futures_channel);
         }
+
+        StepStatus::Active
     }
+}
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
-
+impl Drop for WorkflowForwarderStep {
+    fn drop(&mut self) {
         // Send a disconnect signal for any active streams we are tracking, so the target workflow
         // knows not to expect more media from them.
         for (stream_id, mut stream) in self.active_streams.drain() {

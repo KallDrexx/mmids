@@ -46,7 +46,6 @@ pub struct FfmpegPullStepGenerator {
 }
 
 struct FfmpegPullStep {
-    definition: WorkflowStepDefinition,
     ffmpeg_endpoint: UnboundedSender<FfmpegEndpointRequest>,
     rtmp_endpoint: UnboundedSender<RtmpEndpointRequest>,
     status: StepStatus,
@@ -111,7 +110,6 @@ impl StepGenerator for FfmpegPullStepGenerator {
         };
 
         let step = FfmpegPullStep {
-            definition: definition.clone(),
             status: StepStatus::Created,
             rtmp_app: Arc::new(format!("ffmpeg-pull-{}", definition.get_id())),
             ffmpeg_endpoint: self.ffmpeg_endpoint.clone(),
@@ -151,7 +149,8 @@ impl StepGenerator for FfmpegPullStepGenerator {
             || FutureResult::RtmpEndpointGone,
         );
 
-        Ok(Box::new(step))
+        let status = step.status.clone();
+        Ok((Box::new(step), status))
     }
 }
 
@@ -428,29 +427,27 @@ impl FfmpegPullStep {
 }
 
 impl WorkflowStep for FfmpegPullStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for result in inputs.notifications.drain(..) {
             if let Ok(result) = result.downcast::<FutureResult>() {
                 self.handle_resolved_future(*result, outputs, &futures_channel);
+                if matches!(&self.status, &StepStatus::Error { .. }) {
+                    break;
+                }
             }
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
+        self.status.clone()
+    }
+}
+
+impl Drop for FfmpegPullStep {
+    fn drop(&mut self) {
         self.stop_ffmpeg();
 
         let _ = self

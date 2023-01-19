@@ -75,7 +75,6 @@ impl Drop for StreamWatchers {
 }
 
 struct RtmpWatchStep {
-    definition: WorkflowStepDefinition,
     port: u16,
     rtmp_app: Arc<String>,
     stream_key: StreamKeyRegistration,
@@ -227,7 +226,6 @@ impl StepGenerator for RtmpWatchStepGenerator {
         let (media_sender, media_receiver) = unbounded_channel();
 
         let step = RtmpWatchStep {
-            definition,
             status: StepStatus::Created,
             port,
             rtmp_app: app,
@@ -268,7 +266,8 @@ impl StepGenerator for RtmpWatchStepGenerator {
             RtmpWatchStepFutureResult::ReactorManagerGone
         });
 
-        Ok(Box::new(step))
+        let status = step.status.clone();
+        Ok((Box::new(step), status))
     }
 }
 
@@ -526,50 +525,36 @@ impl RtmpWatchStep {
 }
 
 impl WorkflowStep for RtmpWatchStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for notification in inputs.notifications.drain(..) {
             let future_result = match notification.downcast::<RtmpWatchStepFutureResult>() {
                 Ok(x) => *x,
                 Err(_) => {
                     error!("Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Received invalid future result type".to_string(),
                     };
-
-                    return;
                 }
             };
 
             match future_result {
                 RtmpWatchStepFutureResult::RtmpEndpointGone => {
                     error!("Rtmp endpoint gone, shutting step down");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Rtmp endpoint gone".to_string(),
                     };
-
-                    return;
                 }
 
                 RtmpWatchStepFutureResult::ReactorManagerGone => {
                     error!("Reactor manager gone");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Reactor manager gone".to_string(),
                     };
-
-                    return;
                 }
 
                 RtmpWatchStepFutureResult::ReactorGone => {
@@ -579,11 +564,9 @@ impl WorkflowStep for RtmpWatchStep {
                         error!("Received notice that the reactor is gone, but this step doesn't use one");
                     }
 
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Reactor gone".to_string(),
                     };
-
-                    return;
                 }
 
                 RtmpWatchStepFutureResult::RtmpWatchNotificationReceived(notification) => {
@@ -635,10 +618,13 @@ impl WorkflowStep for RtmpWatchStep {
         for media in inputs.media.drain(..) {
             self.handle_media(media, outputs);
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
+        self.status.clone()
+    }
+}
+
+impl Drop for RtmpWatchStep {
+    fn drop(&mut self) {
         let _ = self
             .rtmp_endpoint_sender
             .send(RtmpEndpointRequest::RemoveRegistration {

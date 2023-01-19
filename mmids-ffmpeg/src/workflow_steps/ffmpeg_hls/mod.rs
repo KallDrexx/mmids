@@ -36,7 +36,6 @@ pub struct FfmpegHlsStepGenerator {
 }
 
 struct FfmpegHlsStep {
-    definition: WorkflowStepDefinition,
     status: StepStatus,
     stream_reader: ExternalStreamReader,
     path: String,
@@ -150,7 +149,6 @@ impl StepGenerator for FfmpegHlsStepGenerator {
 
         let path = path.clone();
         let step = FfmpegHlsStep {
-            definition,
             status: StepStatus::Created,
             stream_reader: reader,
             path: path.clone(),
@@ -167,31 +165,23 @@ impl StepGenerator for FfmpegHlsStepGenerator {
             FutureResult::HlsPathCreated(result)
         });
 
-        Ok(Box::new(step))
+        let status = step.status.clone();
+        Ok((Box::new(step), status))
     }
 }
 
 impl WorkflowStep for FfmpegHlsStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         if let StepStatus::Error { message } = &self.stream_reader.status {
             error!("external stream reader is in error status, so putting the step in in error status as well.");
-            self.status = StepStatus::Error {
+            return StepStatus::Error {
                 message: message.to_string(),
             };
-            return;
         }
 
         for future_result in inputs.notifications.drain(..) {
@@ -206,6 +196,10 @@ impl WorkflowStep for FfmpegHlsStep {
                     FutureResult::FfmpegEndpointGone => {
                         error!("Ffmpeg endpoint has disappeared.  Closing all streams");
                         self.stream_reader.stop_all_streams();
+
+                        return StepStatus::Error {
+                            message: "Ffmpeg endpoint gone".to_string(),
+                        };
                     }
 
                     FutureResult::HlsPathCreated(result) => match result {
@@ -215,14 +209,12 @@ impl WorkflowStep for FfmpegHlsStep {
 
                         Err(error) => {
                             error!("Could not create HLS path: '{}': {:?}", self.path, error);
-                            self.status = StepStatus::Error {
+                            return StepStatus::Error {
                                 message: format!(
                                     "Could not create HLS path: '{}': {:?}",
                                     self.path, error
                                 ),
                             };
-
-                            return;
                         }
                     },
                 },
@@ -233,11 +225,14 @@ impl WorkflowStep for FfmpegHlsStep {
             self.stream_reader
                 .handle_media(media, outputs, &futures_channel);
         }
-    }
 
-    fn shutdown(&mut self) {
+        self.status.clone()
+    }
+}
+
+impl Drop for FfmpegHlsStep {
+    fn drop(&mut self) {
         self.stream_reader.stop_all_streams();
-        self.status = StepStatus::Shutdown;
     }
 }
 

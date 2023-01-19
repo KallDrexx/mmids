@@ -26,7 +26,6 @@ pub struct TestOutputStepGenerator {
 
 struct TestInputStep {
     status: StepStatus,
-    definition: WorkflowStepDefinition,
     media_receiver: Receiver<MediaNotification>,
     status_receiver: Receiver<StepStatus>,
     media_received_count: Arc<AtomicU16>,
@@ -34,7 +33,6 @@ struct TestInputStep {
 
 struct TestOutputStep {
     status: StepStatus,
-    definition: WorkflowStepDefinition,
     media: UnboundedSender<MediaNotification>,
     status_receiver: Receiver<StepStatus>,
 }
@@ -60,12 +58,11 @@ enum OutputFutureResult {
 impl StepGenerator for TestInputStepGenerator {
     fn generate(
         &self,
-        definition: WorkflowStepDefinition,
+        _definition: WorkflowStepDefinition,
         futures_channel: WorkflowStepFuturesChannel,
     ) -> StepCreationResult {
         let step = TestInputStep {
             status: StepStatus::Created,
-            definition,
             media_receiver: self.media_receiver.clone(),
             status_receiver: self.status_change.clone(),
             media_received_count: self.media_received_count.clone(),
@@ -80,44 +77,35 @@ impl StepGenerator for TestInputStepGenerator {
             || InputFutureResult::FutureResultMediaChannelClosed,
         );
 
-        Ok(Box::new(step))
+        Ok((Box::new(step), StepStatus::Created))
     }
 }
 
 impl StepGenerator for TestOutputStepGenerator {
     fn generate(
         &self,
-        definition: WorkflowStepDefinition,
+        _definition: WorkflowStepDefinition,
         futures_channel: WorkflowStepFuturesChannel,
     ) -> StepCreationResult {
         let step = TestOutputStep {
             status: StepStatus::Created,
-            definition,
             media: self.media_sender.clone(),
             status_receiver: self.status_change.clone(),
         };
 
         output_status_received(self.status_change.clone(), &futures_channel);
 
-        Ok(Box::new(step))
+        Ok((Box::new(step), StepStatus::Created))
     }
 }
 
 impl WorkflowStep for TestInputStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for notification in inputs.notifications.drain(..) {
             let future_result = match notification.downcast::<InputFutureResult>() {
                 Ok(result) => result,
@@ -164,28 +152,18 @@ impl WorkflowStep for TestInputStep {
             outputs.media.push(media); // for workflow forwarding tests
             self.media_received_count.fetch_add(1, Ordering::SeqCst);
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
+        self.status.clone()
     }
 }
 
 impl WorkflowStep for TestOutputStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         _outputs: &mut StepOutputs,
         _futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for notification in inputs.notifications.drain(..) {
             let future_result = match notification.downcast::<OutputFutureResult>() {
                 Ok(result) => result,
@@ -208,10 +186,8 @@ impl WorkflowStep for TestOutputStep {
         for media in inputs.media.drain(..) {
             let _ = self.media.send(media);
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
+        self.status.clone()
     }
 }
 

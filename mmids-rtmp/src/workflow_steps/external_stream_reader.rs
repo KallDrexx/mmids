@@ -390,6 +390,12 @@ impl ExternalStreamReader {
     }
 }
 
+impl Drop for ExternalStreamReader {
+    fn drop(&mut self) {
+        self.stop_all_streams();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

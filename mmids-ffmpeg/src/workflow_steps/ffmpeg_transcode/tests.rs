@@ -237,8 +237,8 @@ async fn step_starts_in_active_state() {
     let definition = DefinitionBuilder::new().build();
     let context = TestContext::new(definition).unwrap();
 
-    let status = context.step_context.step.get_status();
-    assert_eq!(status, &StepStatus::Active, "Unexpected step status");
+    let status = context.step_context.status;
+    assert_eq!(status, StepStatus::Active, "Unexpected step status");
 }
 
 #[tokio::test]
