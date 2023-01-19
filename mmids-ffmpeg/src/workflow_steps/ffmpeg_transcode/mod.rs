@@ -296,7 +296,8 @@ impl StepGenerator for FfmpegTranscoderStepGenerator {
             FutureResult::RtmpEndpointGone
         });
 
-        Ok(Box::new(step))
+        let status = step.status.clone();
+        Ok((Box::new(step), status))
     }
 }
 
@@ -929,20 +930,12 @@ impl FfmpegTranscoder {
 }
 
 impl WorkflowStep for FfmpegTranscoder {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for notification in inputs.notifications.drain(..) {
             self.handle_resolved_future(notification, outputs, &futures_channel);
         }
@@ -950,14 +943,16 @@ impl WorkflowStep for FfmpegTranscoder {
         for media in inputs.media.drain(..) {
             self.handle_media(media, outputs, &futures_channel);
         }
-    }
 
-    fn shutdown(&mut self) {
+        self.status.clone()
+    }
+}
+
+impl Drop for FfmpegTranscoder {
+    fn drop(&mut self) {
         let stream_ids = self.active_streams.drain().map(|x| x.0).collect::<Vec<_>>();
         for stream_id in stream_ids {
             self.stop_stream(&stream_id);
         }
-
-        self.status = StepStatus::Shutdown;
     }
 }

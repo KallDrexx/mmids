@@ -34,8 +34,6 @@ pub struct FfmpegRtmpPushStepGenerator {
 }
 
 struct FfmpegRtmpPushStep {
-    definition: WorkflowStepDefinition,
-    status: StepStatus,
     stream_reader: ExternalStreamReader,
 }
 
@@ -101,8 +99,6 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
         );
 
         let step = FfmpegRtmpPushStep {
-            definition,
-            status: StepStatus::Active,
             stream_reader: reader,
         };
 
@@ -112,39 +108,29 @@ impl StepGenerator for FfmpegRtmpPushStepGenerator {
             FutureResult::FfmpegEndpointGone
         });
 
-        Ok(Box::new(step))
+        Ok((Box::new(step), StepStatus::Active))
     }
 }
 
 impl WorkflowStep for FfmpegRtmpPushStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         if let StepStatus::Error { message } = &self.stream_reader.status {
             error!("External stream reader is in error status, so putting the step in in error status as well.");
 
-            self.status = StepStatus::Error {
+            return StepStatus::Error {
                 message: message.to_string(),
             };
-
-            return;
         }
 
         for future_result in inputs.notifications.drain(..) {
             match future_result.downcast::<FutureResult>() {
                 Err(future_result) => {
-                    // Not a future we can handle
+                    // Not a future we can handle, it may be a future for the external stream reader
                     self.stream_reader
                         .handle_resolved_future(future_result, &futures_channel)
                 }
@@ -162,11 +148,8 @@ impl WorkflowStep for FfmpegRtmpPushStep {
             self.stream_reader
                 .handle_media(media, outputs, &futures_channel);
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.stream_reader.stop_all_streams();
-        self.status = StepStatus::Shutdown;
+        self.stream_reader.status.clone()
     }
 }
 

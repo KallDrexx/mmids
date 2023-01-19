@@ -43,8 +43,6 @@ struct ActiveTranscode {
 }
 
 struct BasicTranscodeStep {
-    definition: WorkflowStepDefinition,
-    status: StepStatus,
     transcoder_endpoint: UnboundedSender<GstTranscoderRequest>,
     active_transcodes: HashMap<StreamId, ActiveTranscode>,
     video_encoder_name: String,
@@ -113,8 +111,6 @@ impl StepGenerator for BasicTranscodeStepGenerator {
         }
 
         let step = BasicTranscodeStep {
-            definition,
-            status: StepStatus::Active,
             transcoder_endpoint: self.transcode_endpoint.clone(),
             active_transcodes: HashMap::new(),
             video_encoder_name,
@@ -129,7 +125,7 @@ impl StepGenerator for BasicTranscodeStepGenerator {
             FutureResult::TranscoderEndpointGone
         });
 
-        Ok(Box::new(step))
+        Ok((Box::new(step), StepStatus::Active))
     }
 }
 
@@ -289,20 +285,12 @@ impl BasicTranscodeStep {
 }
 
 impl WorkflowStep for BasicTranscodeStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for media in inputs.media.drain(..) {
             self.handle_media(media, outputs, &futures_channel);
         }
@@ -318,12 +306,10 @@ impl WorkflowStep for BasicTranscodeStep {
 
             match *future_result {
                 FutureResult::TranscoderEndpointGone => {
-                    self.status = StepStatus::Error {
+                    self.stop_all_transcodes();
+                    return StepStatus::Error {
                         message: "Transcoder endpoint went away".to_string(),
                     };
-
-                    self.stop_all_transcodes();
-                    return;
                 }
 
                 FutureResult::TranscoderNotificationSenderGone(stream_id) => {
@@ -354,9 +340,7 @@ impl WorkflowStep for BasicTranscodeStep {
                 }
             }
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
+        StepStatus::Active
     }
 }

@@ -72,7 +72,6 @@ impl Drop for ConnectionDetails {
 }
 
 struct RtmpReceiverStep {
-    definition: WorkflowStepDefinition,
     rtmp_endpoint_sender: UnboundedSender<RtmpEndpointRequest>,
     reactor_manager: UnboundedSender<ReactorManagerRequest>,
     port: u16,
@@ -213,7 +212,6 @@ impl StepGenerator for RtmpReceiverStepGenerator {
         };
 
         let step = RtmpReceiverStep {
-            definition,
             status: StepStatus::Created,
             rtmp_endpoint_sender: self.rtmp_endpoint_sender.clone(),
             reactor_manager: self.reactor_manager.clone(),
@@ -257,7 +255,8 @@ impl StepGenerator for RtmpReceiverStepGenerator {
             FutureResult::ReactorManagerGone
         });
 
-        Ok(Box::new(step))
+        let status = step.status.clone();
+        Ok((Box::new(step), status))
     }
 }
 
@@ -474,30 +473,20 @@ impl RtmpReceiverStep {
 }
 
 impl WorkflowStep for RtmpReceiverStep {
-    fn get_status(&self) -> &StepStatus {
-        &self.status
-    }
-
-    fn get_definition(&self) -> &WorkflowStepDefinition {
-        &self.definition
-    }
-
     fn execute(
         &mut self,
         inputs: &mut StepInputs,
         outputs: &mut StepOutputs,
         futures_channel: WorkflowStepFuturesChannel,
-    ) {
+    ) -> StepStatus {
         for future_result in inputs.notifications.drain(..) {
             let future_result = match future_result.downcast::<FutureResult>() {
                 Ok(result) => *result,
                 Err(_) => {
                     error!("Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Rtmp receive step received a notification that is not an 'RtmpReceiveFutureResult' type".to_string(),
                     };
-
-                    return;
                 }
             };
 
@@ -506,21 +495,18 @@ impl WorkflowStep for RtmpReceiverStep {
                     error!(
                         "Rtmp receive step stopping as the rtmp endpoint dropped the registration"
                     );
-                    self.status = StepStatus::Error {
+
+                    return StepStatus::Error {
                         message: "Rtmp receive step stopping as the rtmp endpoint dropped the registration"
                             .to_string(),
                     };
-
-                    return;
                 }
 
                 FutureResult::ReactorManagerGone => {
                     error!("Reactor manager gone");
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Reactor manager gone".to_string(),
                     };
-
-                    return;
                 }
 
                 FutureResult::ReactorGone => {
@@ -530,11 +516,9 @@ impl WorkflowStep for RtmpReceiverStep {
                         error!("Got reactor gone signal but step is not using a reactor");
                     }
 
-                    self.status = StepStatus::Error {
+                    return StepStatus::Error {
                         message: "Reactor gone".to_string(),
                     };
-
-                    return;
                 }
 
                 FutureResult::RtmpEndpointResponseReceived(message) => {
@@ -574,10 +558,13 @@ impl WorkflowStep for RtmpReceiverStep {
                 FutureResult::ReactorCancellationReceived => {}
             }
         }
-    }
 
-    fn shutdown(&mut self) {
-        self.status = StepStatus::Shutdown;
+        self.status.clone()
+    }
+}
+
+impl Drop for RtmpReceiverStep {
+    fn drop(&mut self) {
         let _ = self
             .rtmp_endpoint_sender
             .send(RtmpEndpointRequest::RemoveRegistration {

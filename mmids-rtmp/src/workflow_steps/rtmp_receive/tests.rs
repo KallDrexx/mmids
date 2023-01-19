@@ -258,8 +258,8 @@ async fn step_starts_in_created_state() {
     let definition = DefinitionBuilder::new().build();
     let context = TestContext::new(definition).unwrap();
 
-    let status = context.step_context.step.get_status();
-    assert_eq!(status, &StepStatus::Created, "Unexpected step status");
+    let status = context.step_context.status;
+    assert_eq!(status, StepStatus::Created, "Unexpected step status");
 }
 
 #[tokio::test]
@@ -284,7 +284,7 @@ async fn registration_failure_sets_status_to_error() {
 
     context.step_context.execute_pending_futures().await;
 
-    let status = context.step_context.step.get_status();
+    let status = context.step_context.status;
     match status {
         StepStatus::Error { message: _ } => (),
         _ => panic!("Unexpected status: {:?}", status),
@@ -313,7 +313,7 @@ async fn registration_success_sets_status_to_active() {
 
     context.step_context.execute_pending_futures().await;
 
-    let status = context.step_context.step.get_status();
+    let status = context.step_context.status;
     match status {
         StepStatus::Active => (),
         _ => panic!("Unexpected status: {:?}", status),
