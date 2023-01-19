@@ -3,9 +3,6 @@ mod http_handlers;
 use hyper::Method;
 use mmids_core::config::{parse as parse_config_file, MmidsConfig};
 use mmids_core::event_hub::{start_event_hub, PublishEventRequest, SubscriptionRequest};
-use mmids_core::http_api::handlers;
-use mmids_core::http_api::routing::{PathPart, Route, RoutingTable};
-use mmids_core::http_api::HttpApiShutdownSignal;
 use mmids_core::net::tcp::{start_socket_manager, TlsOptions};
 use mmids_core::reactors::executors::simple_http_executor::SimpleHttpExecutorGenerator;
 use mmids_core::reactors::executors::ReactorExecutorFactory;
@@ -33,6 +30,9 @@ use mmids_gstreamer::encoders::{
 };
 use mmids_gstreamer::endpoints::gst_transcoder::{start_gst_transcoder, GstTranscoderRequest};
 use mmids_gstreamer::steps::basic_transcoder::BasicTranscodeStepGenerator;
+use mmids_http_api::handlers;
+use mmids_http_api::routing::{PathPart, Route, RoutingTable};
+use mmids_http_api::HttpApiShutdownSignal;
 use mmids_rtmp::rtmp_server::{start_rtmp_server_endpoint, RtmpEndpointRequest};
 use mmids_rtmp::workflow_steps::rtmp_receive::RtmpReceiverStepGenerator;
 use mmids_rtmp::workflow_steps::rtmp_watch::RtmpWatchStepGenerator;
@@ -454,7 +454,7 @@ fn start_http_api(
         .expect("Failed to register version route");
 
     let addr = ([127, 0, 0, 1], port).into();
-    Some(mmids_core::http_api::start_http_api(addr, routes))
+    Some(mmids_http_api::start_http_api(addr, routes))
 }
 
 async fn start_reactor(

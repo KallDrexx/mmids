@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use hyper::{Body, Error, Request, Response};
-use mmids_core::http_api::routing::RouteHandler;
+use mmids_http_api::routing::RouteHandler;
 use std::collections::HashMap;
 
 pub struct VersionHandler;

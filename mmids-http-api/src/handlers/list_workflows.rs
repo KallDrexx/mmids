@@ -1,10 +1,10 @@
 //! Contains the handler for getting a list of workflows
 
-use crate::http_api::routing::RouteHandler;
-use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
+use crate::routing::RouteHandler;
 use async_trait::async_trait;
 use hyper::header::HeaderValue;
 use hyper::{Body, Error, Request, Response, StatusCode};
+use mmids_core::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
