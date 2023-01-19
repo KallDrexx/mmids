@@ -101,9 +101,14 @@ struct StreamDetails {
     originating_step_id: WorkflowStepId,
 }
 
+struct TrackedWorkflowStep {
+    instance: Option<Box<dyn WorkflowStep + Send>>,
+    status: StepStatus,
+}
+
 struct Actor {
     name: Arc<String>,
-    steps_by_definition_id: HashMap<WorkflowStepId, Box<dyn WorkflowStep + Send>>,
+    steps_by_definition_id: HashMap<WorkflowStepId, TrackedWorkflowStep>,
     active_steps: Vec<WorkflowStepId>,
     pending_steps: Vec<WorkflowStepId>,
     step_inputs: StepInputs,
@@ -244,7 +249,7 @@ impl Actor {
                             state.pending_steps.push(WorkflowStepState {
                                 step_id: *id,
                                 definition: definition.clone(),
-                                status: step.get_status().clone(),
+                                status: step.status.clone(),
                             });
                         } else {
                             state.pending_steps.push(WorkflowStepState {
@@ -266,7 +271,7 @@ impl Actor {
                             state.active_steps.push(WorkflowStepState {
                                 step_id: *id,
                                 definition: definition.clone(),
-                                status: step.get_status().clone(),
+                                status: step.status.clone(),
                             });
                         } else {
                             state.active_steps.push(WorkflowStepState {
@@ -291,13 +296,21 @@ impl Actor {
 
                 for id in &self.active_steps {
                     if let Some(step) = self.steps_by_definition_id.get_mut(id) {
-                        step.shutdown();
+                        step.instance.take(); // drop it to shut it down
+
+                        if !matches!(&step.status, &StepStatus::Error { .. }) {
+                            step.status = StepStatus::Shutdown;
+                        }
                     }
                 }
 
                 for id in &self.pending_steps {
                     if let Some(step) = self.steps_by_definition_id.get_mut(id) {
-                        step.shutdown();
+                        step.instance.take(); // drop it to shut it down
+
+                        if !matches!(&step.status, &StepStatus::Error { .. }) {
+                            step.status = StepStatus::Shutdown;
+                        }
                     }
                 }
             }
@@ -387,7 +400,7 @@ impl Actor {
                     }
                 };
 
-                let step = match step_result {
+                let (step, status) = match step_result {
                     Ok(step) => step,
                     Err(error) => {
                         error!("Step could not be generated: {}", error);
@@ -397,7 +410,12 @@ impl Actor {
                     }
                 };
 
-                entry.insert(step);
+                let tracked_step = TrackedWorkflowStep {
+                    instance: Some(step),
+                    status,
+                };
+
+                entry.insert(tracked_step);
                 info!("Step type '{}' created", step_type);
             }
         }
@@ -464,9 +482,17 @@ impl Actor {
             }
         };
 
+        let step_instance = match step.instance.as_mut() {
+            Some(instance) => instance,
+            None => return, // We have no step instance to run. Might need to check status here?
+        };
+
         let channel = WorkflowStepFuturesChannel::new(step_id, self.step_futures_sender.clone());
-        step.execute(&mut self.step_inputs, &mut self.step_outputs, channel);
-        if let StepStatus::Error { message } = step.get_status() {
+        let new_status =
+            step_instance.execute(&mut self.step_inputs, &mut self.step_outputs, channel);
+        step.status = new_status;
+
+        if let StepStatus::Error { message } = &step.status {
             let message = message.clone();
             self.set_status_to_error(step_id, message);
 
@@ -494,7 +520,7 @@ impl Actor {
             };
 
             if let Some(step) = step {
-                match step.get_status() {
+                match &step.status {
                     StepStatus::Created => all_are_active = false,
                     StepStatus::Active => (),
 
@@ -544,7 +570,7 @@ impl Actor {
                     if let Some(mut step) = self.steps_by_definition_id.remove(&step_id) {
                         let span = span!(Level::INFO, "Step Shutdown", step_id = %step_id);
                         let _enter = span.enter();
-                        step.shutdown();
+                        step.instance.take();
                     }
 
                     if let Some(cache) = self.cached_step_media.remove(&step_id) {
@@ -726,20 +752,17 @@ impl Actor {
             "Workflow set to error state due to step id {}: {}",
             step_id.0, message
         );
+
         self.status = WorkflowStatus::Error {
             failed_step_id: step_id.0,
             message,
         };
 
-        for step_id in &self.active_steps {
-            if let Some(step) = self.steps_by_definition_id.get_mut(step_id) {
-                step.shutdown();
-            }
-        }
+        let all_step_ids = self.active_steps.iter().chain(self.pending_steps.iter());
 
-        for step_id in &self.pending_steps {
+        for step_id in all_step_ids {
             if let Some(step) = self.steps_by_definition_id.get_mut(step_id) {
-                step.shutdown();
+                step.instance.take(); // drop the step instance
             }
         }
     }

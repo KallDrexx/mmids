@@ -27,7 +27,7 @@ impl StepTestContext {
         let (sender, receiver) = unbounded_channel();
         let channel = WorkflowStepFuturesChannel::new(definition.get_id(), sender);
 
-        let step = generator
+        let (step, _status) = generator
             .generate(definition, channel.clone())
             .map_err(|error| anyhow!("Failed to generate workflow step: {:?}", error))?;
 

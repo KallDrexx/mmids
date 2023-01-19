@@ -7,7 +7,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 /// Represents a type that can generate an instance of a workflow step
 pub trait StepGenerator {
-    /// Creates a brand new instance of a workflow step based on the supplied definition
+    /// Creates a brand new instance of a workflow step based on the supplied definition. Generating
+    /// a workflow step returns both the workflow step itself as well as the initial status the
+    /// step should be in.
     fn generate(
         &self,
         definition: WorkflowStepDefinition,
