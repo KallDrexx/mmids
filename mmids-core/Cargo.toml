@@ -21,7 +21,7 @@ bytes = "1"
 cidr-utils = "0.5.5"
 downcast-rs = "1.2.0"
 futures = "0.3"
-hyper = { version = "0.14", features = ["full"] }
+hyper = { version = "0.14", features = ["client"] }
 lazy_static = "1.4"
 native-tls = "0.2"
 pest = "2.1"

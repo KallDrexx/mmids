@@ -1,12 +1,12 @@
 //! Contains the handler that creates and updates workflows
 
-use crate::http_api::routing::RouteHandler;
-use crate::workflows::definitions::WorkflowDefinition;
-use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
+use crate::routing::RouteHandler;
 use async_trait::async_trait;
 use bytes::Bytes;
 use hyper::http::HeaderValue;
 use hyper::{Body, Error, Request, Response, StatusCode};
+use mmids_core::workflows::definitions::WorkflowDefinition;
+use mmids_core::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
 use serde::Serialize;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
@@ -138,7 +138,7 @@ fn parse_mmids_mime_type(body: Bytes) -> Result<Result<WorkflowDefinition, Error
         }
     };
 
-    let mut config = match crate::config::parse(content.as_str()) {
+    let mut config = match mmids_core::config::parse(content.as_str()) {
         Ok(config) => config,
         Err(parse_error) => {
             return Ok(Err(ErrorResponse {

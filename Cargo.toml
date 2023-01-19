@@ -4,6 +4,7 @@ members = [
     "mmids-core",
     "mmids-ffmpeg",
     "mmids-gstreamer",
+    "mmids-http-api",
     "mmids-rtmp",
     "reactor-test-server",
     "validators/echo-server",

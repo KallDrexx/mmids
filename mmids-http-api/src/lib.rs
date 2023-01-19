@@ -1,10 +1,15 @@
-//! Handles interfacing with mmids via an http based interface.  Routes are defined by consumers,
-//! which define the code that should execute when that route gets hit.
+//! This crate provides ready to go mechanisms for interacting with mmids via an HTTP based
+//! interface. This allows operators to view details of workflows, start workflows, stop workflows,
+//! and also provides capabilities for custom mmids applications to provide their own HTTP
+//! capabilities.
+//!
+//! Routes are defined by consumers, which define the code that should execute when that route
+//! gets hit.
 
 pub mod handlers;
 pub mod routing;
 
-use crate::http_api::routing::RoutingTable;
+use crate::routing::RoutingTable;
 use hyper::header::HeaderName;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
@@ -54,12 +59,12 @@ async fn graceful_shutdown(shutdown_signal: Receiver<HttpApiShutdownSignal>) {
 }
 
 #[instrument(
-    skip(request, client_address, routes),
-    fields(
-        http_method = %request.method(),
-        http_uri = %request.uri(),
-        client_ip = %client_address.ip(),
-    )
+skip(request, client_address, routes),
+fields(
+http_method = %request.method(),
+http_uri = %request.uri(),
+client_ip = %client_address.ip(),
+)
 )]
 async fn execute_request(
     mut request: Request<Body>,

@@ -15,7 +15,6 @@ pub mod actor_utils;
 pub mod codecs;
 pub mod config;
 pub mod event_hub;
-pub mod http_api;
 pub mod net;
 pub mod reactors;
 #[cfg(feature = "test-utils")]

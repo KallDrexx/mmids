@@ -1,12 +1,12 @@
 //! Contains the handler for getting details about a running workflow
 
-use crate::http_api::routing::RouteHandler;
-use crate::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
-use crate::workflows::steps::StepStatus;
-use crate::workflows::{WorkflowState, WorkflowStatus, WorkflowStepState};
+use crate::routing::RouteHandler;
 use async_trait::async_trait;
 use hyper::http::HeaderValue;
 use hyper::{Body, Error, Request, Response, StatusCode};
+use mmids_core::workflows::manager::{WorkflowManagerRequest, WorkflowManagerRequestOperation};
+use mmids_core::workflows::steps::StepStatus;
+use mmids_core::workflows::{WorkflowState, WorkflowStatus, WorkflowStepState};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

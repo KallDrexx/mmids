@@ -7,6 +7,7 @@ edition = "2018"
 mmids-core = { path = "../mmids-core" }
 mmids-ffmpeg = { path = "../mmids-ffmpeg" }
 mmids-gstreamer = { path = "../mmids-gstreamer" }
+mmids-http-api = { path = "../mmids-http-api" }
 mmids-rtmp = { path = "../mmids-rtmp" }
 
 async-trait = "0.1.51"
