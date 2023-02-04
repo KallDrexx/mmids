@@ -11,16 +11,17 @@ child_node = {(whitespace* ~ node_name ~ arguments ~ trailing_eol)}
 
 arguments = _{ (whitespace* ~ argument)* }
 argument = { key_value_pair | quoted_string | argument_flag }
-argument_flag = { word }
+argument_flag = { word_or_url }
 step_type = { word }
 workflow_name = { word }
 
 key_value_pair = { key ~ "=" ~ value }
 key = { word }
-value = { quoted_string | word }
+value = { quoted_string | word_or_url }
 quoted_string = _{ "\"" ~ quoted_string_value ~ "\"" }
 quoted_string_value = { (whitespace | character)* }
 word = _{ character+ }
+word_or_url = _{ (character | "?" | "=" | "&" )+ }
 trailing_eol = _{ whitespace* ~ comment? ~ NEWLINE }
 comment = _{ whitespace* ~ "#" ~ (whitespace | character | "{" | "}" | "#" | "\"" | "," | "(" | ")" | "=" | ">" | "<" | "'" | "`")* }
 whitespace = _{ " " | "\t" }
